@@ -1,0 +1,31 @@
+// Public, platform-neutral services. Native types and declarations stay in backends.
+QuaxelPlatform
+#{
+    bool SupportsWindowing()
+    {
+        return QuaxelPlatformBackend.SupportsWindowing()
+    }
+
+    // Failure always returns zero so callers cannot reuse stale clock values.
+    bool GetClockFrequency(long& frequency)
+    {
+        frequency = 0
+        if QuaxelPlatformBackend.GetClockFrequency(frequency) && frequency > 0
+        {
+            return true
+        }
+        frequency = 0
+        return false
+    }
+
+    bool ReadClock(long& ticks)
+    {
+        ticks = 0
+        if QuaxelPlatformBackend.ReadClock(ticks) && ticks >= 0
+        {
+            return true
+        }
+        ticks = 0
+        return false
+    }
+}

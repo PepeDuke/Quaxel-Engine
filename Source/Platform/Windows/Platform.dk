@@ -1,0 +1,26 @@
+// All Windows declarations, native layouts, callbacks and handles belong here.
+QuaxelWindowsNative
+#{
+    extern "C" int QueryPerformanceFrequency(long& value)
+    extern "C" int QueryPerformanceCounter(long& value)
+}
+
+// Implements the same build-time contract as every other backend.
+QuaxelPlatformBackend
+#{
+    bool SupportsWindowing()
+    {
+        // Enable only when window creation and event dispatch are implemented.
+        return false
+    }
+
+    bool GetClockFrequency(long& frequency)
+    {
+        return QuaxelWindowsNative.QueryPerformanceFrequency(frequency) != 0
+    }
+
+    bool ReadClock(long& ticks)
+    {
+        return QuaxelWindowsNative.QueryPerformanceCounter(ticks) != 0
+    }
+}

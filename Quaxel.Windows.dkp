@@ -1,0 +1,15 @@
+version = 1
+references = ["Quaxel.dkp"]
+
+[project]
+name = "QuaxelWindows"
+kind = "library"
+build_dir = ".duck/build/windows"
+
+[modules.quaxel_platform]
+sources = ["Source/Platform/Api/**/*.dk"]
+depends = ["quaxel_platform_backend"]
+
+[modules.quaxel_platform_backend]
+sources = ["Source/Platform/Windows/**/*.dk"]
+libraries = ["Kernel32"]

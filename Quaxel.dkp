@@ -1,0 +1,8 @@
+version = 1
+
+[project]
+name = "Quaxel"
+kind = "library"
+
+[modules.quaxel_core]
+sources = ["Source/Core/**/*.dk"]

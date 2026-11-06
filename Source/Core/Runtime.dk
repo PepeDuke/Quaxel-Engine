@@ -1,0 +1,20 @@
+// Caller-owned state keeps independent game sessions isolated.
+Quaxel
+#{
+    int ApiVersion() { return 1 }
+
+    double FixedDeltaSeconds() { return 1.0 / 60.0 }
+
+    Begin(int& frame, bool& running)
+    {
+        frame = 0
+        running = true
+    }
+
+    Advance(int& frame, bool running)
+    {
+        if running { frame++ }
+    }
+
+    Stop(bool& running) { running = false }
+}

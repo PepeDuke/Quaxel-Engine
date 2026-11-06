@@ -1,0 +1,17 @@
+// Portable fallback: no OS dependencies and no fabricated window or clock.
+QuaxelPlatformBackend
+#{
+    bool SupportsWindowing() { return false }
+
+    bool GetClockFrequency(long& frequency)
+    {
+        frequency = 0
+        return false
+    }
+
+    bool ReadClock(long& ticks)
+    {
+        ticks = 0
+        return false
+    }
+}
