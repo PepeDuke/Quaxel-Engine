@@ -1,0 +1,496 @@
+// Vulkan C ABI subset for Windows x64. Handles occupy one 64-bit word.
+// Pointer members borrow native-layout storage for the duration of a Vulkan call.
+
+VkExtent2D
+{
+    int width
+    int height
+}
+
+VkExtent3D
+{
+    int width
+    int height
+    int depth
+}
+
+VkOffset2D
+{
+    int x
+    int y
+}
+
+VkRect2D
+{
+    VkOffset2D vkOffset
+    VkExtent2D extent
+}
+
+VkSurfaceCapabilitiesKHR
+{
+    int minImageCount
+    int maxImageCount
+    VkExtent2D currentExtent
+    VkExtent2D minImageExtent
+    VkExtent2D maxImageExtent
+    int maxImageArrayLayers
+    int supportedTransforms
+    int currentTransform
+    int supportedCompositeAlpha
+    int supportedUsageFlags
+}
+
+VkSurfaceFormatKHR
+{
+    int vkFormat
+    int colorSpace
+}
+
+VkQueueFamilyProperties
+{
+    int queueFlags
+    int queueCount
+    int timestampValidBits
+    VkExtent3D minImageTransferGranularity
+}
+
+VkInstanceCreateInfo
+{
+    int sType = 1 // VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO
+    void* pNext
+    int vkFlags
+    void* pApplicationInfo
+    int enabledLayerCount
+    void* ppEnabledLayerNames
+    int enabledExtensionCount
+    void* ppEnabledExtensionNames
+}
+
+VkWin32SurfaceCreateInfoKHR
+{
+    int sType = 1000009000 // VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR
+    void* pNext
+    int vkFlags
+    void* hinstance
+    void* hwnd
+}
+
+VkDeviceQueueCreateInfo
+{
+    int sType = 2 // VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO
+    void* pNext
+    int vkFlags
+    int queueFamilyIndex
+    int queueCount
+    void* pQueuePriorities
+}
+
+VkDeviceCreateInfo
+{
+    int sType = 3 // VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO
+    void* pNext
+    int vkFlags
+    int queueCreateInfoCount
+    void* pQueueCreateInfos
+    int enabledLayerCount
+    void* ppEnabledLayerNames
+    int enabledExtensionCount
+    void* ppEnabledExtensionNames
+    void* pEnabledFeatures
+}
+
+VkSwapchainCreateInfoKHR
+{
+    int sType = 1000001000 // VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR
+    void* pNext
+    int vkFlags
+    long surface
+    int minImageCount
+    int imageFormat
+    int imageColorSpace
+    VkExtent2D imageExtent
+    int imageArrayLayers
+    int imageUsage
+    int imageSharingMode
+    int queueFamilyIndexCount
+    void* pQueueFamilyIndices
+    int preTransform
+    int compositeAlpha
+    int presentMode
+    int clipped
+    long oldSwapchain
+}
+
+VkComponentMapping
+{
+    int r
+    int g
+    int b
+    int a
+}
+
+VkImageSubresourceRange
+{
+    int aspectMask
+    int baseMipLevel
+    int levelCount
+    int baseArrayLayer
+    int layerCount
+}
+
+VkImageViewCreateInfo
+{
+    int sType = 15 // VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO
+    void* pNext
+    int vkFlags
+    long image
+    int viewType
+    int vkFormat
+    VkComponentMapping components
+    VkImageSubresourceRange subresourceRange
+}
+
+VkAttachmentDescription
+{
+    int vkFlags
+    int vkFormat
+    int samples
+    int loadOp
+    int storeOp
+    int stencilLoadOp
+    int stencilStoreOp
+    int initialLayout
+    int finalLayout
+}
+
+VkAttachmentReference
+{
+    int attachment
+    int vkLayout
+}
+
+VkSubpassDescription
+{
+    int vkFlags
+    int pipelineBindPoint
+    int inputAttachmentCount
+    void* pInputAttachments
+    int colorAttachmentCount
+    void* pColorAttachments
+    void* pResolveAttachments
+    void* pDepthStencilAttachment
+    int preserveAttachmentCount
+    void* pPreserveAttachments
+}
+
+VkSubpassDependency
+{
+    int srcSubpass
+    int dstSubpass
+    int srcStageMask
+    int dstStageMask
+    int srcAccessMask
+    int dstAccessMask
+    int dependencyFlags
+}
+
+VkRenderPassCreateInfo
+{
+    int sType = 38 // VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO
+    void* pNext
+    int vkFlags
+    int attachmentCount
+    void* pAttachments
+    int subpassCount
+    void* pSubpasses
+    int dependencyCount
+    void* pDependencies
+}
+
+VkFramebufferCreateInfo
+{
+    int sType = 37 // VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO
+    void* pNext
+    int vkFlags
+    long renderPass
+    int attachmentCount
+    void* pAttachments
+    int width
+    int height
+    int layers
+}
+
+VkShaderModuleCreateInfo
+{
+    int sType = 16 // VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO
+    void* pNext
+    int vkFlags
+    long codeSize
+    void* pCode
+}
+
+VkPipelineShaderStageCreateInfo
+{
+    int sType = 18 // VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO
+    void* pNext
+    int vkFlags
+    int vkStage
+    long vkModule
+    cstring pName
+    void* pSpecializationInfo
+}
+
+VkPipelineVertexInputStateCreateInfo
+{
+    int sType = 19 // VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO
+    void* pNext
+    int vkFlags
+    int vertexBindingDescriptionCount
+    void* pVertexBindingDescriptions
+    int vertexAttributeDescriptionCount
+    void* pVertexAttributeDescriptions
+}
+
+VkPipelineInputAssemblyStateCreateInfo
+{
+    int sType = 20 // VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO
+    void* pNext
+    int vkFlags
+    int topology
+    int primitiveRestartEnable
+}
+
+VkViewport
+{
+    float x
+    float y
+    float width
+    float height
+    float minDepth
+    float maxDepth
+}
+
+VkPipelineViewportStateCreateInfo
+{
+    int sType = 22 // VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO
+    void* pNext
+    int vkFlags
+    int viewportCount
+    void* pViewports
+    int scissorCount
+    void* pScissors
+}
+
+VkPipelineRasterizationStateCreateInfo
+{
+    int sType = 23 // VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO
+    void* pNext
+    int vkFlags
+    int depthClampEnable
+    int rasterizerDiscardEnable
+    int polygonMode
+    int cullMode
+    int frontFace
+    int depthBiasEnable
+    float depthBiasConstantFactor
+    float depthBiasClamp
+    float depthBiasSlopeFactor
+    float lineWidth
+}
+
+VkPipelineMultisampleStateCreateInfo
+{
+    int sType = 24 // VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO
+    void* pNext
+    int vkFlags
+    int rasterizationSamples
+    int sampleShadingEnable
+    float minSampleShading
+    void* pSampleMask
+    int alphaToCoverageEnable
+    int alphaToOneEnable
+}
+
+VkPipelineColorBlendAttachmentState
+{
+    int blendEnable
+    int srcColorBlendFactor
+    int dstColorBlendFactor
+    int colorBlendOp
+    int srcAlphaBlendFactor
+    int dstAlphaBlendFactor
+    int alphaBlendOp
+    int colorWriteMask
+}
+
+VkPipelineColorBlendStateCreateInfo
+{
+    int sType = 26 // VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO
+    void* pNext
+    int vkFlags
+    int logicOpEnable
+    int logicOp
+    int attachmentCount
+    void* pAttachments
+    float [4] blendConstants
+}
+
+VkPipelineLayoutCreateInfo
+{
+    int sType = 30 // VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO
+    void* pNext
+    int vkFlags
+    int setLayoutCount
+    void* pSetLayouts
+    int pushConstantRangeCount
+    void* pPushConstantRanges
+}
+
+VkGraphicsPipelineCreateInfo
+{
+    int sType = 28 // VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO
+    void* pNext
+    int vkFlags
+    int stageCount
+    void* pStages
+    void* pVertexInputState
+    void* pInputAssemblyState
+    void* pTessellationState
+    void* pViewportState
+    void* pRasterizationState
+    void* pMultisampleState
+    void* pDepthStencilState
+    void* pColorBlendState
+    void* pDynamicState
+    long vkLayout
+    long renderPass
+    int subpass
+    long basePipelineHandle
+    int basePipelineIndex
+}
+
+VkCommandPoolCreateInfo
+{
+    int sType = 39 // VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO
+    void* pNext
+    int vkFlags
+    int queueFamilyIndex
+}
+
+VkCommandBufferAllocateInfo
+{
+    int sType = 40 // VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO
+    void* pNext
+    long commandPool
+    int level
+    int commandBufferCount
+}
+
+VkCommandBufferBeginInfo
+{
+    int sType = 42 // VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO
+    void* pNext
+    int vkFlags
+    void* pInheritanceInfo
+}
+
+VkRenderPassBeginInfo
+{
+    int sType = 43 // VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO
+    void* pNext
+    long renderPass
+    long framebuffer
+    VkRect2D renderArea
+    int clearValueCount
+    void* pClearValues
+}
+
+VkSemaphoreCreateInfo
+{
+    int sType = 9 // VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO
+    void* pNext
+    int vkFlags
+}
+
+VkSubmitInfo
+{
+    int sType = 4 // VK_STRUCTURE_TYPE_SUBMIT_INFO
+    void* pNext
+    int waitSemaphoreCount
+    void* pWaitSemaphores
+    void* pWaitDstStageMask
+    int commandBufferCount
+    void* pCommandBuffers
+    int signalSemaphoreCount
+    void* pSignalSemaphores
+}
+
+VkPresentInfoKHR
+{
+    int sType = 1000001001 // VK_STRUCTURE_TYPE_PRESENT_INFO_KHR
+    void* pNext
+    int waitSemaphoreCount
+    void* pWaitSemaphores
+    int swapchainCount
+    void* pSwapchains
+    void* pImageIndices
+    void* pResults
+}
+
+VkFenceCreateInfo
+{
+    int sType = 8 // VK_STRUCTURE_TYPE_FENCE_CREATE_INFO
+    void* pNext
+    int vkFlags
+}
+
+Vk
+#{
+    extern "C" int CreateInstance(void* pCreateInfo, void* pAllocator, void* pInstance) = "vkCreateInstance"
+    extern "C" DestroyInstance(long instance, void* pAllocator) = "vkDestroyInstance"
+    extern "C" int CreateWin32SurfaceKHR(long instance, void* pCreateInfo, void* pAllocator, void* pSurface) = "vkCreateWin32SurfaceKHR"
+    extern "C" DestroySurfaceKHR(long instance, long surface, void* pAllocator) = "vkDestroySurfaceKHR"
+    extern "C" int EnumeratePhysicalDevices(long instance, void* pPhysicalDeviceCount, void* pPhysicalDevices) = "vkEnumeratePhysicalDevices"
+    extern "C" GetPhysicalDeviceQueueFamilyProperties(long physicalDevice, void* pQueueFamilyPropertyCount, void* pQueueFamilyProperties) = "vkGetPhysicalDeviceQueueFamilyProperties"
+    extern "C" int GetPhysicalDeviceSurfaceSupportKHR(long physicalDevice, int queueFamilyIndex, long surface, void* pSupported) = "vkGetPhysicalDeviceSurfaceSupportKHR"
+    extern "C" int GetPhysicalDeviceSurfaceCapabilitiesKHR(long physicalDevice, long surface, void* pSurfaceCapabilities) = "vkGetPhysicalDeviceSurfaceCapabilitiesKHR"
+    extern "C" int GetPhysicalDeviceSurfaceFormatsKHR(long physicalDevice, long surface, void* pSurfaceFormatCount, void* pSurfaceFormats) = "vkGetPhysicalDeviceSurfaceFormatsKHR"
+    extern "C" int CreateDevice(long physicalDevice, void* pCreateInfo, void* pAllocator, void* pDevice) = "vkCreateDevice"
+    extern "C" DestroyDevice(long device, void* pAllocator) = "vkDestroyDevice"
+    extern "C" GetDeviceQueue(long device, int queueFamilyIndex, int queueIndex, void* pQueue) = "vkGetDeviceQueue"
+    extern "C" int CreateSwapchainKHR(long device, void* pCreateInfo, void* pAllocator, void* pSwapchain) = "vkCreateSwapchainKHR"
+    extern "C" DestroySwapchainKHR(long device, long swapchain, void* pAllocator) = "vkDestroySwapchainKHR"
+    extern "C" int GetSwapchainImagesKHR(long device, long swapchain, void* pSwapchainImageCount, void* pSwapchainImages) = "vkGetSwapchainImagesKHR"
+    extern "C" int CreateImageView(long device, void* pCreateInfo, void* pAllocator, void* pView) = "vkCreateImageView"
+    extern "C" DestroyImageView(long device, long imageView, void* pAllocator) = "vkDestroyImageView"
+    extern "C" int CreateRenderPass(long device, void* pCreateInfo, void* pAllocator, void* pRenderPass) = "vkCreateRenderPass"
+    extern "C" DestroyRenderPass(long device, long renderPass, void* pAllocator) = "vkDestroyRenderPass"
+    extern "C" int CreateFramebuffer(long device, void* pCreateInfo, void* pAllocator, void* pFramebuffer) = "vkCreateFramebuffer"
+    extern "C" DestroyFramebuffer(long device, long framebuffer, void* pAllocator) = "vkDestroyFramebuffer"
+    extern "C" int CreateShaderModule(long device, void* pCreateInfo, void* pAllocator, void* pShaderModule) = "vkCreateShaderModule"
+    extern "C" DestroyShaderModule(long device, long shaderModule, void* pAllocator) = "vkDestroyShaderModule"
+    extern "C" int CreatePipelineLayout(long device, void* pCreateInfo, void* pAllocator, void* pPipelineLayout) = "vkCreatePipelineLayout"
+    extern "C" DestroyPipelineLayout(long device, long pipelineLayout, void* pAllocator) = "vkDestroyPipelineLayout"
+    extern "C" int CreateGraphicsPipelines(long device, long pipelineCache, int createInfoCount, void* pCreateInfos, void* pAllocator, void* pPipelines) = "vkCreateGraphicsPipelines"
+    extern "C" DestroyPipeline(long device, long pipeline, void* pAllocator) = "vkDestroyPipeline"
+    extern "C" int CreateCommandPool(long device, void* pCreateInfo, void* pAllocator, void* pCommandPool) = "vkCreateCommandPool"
+    extern "C" DestroyCommandPool(long device, long commandPool, void* pAllocator) = "vkDestroyCommandPool"
+    extern "C" int AllocateCommandBuffers(long device, void* pAllocateInfo, void* pCommandBuffers) = "vkAllocateCommandBuffers"
+    extern "C" int ResetCommandBuffer(long commandBuffer, int vkFlags) = "vkResetCommandBuffer"
+    extern "C" int BeginCommandBuffer(long commandBuffer, void* pBeginInfo) = "vkBeginCommandBuffer"
+    extern "C" int EndCommandBuffer(long commandBuffer) = "vkEndCommandBuffer"
+    extern "C" CmdBeginRenderPass(long commandBuffer, void* pRenderPassBegin, int contents) = "vkCmdBeginRenderPass"
+    extern "C" CmdBindPipeline(long commandBuffer, int pipelineBindPoint, long pipeline) = "vkCmdBindPipeline"
+    extern "C" CmdDraw(long commandBuffer, int vertexCount, int instanceCount, int firstVertex, int firstInstance) = "vkCmdDraw"
+    extern "C" CmdEndRenderPass(long commandBuffer) = "vkCmdEndRenderPass"
+    extern "C" int CreateSemaphore(long device, void* pCreateInfo, void* pAllocator, void* pSemaphore) = "vkCreateSemaphore"
+    extern "C" DestroySemaphore(long device, long semaphore, void* pAllocator) = "vkDestroySemaphore"
+    extern "C" int CreateFence(long device, void* pCreateInfo, void* pAllocator, void* pFence) = "vkCreateFence"
+    extern "C" DestroyFence(long device, long fence, void* pAllocator) = "vkDestroyFence"
+    extern "C" int WaitForFences(long device, int fenceCount, void* pFences, int waitAll, long timeout) = "vkWaitForFences"
+    extern "C" int ResetFences(long device, int fenceCount, void* pFences) = "vkResetFences"
+    extern "C" int AcquireNextImageKHR(long device, long swapchain, long timeout, long semaphore, long fence, void* pImageIndex) = "vkAcquireNextImageKHR"
+    extern "C" int QueueSubmit(long vkQueue, int submitCount, void* pSubmits, long fence) = "vkQueueSubmit"
+    extern "C" int QueuePresentKHR(long vkQueue, void* pPresentInfo) = "vkQueuePresentKHR"
+    extern "C" int DeviceWaitIdle(long device) = "vkDeviceWaitIdle"
+}

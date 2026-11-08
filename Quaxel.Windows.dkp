@@ -12,4 +12,4 @@ depends = ["quaxel_platform_backend"]
 
 [modules.quaxel_platform_backend]
 sources = ["Source/Platform/Windows/**/*.dk"]
-libraries = ["Kernel32", "User32"]
+libraries = ["Kernel32", "User32", ".duck/vulkan/vulkan-1.lib"]

@@ -1,0 +1,67 @@
+QuaxelVulkan
+#{
+    -bool RecordFrame(int image)
+    {
+        if Vk.ResetCommandBuffer(Command, 0) != 0 { return false }
+        VkCommandBufferBeginInfo beginInfo
+        if Vk.BeginCommandBuffer(Command, &beginInfo) != 0 { return false }
+        float [4] clear = {0.012, 0.018, 0.030, 1.0}
+        VkRenderPassBeginInfo render
+        render.renderPass = Pass
+        render.framebuffer = Images.Targets[image]
+        render.renderArea.extent = Extent
+        render.clearValueCount = 1
+        render.pClearValues = &clear[0]
+        Vk.CmdBeginRenderPass(Command, &render, 0)
+        Vk.CmdBindPipeline(Command, 0, Pipeline)
+        Vk.CmdDraw(Command, 3, 1, 0, 0)
+        Vk.CmdEndRenderPass(Command)
+        return Vk.EndCommandBuffer(Command) == 0
+    }
+
+    bool Draw(int width, int height)
+    {
+        if Device == 0 { return false }
+        if width == 0 || height == 0 { return true }
+        if Chain == 0 || width != Extent.width || height != Extent.height {
+            if Vk.DeviceWaitIdle(Device) != 0 { return false }
+            ReleaseTargets()
+            if !CreateTargets(width, height) { return false }
+            if Chain == 0 { return true }
+        }
+        if Vk.WaitForFences(Device, 1, &FrameFence, 1, -1) != 0 { return false }
+        int image = 0
+        int acquiredResult = Vk.AcquireNextImageKHR(Device, Chain, -1, Acquired, 0, &image)
+        #int outOfDate = -1000001004
+        #int suboptimal = 1000001003
+        if acquiredResult == outOfDate {
+            Extent.width = 0 // Recreate on the next nonzero frame.
+            return true
+        }
+        if acquiredResult != 0 && acquiredResult != suboptimal { return false }
+        if !RecordFrame(image) { return false }
+        int colorOutput = 0x400
+        VkSubmitInfo submit
+        submit.waitSemaphoreCount = 1
+        submit.pWaitSemaphores = &Acquired
+        submit.pWaitDstStageMask = &colorOutput
+        submit.commandBufferCount = 1
+        submit.pCommandBuffers = &Command
+        submit.signalSemaphoreCount = 1
+        submit.pSignalSemaphores = &Images.Finished[image]
+        if Vk.ResetFences(Device, 1, &FrameFence) != 0 { return false }
+        if Vk.QueueSubmit(GraphicsQueue, 1, &submit, FrameFence) != 0 { return false }
+        VkPresentInfoKHR present
+        present.waitSemaphoreCount = 1
+        present.pWaitSemaphores = &Images.Finished[image]
+        present.swapchainCount = 1
+        present.pSwapchains = &Chain
+        present.pImageIndices = &image
+        int result = Vk.QueuePresentKHR(GraphicsQueue, &present)
+        if result == outOfDate || result == suboptimal || (result == 0 && acquiredResult == suboptimal) {
+            Extent.width = 0
+            return true
+        }
+        return result == 0
+    }
+}

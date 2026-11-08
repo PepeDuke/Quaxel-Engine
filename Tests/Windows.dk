@@ -1,6 +1,26 @@
 QuaxelPlatform
 #{}
 T{
+    VulkanDrawResizeAndReopen()
+    {
+        T.IsFalse(QuaxelRenderer.Start())
+        T.IsTrue(QuaxelPlatform.OpenWindow("Vulkan test", 400, 250, false))
+        T.IsTrue(QuaxelRenderer.Start())
+        T.IsFalse(QuaxelRenderer.Start())
+        T.IsTrue(QuaxelRenderer.DrawTriangle())
+        T.IsTrue(QuaxelPlatform.ResizeWindow(500, 300))
+        T.IsTrue(QuaxelPlatform.PumpWindow(false))
+        T.IsTrue(QuaxelRenderer.DrawTriangle())
+        T.IsTrue(QuaxelRenderer.DrawTriangle())
+        QuaxelRenderer.Stop()
+        T.IsFalse(QuaxelRenderer.DrawTriangle())
+        T.IsTrue(QuaxelRenderer.Start())
+        T.IsTrue(QuaxelRenderer.DrawTriangle())
+        T.IsTrue(QuaxelPlatform.RequestWindowClose())
+        T.IsFalse(QuaxelPlatform.PumpWindow(true))
+        QuaxelRenderer.Stop()
+    }
+
     WindowsClockIsMonotonic()
     {
         long frequency = 0

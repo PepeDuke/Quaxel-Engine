@@ -1,0 +1,6 @@
+QuaxelRenderer
+#{
+    bool Start() { return QuaxelPlatformBackend.StartRenderer() }
+    bool DrawTriangle() { return QuaxelPlatformBackend.DrawTriangle() }
+    Stop() { QuaxelPlatformBackend.StopRenderer() }
+}

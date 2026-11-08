@@ -1,0 +1,130 @@
+// Vulkan 1.0, one frame in flight, and one graphics queue with presentation support.
+VkInstanceExtensions
+{
+    cstring surface = "VK_KHR_surface"
+    cstring win32 = "VK_KHR_win32_surface"
+}
+
+VkTargets
+{
+    long [32] Views
+    long [32] Targets
+    long [32] Finished
+}
+
+QuaxelVulkan
+#{
+    -long Instance
+    -long Surface
+    -long Physical
+    -long Device
+    -long GraphicsQueue
+    -int Family
+    -long Pool
+    -long Command
+    -long Acquired
+    -long FrameFence
+    -long Chain
+    -long Pass
+    -long Layout
+    -long Pipeline
+    -VkExtent2D Extent
+    -int Format
+    -int ImageCount
+    -VkTargets Images
+
+    -bool SelectDevice()
+    {
+        long [32] adapters
+        int count = (int)adapters.Len
+        int result = Vk.EnumeratePhysicalDevices(Instance, &count, &adapters[0])
+        if result != 0 && result != 5 { return false } // VK_INCOMPLETE
+        if count == 0 { return false }
+        for i : 0...count-1 {
+            VkQueueFamilyProperties [64] families
+            int familyCount = (int)families.Len
+            Vk.GetPhysicalDeviceQueueFamilyProperties(adapters[i], &familyCount, &families[0])
+            if familyCount == 0 { continue }
+            for j : 0...familyCount-1 {
+                int present = 0
+                if (families[j].queueFlags & 1) != 0 && Vk.GetPhysicalDeviceSurfaceSupportKHR(adapters[i], j, Surface, &present) == 0 && present != 0 {
+                    float priority = 1.0
+                    VkDeviceQueueCreateInfo queueInfo
+                    queueInfo.queueFamilyIndex = j
+                    queueInfo.queueCount = 1
+                    queueInfo.pQueuePriorities = &priority
+                    cstring extension = "VK_KHR_swapchain"
+                    VkDeviceCreateInfo info
+                    info.queueCreateInfoCount = 1
+                    info.pQueueCreateInfos = &queueInfo
+                    info.enabledExtensionCount = 1
+                    info.ppEnabledExtensionNames = &extension
+                    if Vk.CreateDevice(adapters[i], &info, null, &Device) == 0 {
+                        Physical = adapters[i]
+                        Family = j
+                        Vk.GetDeviceQueue(Device, Family, 0, &GraphicsQueue)
+                        return true
+                    }
+                }
+            }
+        }
+        return false
+    }
+
+    -bool Initialize(void* moduleHandle, void* windowHandle)
+    {
+        VkInstanceExtensions extensions
+        VkInstanceCreateInfo info
+        info.enabledExtensionCount = 2
+        info.ppEnabledExtensionNames = &extensions
+        if Vk.CreateInstance(&info, null, &Instance) != 0 { return false }
+        VkWin32SurfaceCreateInfoKHR surfaceInfo
+        surfaceInfo.hinstance = moduleHandle
+        surfaceInfo.hwnd = windowHandle
+        if Vk.CreateWin32SurfaceKHR(Instance, &surfaceInfo, null, &Surface) != 0 { return false }
+        if !SelectDevice() { return false }
+        VkCommandPoolCreateInfo poolInfo
+        poolInfo.queueFamilyIndex = Family
+        poolInfo.vkFlags = 2 // RESET_COMMAND_BUFFER
+        if Vk.CreateCommandPool(Device, &poolInfo, null, &Pool) != 0 { return false }
+        VkCommandBufferAllocateInfo allocation
+        allocation.commandPool = Pool
+        allocation.commandBufferCount = 1
+        if Vk.AllocateCommandBuffers(Device, &allocation, &Command) != 0 { return false }
+        VkSemaphoreCreateInfo sem
+        if Vk.CreateSemaphore(Device, &sem, null, &Acquired) != 0 { return false }
+        VkFenceCreateInfo fenceInfo
+        fenceInfo.vkFlags = 1 // initially signaled
+        return Vk.CreateFence(Device, &fenceInfo, null, &FrameFence) == 0
+    }
+
+    bool Start(void* moduleHandle, void* windowHandle)
+    {
+        if Instance != 0 || windowHandle == null { return false }
+        if Initialize(moduleHandle, windowHandle) { return true }
+        Stop()
+        return false
+    }
+
+    Stop()
+    {
+        if Device != 0 {
+            Vk.DeviceWaitIdle(Device)
+            ReleaseTargets()
+            Vk.DestroyFence(Device, FrameFence, null)
+            Vk.DestroySemaphore(Device, Acquired, null)
+            Vk.DestroyCommandPool(Device, Pool, null)
+            Vk.DestroyDevice(Device, null)
+        }
+        if Instance != 0 {
+            Vk.DestroySurfaceKHR(Instance, Surface, null)
+            Vk.DestroyInstance(Instance, null)
+        }
+        FrameFence = 0
+        Acquired = 0
+        Pool = 0
+        Device = 0
+        Surface = 0
+        Instance = 0
+    }
+}

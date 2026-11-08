@@ -71,6 +71,21 @@ The x64 Windows backend supports one main window per process.
 Headless reports false for window capability and operations and zero for size.
 A game can choose its headless path before opening a window.
 
+## Vulkan renderer
+
+After opening the main window, call `QuaxelRenderer.Start()`. On success,
+poll with `QuaxelPlatform.PumpWindow(false)` and call `DrawTriangle()` each
+frame. Both renderer calls return false on failure. When the client size is
+zero, wait for messages and resume drawing after restore. Call
+`QuaxelRenderer.Stop()` at shutdown. Closing the native window also releases
+the renderer. These operations run on the window-owning thread.
+
+The Windows backend uses Vulkan 1.0, a queue that supports both graphics and
+presentation, FIFO presentation, and a single frame in flight. It rebuilds
+the swapchain, framebuffers and pipeline when the extent changes or the
+swapchain becomes out of date. The triangle's positions and colors come from
+the vertex shader. Headless builds omit the Vulkan bindings and link inputs.
+
 ## Text contract
 
 Duck `string` is UTF-16 on every platform, using 16-bit code units. Duck `name`
@@ -113,6 +128,11 @@ The mock project supplies controlled clock readings and failure results.
 
 Run the Windows manifest on Windows. Add `--profile release` to any command
 to test the optimized build.
+
+For Windows tests, run `./configure-vulkan.ps1` once after installing the
+x64 Vulkan SDK. Set `$env:VK_INSTANCE_LAYERS = 'VK_LAYER_KHRONOS_validation'`
+and `$env:VK_LAYER_VALIDATE_SYNC = '1'` to enable validation while running
+the Duck render, resize and restart test.
 
 `python Tests/platform.py` checks build artifacts and compiler diagnostics,
 including headless native dependencies, missing methods, duplicate backends,

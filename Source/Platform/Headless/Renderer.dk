@@ -1,0 +1,6 @@
+QuaxelPlatformBackend
+#{
+    bool StartRenderer() { return false }
+    bool DrawTriangle() { return false }
+    StopRenderer() {}
+}

@@ -45,8 +45,15 @@ All engine runtime and game source is Duck; PowerShell is only a build launcher.
 The Duck bootstrap compiler and build tool are currently implemented in C++.
 
 The x64 Windows backend provides a performance clock and one resizable main
-window. Hellfeather opens a 960 x 540 client area and waits for window messages
-until the player closes it. The headless build runs three fixed simulation steps.
+window. Hellfeather draws a colored triangle using Vulkan in a 960 x 540 client
+area. The headless build runs three fixed simulation steps.
+
+Windows builds require the x64 Vulkan SDK. The Windows build launchers stage
+its import library automatically. Before calling Duck directly on a fresh
+checkout, run `./configure-vulkan.ps1`. The executable uses the graphics
+driver's Vulkan runtime. Shader bytecode is embedded in the Windows module.
+After editing the GLSL in `Shaders/`, run `./Shaders/compile.ps1` with
+`VULKAN_SDK` set, then rebuild.
 
 ## Dependency boundary
 

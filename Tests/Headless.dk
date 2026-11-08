@@ -4,6 +4,9 @@ T{
     HeadlessServicesAreUnavailable()
     {
         T.IsFalse(QuaxelPlatform.SupportsWindowing())
+        T.IsFalse(QuaxelRenderer.Start())
+        T.IsFalse(QuaxelRenderer.DrawTriangle())
+        QuaxelRenderer.Stop()
         T.IsFalse(QuaxelPlatform.OpenWindow("Headless", 400, 250, false))
         T.IsFalse(QuaxelPlatform.PumpWindow(true))
         int width = 99

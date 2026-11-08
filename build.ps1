@@ -15,5 +15,6 @@ $manifest = switch ($Platform) {
     'headless' { 'Quaxel.Headless.dkp' }
     'windows' { 'Quaxel.Windows.dkp' }
 }
+if ($Platform -eq 'windows') { & (Join-Path $PSScriptRoot 'configure-vulkan.ps1') }
 & $builder build (Join-Path $PSScriptRoot $manifest) --profile $Profile
 exit $LASTEXITCODE

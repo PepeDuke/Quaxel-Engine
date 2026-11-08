@@ -63,6 +63,7 @@ QuaxelPlatformBackend
 
     -long WindowProc(void* window, uint message, uint64 wParam, long lParam)
     {
+        if message == 0x0002 && window == Window { StopRenderer() } // WM_DESTROY
         if message == 0x0082 && window == Window { Window = null } // WM_NCDESTROY
         return QuaxelWindowsNative.DefWindowProcW(window, message, wParam, lParam)
     }

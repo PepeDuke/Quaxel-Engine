@@ -1,0 +1,18 @@
+QuaxelPlatformBackend
+#{
+    bool StartRenderer() { return QuaxelVulkan.Start(Instance, Window) }
+
+    bool DrawTriangle()
+    {
+        int width = 0
+        int height = 0
+        if !GetWindowSize(width, height) { return false }
+        if QuaxelVulkan.Draw(width, height) { return true }
+        // A failed submit can leave the frame fence unsignaled. Release the device
+        // before callers retry, including after a partial swapchain rebuild.
+        StopRenderer()
+        return false
+    }
+
+    StopRenderer() { QuaxelVulkan.Stop() }
+}
