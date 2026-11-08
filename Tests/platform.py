@@ -56,9 +56,11 @@ class PlatformTests(unittest.TestCase):
             result = self.run_build([ROOT / "Quaxel.Headless.dkp"], "Main() { Print(QuaxelPlatform.SupportsWindowing()) }",
                                     ["quaxel_platform"], profile)
             self.assertNotIn("Kernel32", result.stdout)
+            self.assertNotIn("User32", result.stdout)
             self.assertNotIn("Source\\Platform\\Windows", result.stdout)
             ir = (self.root / ".duck/build" / profile / "quaxel_platform_backend.ll").read_text()
             self.assertNotIn("QueryPerformance", ir)
+            self.assertNotIn("CreateWindowExW", ir)
 
     def test_consumers_cannot_bypass_api(self):
         for source, dependencies in [

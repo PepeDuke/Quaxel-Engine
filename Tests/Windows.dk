@@ -13,8 +13,30 @@ T{
         T.IsTrue(first >= 0 && second >= first)
     }
 
-    WindowsWindowingIsUnavailable()
+    WindowsWindowLifecycle()
     {
-        T.IsFalse(QuaxelPlatform.SupportsWindowing())
+        T.IsTrue(QuaxelPlatform.SupportsWindowing())
+        T.IsFalse(QuaxelPlatform.OpenWindow("Invalid", 0, 200, false))
+        T.IsTrue(QuaxelPlatform.OpenWindow("Quaxel Ω", 400, 250, false))
+        T.IsFalse(QuaxelPlatform.OpenWindow("Duplicate", 300, 200, false))
+        int width = 0
+        int height = 0
+        T.IsTrue(QuaxelPlatform.GetWindowSize(width, height))
+        T.AreEqual(width, 400)
+        T.AreEqual(height, 250)
+        T.IsTrue(QuaxelPlatform.ResizeWindow(500, 300))
+        T.IsTrue(QuaxelPlatform.PumpWindow(false))
+        T.IsTrue(QuaxelPlatform.GetWindowSize(width, height))
+        T.AreEqual(width, 500)
+        T.AreEqual(height, 300)
+
+        T.IsTrue(QuaxelPlatform.RequestWindowClose())
+        T.IsFalse(QuaxelPlatform.PumpWindow(true))
+        T.IsFalse(QuaxelPlatform.GetWindowSize(width, height))
+        T.AreEqual(width, 0)
+        T.AreEqual(height, 0)
+        T.IsTrue(QuaxelPlatform.OpenWindow("Reopened", 400, 250, false))
+        QuaxelPlatform.CloseWindow()
+        T.IsFalse(QuaxelPlatform.PumpWindow(false))
     }
 }

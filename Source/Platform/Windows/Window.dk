@@ -1,0 +1,172 @@
+// x64 Win32 ABI. Keep these unmanaged layouts in Windows field order.
+QuaxelWinClass
+{
+    uint style
+    void* procedure
+    int classExtra
+    int windowExtra
+    void* instance
+    void* icon
+    void* cursor
+    long background
+    void* menuName
+    void* className
+}
+
+QuaxelWinMessage
+{
+    void* window
+    uint message
+    uint64 wParam
+    long lParam
+    uint timestamp
+    int x
+    int y
+    uint reserved
+}
+
+QuaxelWinRect
+{
+    int left
+    int top
+    int right
+    int bottom
+}
+
+QuaxelWindowsNative
+#{
+    extern "C" void* GetModuleHandleW(void* moduleName)
+    extern "C" void* LoadCursorW(void* instance, long resource)
+    extern "C" uint RegisterClassW(QuaxelWinClass* definition)
+    extern "C" int UnregisterClassW(string className, void* instance)
+    extern "C" void* CreateWindowExW(uint exStyle, string className, string title, uint style,
+        int x, int y, int width, int height, void* parent, void* menu, void* instance, void* data)
+    extern "C" int ShowWindow(void* window, int command)
+    extern "C" int DestroyWindow(void* window)
+    extern "C" long DefWindowProcW(void* window, uint message, uint64 wParam, long lParam)
+    extern "C" int AdjustWindowRect(QuaxelWinRect* bounds, uint style, int hasMenu)
+    extern "C" int GetClientRect(void* window, QuaxelWinRect* bounds)
+    extern "C" int SetWindowPos(void* window, void* after, int x, int y, int width, int height, uint flags)
+    extern "C" int PeekMessageW(QuaxelWinMessage* msg, void* window, uint first, uint last, uint remove)
+    extern "C" uint MsgWaitForMultipleObjectsEx(uint count, void* handles, uint timeout, uint mask, uint flags)
+    extern "C" int TranslateMessage(QuaxelWinMessage* msg)
+    extern "C" long DispatchMessageW(QuaxelWinMessage* msg)
+    extern "C" int PostMessageW(void* window, uint message, uint64 wParam, long lParam)
+}
+
+QuaxelPlatformBackend
+#{
+    -void* Window
+    -void* Instance
+    -bool Registered
+    -uint Style = 0x00CF0000 // WS_OVERLAPPEDWINDOW
+
+    -long WindowProc(void* window, uint message, uint64 wParam, long lParam)
+    {
+        if message == 0x0082 && window == Window { Window = null } // WM_NCDESTROY
+        return QuaxelWindowsNative.DefWindowProcW(window, message, wParam, lParam)
+    }
+
+    -bool RegisterWindowClass()
+    {
+        if Registered { return true }
+        Instance = QuaxelWindowsNative.GetModuleHandleW(null)
+        if Instance == null { return false }
+        // RegisterClassW copies this terminated UTF-16 class name.
+        uint16 [7] className = {81, 117, 97, 120, 101, 108, 0} // Quaxel
+        QuaxelWinClass definition
+        definition.procedure = &QuaxelPlatformBackend.WindowProc
+        definition.instance = Instance
+        definition.className = &className[0]
+        definition.cursor = QuaxelWindowsNative.LoadCursorW(null, 32512) // IDC_ARROW
+        definition.background = 6 // COLOR_WINDOW + 1
+        Registered = (QuaxelWindowsNative.RegisterClassW(&definition) & 0xFFFF) != 0 // ATOM occupies the low 16 bits
+        return Registered
+    }
+
+    CloseWindow()
+    {
+        if Window != null { QuaxelWindowsNative.DestroyWindow(Window) }
+        if Window == null && Registered {
+            Registered = QuaxelWindowsNative.UnregisterClassW("Quaxel", Instance) == 0
+        }
+    }
+
+    -bool OuterBounds(int width, int height, QuaxelWinRect& bounds)
+    {
+        if width <= 0 || height <= 0 { return false }
+        bounds.right = width
+        bounds.bottom = height
+        if QuaxelWindowsNative.AdjustWindowRect(&bounds, Style, 0) == 0 { return false }
+        long outerWidth = (long)bounds.right - bounds.left
+        long outerHeight = (long)bounds.bottom - bounds.top
+        return outerWidth >= width && outerWidth <= int.Max && outerHeight >= height && outerHeight <= int.Max
+    }
+
+    bool OpenWindow(string title, int width, int height, bool visible)
+    {
+        if Window != null { return false }
+        QuaxelWinRect bounds
+        if !OuterBounds(width, height, bounds) { return false }
+        if !RegisterWindowClass() { return false }
+        #int defaultPosition = int.Min
+        Window = QuaxelWindowsNative.CreateWindowExW(0, "Quaxel", title, Style,
+            defaultPosition, defaultPosition, bounds.right - bounds.left, bounds.bottom - bounds.top,
+            null, null, Instance, null)
+        if Window == null {
+            CloseWindow()
+            return false
+        }
+        if visible { QuaxelWindowsNative.ShowWindow(Window, 5) }
+        return true
+    }
+
+    bool GetWindowSize(int& width, int& height)
+    {
+        QuaxelWinRect bounds
+        bool valid = Window != null && QuaxelWindowsNative.GetClientRect(Window, &bounds) != 0
+        width = valid ? bounds.right - bounds.left | 0
+        height = valid ? bounds.bottom - bounds.top | 0
+        return valid
+    }
+
+    bool ResizeWindow(int width, int height)
+    {
+        if Window == null { return false }
+        QuaxelWinRect bounds
+        if !OuterBounds(width, height, bounds) { return false }
+        return QuaxelWindowsNative.SetWindowPos(Window, null, 0, 0, bounds.right - bounds.left,
+            bounds.bottom - bounds.top, 0x16) != 0 // NOMOVE | NOZORDER | NOACTIVATE
+    }
+
+    bool RequestWindowClose()
+    {
+        return Window != null && QuaxelWindowsNative.PostMessageW(Window, 0x0010, 0, 0) != 0 // WM_CLOSE
+    }
+
+    bool PumpWindow(bool wait)
+    {
+        if Window == null { return false }
+        if wait {
+            // Wait for any queued or sent input, including input already seen by Win32.
+            if QuaxelWindowsNative.MsgWaitForMultipleObjectsEx(0, null, uint.Max, 0x04FF, 4) == uint.Max {
+                CloseWindow()
+                return false
+            }
+        }
+        QuaxelWinMessage msg
+        while Window != null && QuaxelWindowsNative.PeekMessageW(&msg, null, 0, 0, 1) != 0 {
+            if msg.message == 0x0012 { // WM_QUIT
+                CloseWindow()
+                return false
+            }
+            QuaxelWindowsNative.TranslateMessage(&msg)
+            QuaxelWindowsNative.DispatchMessageW(&msg)
+        }
+        if Window == null {
+            CloseWindow()
+            return false
+        }
+        return true
+    }
+}

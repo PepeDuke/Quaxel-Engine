@@ -44,12 +44,9 @@ values.
 All engine runtime and game source is Duck; PowerShell is only a build launcher.
 The Duck bootstrap compiler and build tool are currently implemented in C++.
 
-This is the initial headless foundation, not a finished graphical engine.
-The sample uses three fixed steps; it does not measure real time or pace frames.
-Native API calls are available now. The platform abstraction has a Windows clock
-backend and a dependency-free headless backend. Actual window creation is not
-implemented; both report that windowing is unavailable. Duck now supports the
-containers, native layouts, and callbacks needed for window and input work.
+The x64 Windows backend provides a performance clock and one resizable main
+window. Hellfeather opens a 960 x 540 client area and waits for window messages
+until the player closes it. The headless build runs three fixed simulation steps.
 
 ## Dependency boundary
 

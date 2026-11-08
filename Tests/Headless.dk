@@ -4,6 +4,13 @@ T{
     HeadlessServicesAreUnavailable()
     {
         T.IsFalse(QuaxelPlatform.SupportsWindowing())
+        T.IsFalse(QuaxelPlatform.OpenWindow("Headless", 400, 250, false))
+        T.IsFalse(QuaxelPlatform.PumpWindow(true))
+        int width = 99
+        int height = 99
+        T.IsFalse(QuaxelPlatform.GetWindowSize(width, height))
+        T.AreEqual(width, 0)
+        T.AreEqual(height, 0)
         long frequency = 99
         long ticks = 99
         T.IsFalse(QuaxelPlatform.GetClockFrequency(frequency))

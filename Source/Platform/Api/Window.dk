@@ -1,0 +1,28 @@
+QuaxelPlatform
+#{
+    // One main window per process. Call all window services on its owning thread.
+    bool OpenWindow(string title, int width, int height, bool visible)
+    {
+        return QuaxelPlatformBackend.OpenWindow(title, width, height, visible)
+    }
+
+    bool GetWindowSize(int& width, int& height)
+    {
+        return QuaxelPlatformBackend.GetWindowSize(width, height)
+    }
+
+    bool ResizeWindow(int width, int height)
+    {
+        return QuaxelPlatformBackend.ResizeWindow(width, height)
+    }
+
+    // Wait for input when idle, or poll without blocking during simulation.
+    // Returns false once the window has closed.
+    bool PumpWindow(bool wait)
+    {
+        return QuaxelPlatformBackend.PumpWindow(wait)
+    }
+
+    bool RequestWindowClose() { return QuaxelPlatformBackend.RequestWindowClose() }
+    CloseWindow() { QuaxelPlatformBackend.CloseWindow() }
+}

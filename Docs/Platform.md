@@ -50,35 +50,26 @@ Failure returns false and clears the output to zero. Compare readings from the
 same backend/session and divide their difference by its frequency for seconds.
 Clock values are not wall-clock dates.
 
-Windows supplies a real performance counter. Headless intentionally supplies no
-clock or windows and returns false/zero. Neither backend claims window creation
-support yet: both return false from SupportsWindowing. No native window creation
-or fake window handles are implemented by this architecture change.
+Windows supplies a performance counter and a resizable main window.
+The Windows backend links User32 and Kernel32 and owns the native window handle,
+window procedure and message queue processing.
 
-All native imports and native library link inputs belong to the backend.
-`Kernel32` appears only in the Windows configuration. Win32 window classes,
-structures, callbacks, message codes and HWND values must remain there as window
-support is added.
+## Main window
 
-## Window contract to implement next
+Use the following functions on `QuaxelPlatform` from the window-owning thread.
+The x64 Windows backend supports one main window per process.
 
-Duck now supports containers, native layouts and callbacks. The planned public
-window API uses engine-owned window identifiers, settings and events:
+| Function | Behavior |
+| --- | --- |
+| `OpenWindow(title, width, height, visible)` | Creates a window with a UTF-16 title and positive client dimensions. Returns false on failure or if one is already open. Pass false for a hidden window. |
+| `PumpWindow(wait)` | Dispatches pending messages. Pass false to poll or true to sleep until input is available. Returns false on closure, quit, or wait failure. |
+| `GetWindowSize(width, height)` | Reads current client dimensions after programmatic or user resizing. Clears both outputs on failure. |
+| `ResizeWindow(width, height)` | Requests new client dimensions while preserving position. Returns true on success. |
+| `RequestWindowClose()` | Queues a close request. Pump messages to complete it. |
+| `CloseWindow()` | Destroys the window immediately and releases its class. Safe to repeat. |
 
-- Create a window from title, client width/height and behavior flags.
-- Show, resize, request close, and destroy a window.
-- Poll events without blocking the simulation and translate native events into
-  Quaxel close, resize, focus, keyboard, mouse and text events.
-- Query client size and other supported capabilities without exposing OS structs.
-
-Creation, event pumping and destruction must run on the window-owning thread;
-the application layer schedules them explicitly. Unsupported operations must
-report failure instead of pretending success. Backend objects own native
-resources and release them on destruction and partial initialization failure.
-Native handles needed for a renderer belong in a backend/renderer integration
-API, not the portable game-facing window API.
-
-These are design requirements, not callable methods in the current bootstrap.
+Headless reports false for window capability and operations and zero for size.
+A game can choose its headless path before opening a window.
 
 ## Text contract
 
@@ -87,7 +78,7 @@ is UTF-8. These are distinct language types; a code unit is not necessarily an
 entire Unicode character. Public window titles and text use `string`. Do not
 replace this contract with platform-dependent wchar_t/TCHAR storage.
 
-The Windows backend will adapt UTF-16 string storage to its Unicode APIs. Other
+The Windows backend passes UTF-16 titles to CreateWindowExW. Other
 backends convert explicitly when their APIs require another encoding. The
 conversion, buffer lifetime, and any native terminator requirements belong to
 the backend. Core and gameplay do not select encodings based on the OS.
