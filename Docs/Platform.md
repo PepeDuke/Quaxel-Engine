@@ -62,8 +62,8 @@ support is added.
 
 ## Window contract to implement next
 
-Once Duck supports containers, native layouts and callbacks, add a public window
-API with engine-owned window identifiers/settings/events:
+Duck now supports containers, native layouts and callbacks. The planned public
+window API uses engine-owned window identifiers, settings and events:
 
 - Create a window from title, client width/height and behavior flags.
 - Show, resize, request close, and destroy a window.
@@ -79,8 +79,6 @@ Native handles needed for a renderer belong in a backend/renderer integration
 API, not the portable game-facing window API.
 
 These are design requirements, not callable methods in the current bootstrap.
-Do not freeze a multi-parameter workaround for window state before containers
-are implemented.
 
 ## Text contract
 
@@ -112,8 +110,19 @@ cross-compilation: Duck/Clang and native libraries must support the target.
 
 ## Verification
 
-Run `python Tests/platform.py` (or pass `--builder <duck executable>`). Tests
-build a portable core-only program, run both available backends in debug/release,
-substitute a test backend without changing the public API, reject missing backend
-methods and dual-backend configurations, and verify consumers cannot reach
-backend functions through transitive imports. Windows clock tests run on Windows.
+Run the engine tests with Duck from the repository root. Each platform manifest
+runs the core session tests and tests the shared API against its selected backend.
+The mock project supplies controlled clock readings and failure results.
+
+```powershell
+../Duck/duck.cmd test Quaxel.Headless.dkp
+../Duck/duck.cmd test Quaxel.Windows.dkp
+../Duck/duck.cmd test Tests/Mock.dkp
+```
+
+Run the Windows manifest on Windows. Add `--profile release` to any command
+to test the optimized build.
+
+`python Tests/platform.py` checks build artifacts and compiler diagnostics,
+including headless native dependencies, missing methods, duplicate backends,
+and direct dependency boundaries.

@@ -1,0 +1,14 @@
+QuaxelPlatform
+#{}
+T{
+    HeadlessServicesAreUnavailable()
+    {
+        T.IsFalse(QuaxelPlatform.SupportsWindowing())
+        long frequency = 99
+        long ticks = 99
+        T.IsFalse(QuaxelPlatform.GetClockFrequency(frequency))
+        T.AreEqual(frequency, 0)
+        T.IsFalse(QuaxelPlatform.ReadClock(ticks))
+        T.AreEqual(ticks, 0)
+    }
+}

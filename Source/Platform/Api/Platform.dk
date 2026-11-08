@@ -9,23 +9,17 @@ QuaxelPlatform
     // Failure always returns zero so callers cannot reuse stale clock values.
     bool GetClockFrequency(long& frequency)
     {
-        frequency = 0
-        if QuaxelPlatformBackend.GetClockFrequency(frequency) && frequency > 0
-        {
-            return true
-        }
-        frequency = 0
-        return false
+        long value = 0
+        bool valid = QuaxelPlatformBackend.GetClockFrequency(value) && value > 0
+        frequency = valid ? value | 0
+        return valid
     }
 
     bool ReadClock(long& ticks)
     {
-        ticks = 0
-        if QuaxelPlatformBackend.ReadClock(ticks) && ticks >= 0
-        {
-            return true
-        }
-        ticks = 0
-        return false
+        long value = 0
+        bool valid = QuaxelPlatformBackend.ReadClock(value) && value >= 0
+        ticks = valid ? value | 0
+        return valid
     }
 }

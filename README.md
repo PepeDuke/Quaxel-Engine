@@ -35,7 +35,12 @@ Windows outputs use `.duck/build/windows/<profile>`; headless engine outputs use
 ## Current foundation
 
 `Quaxel.dkp` is a library project without `Main`. `Source/Core/Runtime.dk`
-provides a version query, fixed simulation step, and caller-owned session state.
+provides a version query, a fixed simulation step, and a caller-owned
+`QuaxelSession`. A session starts stopped at frame zero. `Begin()` starts or
+restarts it, `Advance()` increments the frame while running, and `Stop()` keeps
+the last frame available. Games can read the `Frame` and `Running` properties.
+The static `Quaxel` functions still accept separately stored frame and running
+values.
 All engine runtime and game source is Duck; PowerShell is only a build launcher.
 The Duck bootstrap compiler and build tool are currently implemented in C++.
 
@@ -43,9 +48,8 @@ This is the initial headless foundation, not a finished graphical engine.
 The sample uses three fixed steps; it does not measure real time or pace frames.
 Native API calls are available now. The platform abstraction has a Windows clock
 backend and a dependency-free headless backend. Actual window creation is not
-implemented; both report that windowing is unavailable. Next milestones are Duck
-containers/native layouts and callbacks, then window/input support,
-rendering, and world/assets/gameplay systems.
+implemented; both report that windowing is unavailable. Duck now supports the
+containers, native layouts, and callbacks needed for window and input work.
 
 ## Dependency boundary
 
@@ -71,5 +75,7 @@ belongs in the backend. Neither type is the bootstrap's native `cstring`.
 ```powershell
 ./build.ps1 -Platform core
 ./build.ps1 -Platform windows -Profile release
-python Tests/platform.py
+../Duck/duck.cmd test Quaxel.Headless.dkp
+../Duck/duck.cmd test Quaxel.Windows.dkp
+../Duck/duck.cmd test Tests/Mock.dkp
 ```

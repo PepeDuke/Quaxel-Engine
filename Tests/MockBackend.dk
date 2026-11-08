@@ -1,0 +1,20 @@
+QuaxelPlatformBackend
+#{
+    long Frequency
+    long Ticks
+    bool Success
+
+    bool SupportsWindowing() { return false }
+
+    bool GetClockFrequency(long& value)
+    {
+        value = Frequency
+        return Success
+    }
+
+    bool ReadClock(long& value)
+    {
+        value = Ticks
+        return Success
+    }
+}

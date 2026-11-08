@@ -1,0 +1,33 @@
+QuaxelPlatform
+#{}
+T{
+    ClockValidatesBackendResults()
+    {
+        long frequency = 99
+        long ticks = 99
+        QuaxelPlatformBackend.Frequency = 1000
+        QuaxelPlatformBackend.Ticks = 2500
+        QuaxelPlatformBackend.Success = true
+        T.IsTrue(QuaxelPlatform.GetClockFrequency(frequency))
+        T.AreEqual(frequency, 1000)
+        T.IsTrue(QuaxelPlatform.ReadClock(ticks))
+        T.AreEqual(ticks, 2500)
+
+        QuaxelPlatformBackend.Success = false
+        T.IsFalse(QuaxelPlatform.GetClockFrequency(frequency))
+        T.AreEqual(frequency, 0)
+        T.IsFalse(QuaxelPlatform.ReadClock(ticks))
+        T.AreEqual(ticks, 0)
+
+        QuaxelPlatformBackend.Success = true
+        QuaxelPlatformBackend.Frequency = 0
+        QuaxelPlatformBackend.Ticks = -1
+        T.IsFalse(QuaxelPlatform.GetClockFrequency(frequency))
+        T.AreEqual(frequency, 0)
+        T.IsFalse(QuaxelPlatform.ReadClock(ticks))
+        T.AreEqual(ticks, 0)
+        QuaxelPlatformBackend.Ticks = 0
+        T.IsTrue(QuaxelPlatform.ReadClock(ticks))
+        T.AreEqual(ticks, 0)
+    }
+}

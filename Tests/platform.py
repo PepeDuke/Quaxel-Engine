@@ -1,4 +1,4 @@
-"""Verify backend substitution and direct module dependency boundaries."""
+"""Check build artifacts and diagnostics that require invoking the Duck builder."""
 import argparse
 import os
 from pathlib import Path
@@ -18,27 +18,6 @@ else:
     BUILDER = next((path for path in candidates if path.is_file()), None)
     if BUILDER is None:
         parser.error("build Duck first, or supply --builder")
-
-PROBE = '''
-Main() {
-    Print(QuaxelPlatform.SupportsWindowing())
-    long frequency = 99
-    long start = 99
-    long end = 99
-    bool ready = QuaxelPlatform.GetClockFrequency(frequency)
-    bool first = QuaxelPlatform.ReadClock(start)
-    bool second = QuaxelPlatform.ReadClock(end)
-    Print(ready)
-    Print(first)
-    Print(second)
-    if ready && first && second {
-        Print(frequency > 0 && start >= 0 && end >= start)
-    } else {
-        Print(frequency == 0 && start == 0 && end == 0)
-    }
-}
-'''
-
 
 class PlatformTests(unittest.TestCase):
     def setUp(self):
@@ -60,35 +39,32 @@ class PlatformTests(unittest.TestCase):
         self.assertEqual(result.returncode == 0, success, result.stdout + result.stderr)
         return result
 
-    def output(self, profile="debug"):
-        path = self.root / ".duck/build" / profile / ("Probe.exe" if os.name == "nt" else "Probe")
-        return subprocess.check_output([str(path)], text=True, timeout=10)
-
     def test_core_has_no_platform_dependency(self):
-        self.run_build([ROOT / "Quaxel.dkp"], "Main() { Print(Quaxel.ApiVersion()) }", ["quaxel_core"])
-        self.assertEqual(self.output(), "1\n")
+        self.run_build([ROOT / "Quaxel.dkp"], """Main() {
+            Print(Quaxel.ApiVersion())
+            QuaxelSession session()
+            session.Begin()
+            session.Advance()
+            session.Stop()
+            Print(session.Frame)
+            Print(session.Running)
+        }""", ["quaxel_core"])
         self.assertFalse((self.root / ".duck/build/debug/quaxel_platform.o").exists())
 
     def test_headless(self):
         for profile in ("debug", "release"):
-            result = self.run_build([ROOT / "Quaxel.Headless.dkp"], PROBE, ["quaxel_platform"], profile)
-            self.assertEqual(self.output(profile), "0\n0\n0\n0\n1\n")
+            result = self.run_build([ROOT / "Quaxel.Headless.dkp"], "Main() { Print(QuaxelPlatform.SupportsWindowing()) }",
+                                    ["quaxel_platform"], profile)
             self.assertNotIn("Kernel32", result.stdout)
             self.assertNotIn("Source\\Platform\\Windows", result.stdout)
             ir = (self.root / ".duck/build" / profile / "quaxel_platform_backend.ll").read_text()
             self.assertNotIn("QueryPerformance", ir)
 
-    @unittest.skipUnless(os.name == "nt", "Windows native backend")
-    def test_windows(self):
-        for profile in ("debug", "release"):
-            self.run_build([ROOT / "Quaxel.Windows.dkp"], PROBE, ["quaxel_platform"], profile)
-            self.assertEqual(self.output(profile), "0\n1\n1\n1\n1\n")
-
     def test_consumers_cannot_bypass_api(self):
         for source, dependencies in [
             ("Main() { Print(QuaxelPlatform.SupportsWindowing()) }", ["quaxel_core"]),
             ("Main() { Print(QuaxelPlatformBackend.SupportsWindowing()) }", ["quaxel_platform"]),
-            ("Main() { long n = 0; QuaxelWindowsNative.QueryPerformanceCounter(n) }", ["quaxel_platform"]),
+            ("Main() { long n = 0\nQuaxelWindowsNative.QueryPerformanceCounter(n) }", ["quaxel_platform"]),
         ]:
             backend = "Quaxel.Windows.dkp" if os.name == "nt" else "Quaxel.Headless.dkp"
             result = self.run_build([ROOT / backend], source, dependencies, success=False)
@@ -104,24 +80,14 @@ class PlatformTests(unittest.TestCase):
                             '[modules.quaxel_platform_backend]\nsources = ["mock.dk"]\n')
         return manifest
 
-    def test_backend_substitution_and_failure_contract(self):
-        for valid in (True, False):
-            frequency, ticks = (1000, 2500) if valid else (-5, -10)
-            manifest = self.mock_backend('QuaxelPlatformBackend #{\n'
-                'bool SupportsWindowing() { return false }\n'
-                f'bool GetClockFrequency(long& n) {{ n = {frequency}; return true }}\n'
-                f'bool ReadClock(long& n) {{ n = {ticks}; return true }}\n' + '}')
-            self.run_build([manifest], PROBE, ["quaxel_platform"])
-            self.assertEqual(self.output(), "0\n1\n1\n1\n1\n" if valid else "0\n0\n0\n0\n1\n")
-
     def test_missing_backend_method_is_compile_error(self):
         manifest = self.mock_backend('QuaxelPlatformBackend #{ bool SupportsWindowing() { return false } }')
-        result = self.run_build([manifest], PROBE, ["quaxel_platform"], success=False)
+        result = self.run_build([manifest], "Main() {}", ["quaxel_platform"], success=False)
         self.assertIn("unknown function", result.stderr)
 
     def test_two_backends_are_rejected(self):
         result = self.run_build([ROOT / "Quaxel.Headless.dkp", ROOT / "Quaxel.Windows.dkp"],
-                                PROBE, ["quaxel_platform"], success=False)
+                                "Main() {}", ["quaxel_platform"], success=False)
         self.assertIn("duplicate module", result.stderr)
 
 

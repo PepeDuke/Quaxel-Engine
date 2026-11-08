@@ -1,0 +1,20 @@
+QuaxelPlatform
+#{}
+T{
+    WindowsClockIsMonotonic()
+    {
+        long frequency = 0
+        long first = -1
+        long second = -1
+        T.IsTrue(QuaxelPlatform.GetClockFrequency(frequency))
+        T.IsTrue(frequency > 0)
+        T.IsTrue(QuaxelPlatform.ReadClock(first))
+        T.IsTrue(QuaxelPlatform.ReadClock(second))
+        T.IsTrue(first >= 0 && second >= first)
+    }
+
+    WindowsWindowingIsUnavailable()
+    {
+        T.IsFalse(QuaxelPlatform.SupportsWindowing())
+    }
+}

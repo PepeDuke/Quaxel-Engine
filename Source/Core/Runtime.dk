@@ -1,4 +1,4 @@
-// Caller-owned state keeps independent game sessions isolated.
+// These operations also support callers that store the two values separately.
 Quaxel
 #{
     int ApiVersion() { return 1 }
@@ -17,4 +17,51 @@ Quaxel
     }
 
     Stop(bool& running) { running = false }
+}
+
+QuaxelSession
+{
+    -int Frame = 0
+    -bool Running = false
+
+    Begin()
+    {
+        Frame = 0
+        Running = true
+    }
+
+    Advance()
+    {
+        if Running { Frame++ }
+    }
+
+    Stop() { Running = false }
+}
+@{
+    Frame: Frame
+    Running: Running
+}
+T{
+    IndependentSessions()
+    {
+        QuaxelSession first()
+        QuaxelSession second()
+        first.Advance()
+        T.AreEqual(first.Frame, 0)
+        T.AreEqual(first.Running, false)
+
+        first.Begin()
+        second.Begin()
+        first.Advance()
+        first.Stop()
+        first.Advance()
+        T.AreEqual(first.Frame, 1)
+        T.AreEqual(first.Running, false)
+        T.AreEqual(second.Frame, 0)
+        T.AreEqual(second.Running, true)
+
+        first.Begin()
+        T.AreEqual(first.Frame, 0)
+        T.AreEqual(first.Running, true)
+    }
 }
