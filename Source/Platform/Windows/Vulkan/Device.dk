@@ -98,6 +98,8 @@ QuaxelVulkan
         return Vk.CreateFence(Device, &fenceInfo, null, &FrameFence) == 0
     }
 
+    bool IsStarted() { return Device != 0 }
+
     bool Start(void* moduleHandle, void* windowHandle)
     {
         if Instance != 0 || windowHandle == null { return false }

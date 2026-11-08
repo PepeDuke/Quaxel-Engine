@@ -59,12 +59,24 @@ QuaxelPlatformBackend
     -void* Window
     -void* Instance
     -bool Registered
+    -bool InSizeMove
     -uint Style = 0x00CF0000 // WS_OVERLAPPEDWINDOW
 
     -long WindowProc(void* window, uint message, uint64 wParam, long lParam)
     {
-        if message == 0x0002 && window == Window { StopRenderer() } // WM_DESTROY
-        if message == 0x0082 && window == Window { Window = null } // WM_NCDESTROY
+        if window == Window {
+            if message == 0x0231 { InSizeMove = true } // WM_ENTERSIZEMOVE
+            if message == 0x0232 { InSizeMove = false } // WM_EXITSIZEMOVE
+            // The game loop resumes only after DefWindowProcW finishes the drag.
+            if message == 0x0005 && InSizeMove && wParam != (uint64)1 { // WM_SIZE, except SIZE_MINIMIZED
+                if QuaxelVulkan.IsStarted() { DrawTriangle() }
+            }
+            if message == 0x0002 { StopRenderer() } // WM_DESTROY
+            if message == 0x0082 { // WM_NCDESTROY
+                InSizeMove = false
+                Window = null
+            }
+        }
         return QuaxelWindowsNative.DefWindowProcW(window, message, wParam, lParam)
     }
 
