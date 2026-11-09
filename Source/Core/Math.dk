@@ -1,43 +1,13 @@
 // Right-handed world space: Y is height and XZ is the ground plane.
-QuaxelMath
-#{
-    extern "C" double sqrt(double value)
-
-    float Sqrt(float value) { return (float)sqrt((double)value) }
-
-    float Abs(float value) { return value < 0.0 ? -value | value }
-
-    float Clamp(float value, float low, float high)
-    {
-        if value < low { return low }
-        if value > high { return high }
-        return value
-    }
-}
-T{
-    ClampKeepsValuesInRange()
-    {
-        T.AreEqual(QuaxelMath.Clamp(2.0, -1.0, 1.0), 1.0)
-        T.AreEqual(QuaxelMath.Clamp(-2.0, -1.0, 1.0), -1.0)
-        T.AreEqual(QuaxelMath.Clamp(0.25, -1.0, 1.0), 0.25)
-    }
-
-    SqrtAndAbs()
-    {
-        T.AreEqual(QuaxelMath.Sqrt(16.0), 4.0)
-        T.AreEqual(QuaxelMath.Abs(-3.5), 3.5)
-    }
-}
-
 QuaxelVec3
 {
     float X
     float Y
     float Z
 
-    float Dot(QuaxelVec3 other) { return X * other.X + Y * other.Y + Z * other.Z }
+    float Dot(QuaxelVec3 other) { return Math.Dot(this, other) }
 
-    float Length() { return QuaxelMath.Sqrt(Dot(this)) }
+    float Length() { return Math.Length(this) }
 }
 #{
     QuaxelVec3 Make(float x, float y, float z)
@@ -58,10 +28,7 @@ QuaxelVec3
         return Make(value.X * factor, value.Y * factor, value.Z * factor)
     }
 
-    QuaxelVec3 Cross(QuaxelVec3 a, QuaxelVec3 b)
-    {
-        return Make(a.Y * b.Z - a.Z * b.Y, a.Z * b.X - a.X * b.Z, a.X * b.Y - a.Y * b.X)
-    }
+    QuaxelVec3 Cross(QuaxelVec3 a, QuaxelVec3 b) { return Math.Cross(a, b) }
 
     // A zero-length input stays zero so callers can treat it as "no direction".
     QuaxelVec3 Normalize(QuaxelVec3 value)
@@ -83,6 +50,96 @@ T{
         T.AreEqual(QuaxelVec3.Normalize(QuaxelVec3.Make(0.0, 0.0, 0.0)).Length(), 0.0)
         QuaxelVec3 normalized = QuaxelVec3.Normalize(QuaxelVec3.Make(3.0, 0.0, 4.0))
         T.AreEqual(normalized.X, 0.6)
+    }
+}
+
+// A unit quaternion. The default is no rotation.
+QuaxelQuat
+{
+    float X
+    float Y
+    float Z
+    float W = 1.0
+
+    QuaxelVec3 Rotate(QuaxelVec3 value)
+    {
+        QuaxelVec3 axis = QuaxelVec3.Make(X, Y, Z)
+        QuaxelVec3 twice = QuaxelVec3.Scale(QuaxelVec3.Cross(axis, value), 2.0)
+        return QuaxelVec3.Add(QuaxelVec3.Add(value, QuaxelVec3.Scale(twice, W)), QuaxelVec3.Cross(axis, twice))
+    }
+
+    QuaxelQuat Inverse() { return QuaxelQuat.Make(-X, -Y, -Z, W) }
+}
+#{
+    QuaxelQuat Make(float x, float y, float z, float w)
+    {
+        QuaxelQuat result
+        result.X = x
+        result.Y = y
+        result.Z = z
+        result.W = w
+        return result
+    }
+
+    // Applies b first, then a.
+    QuaxelQuat Multiply(QuaxelQuat a, QuaxelQuat b)
+    {
+        return Make(
+            a.W * b.X + a.X * b.W + a.Y * b.Z - a.Z * b.Y,
+            a.W * b.Y - a.X * b.Z + a.Y * b.W + a.Z * b.X,
+            a.W * b.Z + a.X * b.Y - a.Y * b.X + a.Z * b.W,
+            a.W * b.W - a.X * b.X - a.Y * b.Y - a.Z * b.Z)
+    }
+
+    // Degrees, by the right-hand rule. Roll about Z applies first, then pitch
+    // about X, then yaw about Y.
+    QuaxelQuat FromEuler(float yaw, float pitch, float roll)
+    {
+        float toHalfRadians = 0.00872664626
+        float y = yaw * toHalfRadians
+        float x = pitch * toHalfRadians
+        float z = roll * toHalfRadians
+        QuaxelQuat yawTurn = Make(0.0, Math.Sin(y), 0.0, Math.Cos(y))
+        QuaxelQuat pitchTurn = Make(Math.Sin(x), 0.0, 0.0, Math.Cos(x))
+        QuaxelQuat rollTurn = Make(0.0, 0.0, Math.Sin(z), Math.Cos(z))
+        return Multiply(yawTurn, Multiply(pitchTurn, rollTurn))
+    }
+}
+T{
+    DefaultQuatLeavesVectorsExactlyAlone()
+    {
+        QuaxelQuat none
+        QuaxelVec3 result = none.Rotate(QuaxelVec3.Make(1.0, 2.0, 3.0))
+        T.AreEqual(result.X, 1.0)
+        T.AreEqual(result.Y, 2.0)
+        T.AreEqual(result.Z, 3.0)
+    }
+
+    EulerAnglesFollowTheRightHandRule()
+    {
+        QuaxelVec3 forward = QuaxelVec3.Make(0.0, 0.0, 1.0)
+        QuaxelVec3 up = QuaxelVec3.Make(0.0, 1.0, 0.0)
+        // Yaw turns +Z toward +X, pitch turns +Y toward +Z.
+        QuaxelVec3 yawed = QuaxelQuat.FromEuler(90.0, 0.0, 0.0).Rotate(forward)
+        T.IsTrue(Math.Abs(yawed.X - 1.0) < 0.0001)
+        QuaxelVec3 pitched = QuaxelQuat.FromEuler(0.0, 90.0, 0.0).Rotate(up)
+        T.IsTrue(Math.Abs(pitched.Z - 1.0) < 0.0001)
+        QuaxelVec3 rolled = QuaxelQuat.FromEuler(0.0, 0.0, 90.0).Rotate(up)
+        T.IsTrue(Math.Abs(rolled.X + 1.0) < 0.0001)
+    }
+
+    EulerAppliesRollThenPitchThenYaw()
+    {
+        // Roll takes +Y to -X. Pitch leaves -X alone. Yaw takes -X to +Z.
+        QuaxelVec3 result = QuaxelQuat.FromEuler(90.0, 90.0, 90.0).Rotate(QuaxelVec3.Make(0.0, 1.0, 0.0))
+        T.IsTrue(Math.Abs(result.Z - 1.0) < 0.0001)
+    }
+
+    InverseUndoesARotation()
+    {
+        QuaxelQuat turn = QuaxelQuat.FromEuler(30.0, 40.0, 50.0)
+        QuaxelVec3 back = QuaxelQuat.Multiply(turn.Inverse(), turn).Rotate(QuaxelVec3.Make(1.0, 0.0, 0.0))
+        T.IsTrue(Math.Abs(back.X - 1.0) < 0.0001)
     }
 }
 

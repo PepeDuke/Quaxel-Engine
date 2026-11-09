@@ -1,0 +1,194 @@
+// One step of a clip: the volume to show and how long to hold it.
+QuaxelVoxelFrame
+{
+    int Volume
+    float Seconds
+}
+
+// A named run of consecutive frames in its animation.
+QuaxelVoxelClip
+{
+    string Name
+    bool Looping
+    int FirstFrame
+    int FrameCount
+}
+
+// Named flipbook clips. Each frame is a whole volume, so playing a clip only
+// changes which volume a node shows and never rewrites voxel data.
+QuaxelVoxelAnimation
+{
+    -QuaxelVoxelClip [] Clips
+    -QuaxelVoxelFrame [] Frames
+
+    // Returns the clip's index, or -1 if there is no clip with that name.
+    int FindClip(string clipName)
+    {
+        for i : 0; i < Clips.Len; i++ {
+            if Clips[i].Name == clipName { return i }
+        }
+        return -1
+    }
+
+    // Frames added next belong to this clip. Clip names are unique.
+    bool AddClip(string clipName, bool looping)
+    {
+        if FindClip(clipName) >= 0 { return false }
+        QuaxelVoxelClip clip
+        clip.Name = clipName
+        clip.Looping = looping
+        clip.FirstFrame = (int)Frames.Len
+        Clips += clip
+        return true
+    }
+
+    // Appends to the newest clip.
+    bool AddFrame(int volume, int milliseconds)
+    {
+        if Clips.Len == 0 || milliseconds < 1 { return false }
+        QuaxelVoxelFrame frame
+        frame.Volume = volume
+        frame.Seconds = (float)milliseconds / 1000.0
+        Frames += frame
+        Clips[(int)Clips.Len - 1].FrameCount++
+        return true
+    }
+
+    int FrameCount(int clip) { return Clips[clip].FrameCount }
+
+    int FrameVolume(int clip, int frame) { return Frames[Clips[clip].FirstFrame + frame].Volume }
+
+    // Counts across every clip.
+    int VolumeAt(int frameIndex) { return Frames[frameIndex].Volume }
+
+    string ClipName(int clip) { return Clips[clip].Name }
+
+    // A clip that plays once stops on its last frame.
+    Advance(QuaxelAnimator& animator, float deltaSeconds)
+    {
+        if !animator.Playing || animator.Speed <= 0.0 { return }
+        QuaxelVoxelClip clip = Clips[animator.Clip]
+        animator.Elapsed += deltaSeconds * animator.Speed
+        while animator.Elapsed >= Frames[clip.FirstFrame + animator.Frame].Seconds {
+            float held = Frames[clip.FirstFrame + animator.Frame].Seconds
+            if animator.Frame + 1 < clip.FrameCount {
+                animator.Frame++
+            } else {
+                if !clip.Looping {
+                    animator.Playing = false
+                    animator.Elapsed = 0.0
+                    return
+                }
+                animator.Frame = 0
+            }
+            animator.Elapsed -= held
+        }
+    }
+}
+@{
+    ClipCount: (int)Clips.Len
+    TotalFrames: (int)Frames.Len
+}
+T{
+    ClipsAreFoundByNameAndMustBeUnique()
+    {
+        QuaxelVoxelAnimation animation()
+        T.IsTrue(animation.AddClip("idle", true))
+        T.IsTrue(animation.AddClip("walk", true))
+        T.IsFalse(animation.AddClip("idle", false))
+        T.AreEqual(animation.ClipCount, 2)
+        T.AreEqual(animation.FindClip("walk"), 1)
+        T.AreEqual(animation.FindClip("run"), -1)
+    }
+
+    FramesBelongToTheNewestClip()
+    {
+        QuaxelVoxelAnimation animation()
+        T.IsFalse(animation.AddFrame(5, 100))
+        animation.AddClip("a", true)
+        T.IsTrue(animation.AddFrame(5, 100))
+        animation.AddClip("b", true)
+        T.IsTrue(animation.AddFrame(6, 100))
+        T.IsTrue(animation.AddFrame(7, 100))
+        T.IsFalse(animation.AddFrame(8, 0))
+        T.AreEqual(animation.FrameCount(0), 1)
+        T.AreEqual(animation.FrameCount(1), 2)
+        T.AreEqual(animation.FrameVolume(1, 1), 7)
+    }
+
+    LoopingClipWrapsAndHonorsEachFrameDuration()
+    {
+        QuaxelVoxelAnimation animation()
+        animation.AddClip("walk", true)
+        animation.AddFrame(0, 250)
+        animation.AddFrame(1, 500)
+        QuaxelAnimator animator
+        animator.Playing = true
+        animation.Advance(animator, 0.125)
+        T.AreEqual(animator.Frame, 0)
+        animation.Advance(animator, 0.125)
+        T.AreEqual(animator.Frame, 1)
+        animation.Advance(animator, 0.25)
+        T.AreEqual(animator.Frame, 1)
+        animation.Advance(animator, 0.25)
+        T.AreEqual(animator.Frame, 0)
+        T.IsTrue(animator.Playing)
+    }
+
+    OneLongStepCanCrossSeveralFrames()
+    {
+        QuaxelVoxelAnimation animation()
+        animation.AddClip("walk", true)
+        animation.AddFrame(0, 250)
+        animation.AddFrame(1, 250)
+        animation.AddFrame(2, 250)
+        QuaxelAnimator animator
+        animator.Playing = true
+        animation.Advance(animator, 1.0)
+        T.AreEqual(animator.Frame, 1)
+        T.AreEqual(animator.Elapsed, 0.0)
+    }
+
+    OnceClipStopsOnItsLastFrame()
+    {
+        QuaxelVoxelAnimation animation()
+        animation.AddClip("attack", false)
+        animation.AddFrame(0, 250)
+        animation.AddFrame(1, 250)
+        QuaxelAnimator animator
+        animator.Playing = true
+        animation.Advance(animator, 2.0)
+        T.AreEqual(animator.Frame, 1)
+        T.IsFalse(animator.Playing)
+        animation.Advance(animator, 2.0)
+        T.AreEqual(animator.Frame, 1)
+    }
+
+    SpeedScalesTimeAndZeroHolds()
+    {
+        QuaxelVoxelAnimation animation()
+        animation.AddClip("walk", true)
+        animation.AddFrame(0, 250)
+        animation.AddFrame(1, 250)
+        QuaxelAnimator animator
+        animator.Playing = true
+        animator.Speed = 2.0
+        animation.Advance(animator, 0.125)
+        T.AreEqual(animator.Frame, 1)
+        animator.Speed = 0.0
+        animation.Advance(animator, 10.0)
+        T.AreEqual(animator.Frame, 1)
+    }
+}
+
+// Plays clips of one animation on its node. Attach and control it through
+// QuaxelWorld. The engine advances it on every fixed step.
+QuaxelAnimator
+{
+    int Animation
+    int Clip
+    int Frame
+    float Elapsed // Seconds spent on the current frame.
+    float Speed = 1.0 // Zero or less holds the current frame.
+    bool Playing
+}

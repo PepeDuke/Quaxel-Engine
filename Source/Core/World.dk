@@ -4,6 +4,8 @@ QuaxelComponents
     #int MeshRenderer = 2
     #int Camera = 4
     #int Voxels = 8
+    #int Animator = 16
+    #int SocketFollower = 32
 }
 
 QuaxelTransform
@@ -13,14 +15,33 @@ QuaxelTransform
     // Horizontal unit vector that local +Z faces. The default is identity.
     float FacingX
     float FacingZ = 1.0
+    // Applied before the facing turn. The default is no rotation.
+    QuaxelQuat Rotation
+
+    -QuaxelVec3 Turn(QuaxelVec3 value)
+    {
+        QuaxelVec3 rotated = Rotation.Rotate(value)
+        return QuaxelVec3.Make(
+            FacingZ * rotated.X + FacingX * rotated.Z,
+            rotated.Y,
+            FacingZ * rotated.Z - FacingX * rotated.X)
+    }
 
     QuaxelMat4 LocalMatrix()
     {
-        QuaxelMat4 local = QuaxelMat4.Scaling(Scale)
-        local.M[0] = FacingZ * Scale.X
-        local.M[2] = -FacingX * Scale.X
-        local.M[8] = FacingX * Scale.Z
-        local.M[10] = FacingZ * Scale.Z
+        QuaxelMat4 local = QuaxelMat4.Identity()
+        QuaxelVec3 x = QuaxelVec3.Scale(Turn(QuaxelVec3.Make(1.0, 0.0, 0.0)), Scale.X)
+        QuaxelVec3 y = QuaxelVec3.Scale(Turn(QuaxelVec3.Make(0.0, 1.0, 0.0)), Scale.Y)
+        QuaxelVec3 z = QuaxelVec3.Scale(Turn(QuaxelVec3.Make(0.0, 0.0, 1.0)), Scale.Z)
+        local.M[0] = x.X
+        local.M[1] = x.Y
+        local.M[2] = x.Z
+        local.M[4] = y.X
+        local.M[5] = y.Y
+        local.M[6] = y.Z
+        local.M[8] = z.X
+        local.M[9] = z.Y
+        local.M[10] = z.Z
         local.M[12] = Position.X
         local.M[13] = Position.Y
         local.M[14] = Position.Z
@@ -125,6 +146,9 @@ QuaxelNode
     int Volume
     QuaxelMeshRenderer MeshRenderer
     QuaxelCamera Camera
+    QuaxelAnimator Animator
+    string Socket
+    bool SocketMissing
 }
 
 // Node IDs are local to one world. An ID is never reused while the world lives
@@ -137,6 +161,7 @@ QuaxelWorld
     -int [] VolumeHandles
     -bool [] VolumeDirty
     -int [] MeshVolumes
+    -QuaxelVoxelAnimation [] Animations
     -int CameraNode
     -bool Stepping
     -bool HasPendingChanges
@@ -167,7 +192,8 @@ QuaxelWorld
 
     int ParentOf(int id) { return Exists(id) ? Nodes[id - 1].Parent | 0 }
 
-    // Pass 0 to detach. Rejects a parent that would create a cycle.
+    // Pass 0 to detach. Rejects a parent that would create a cycle. Changing the
+    // parent also ends any socket attachment.
     bool SetParent(int id, int parent)
     {
         if !Exists(id) || (parent != 0 && !Exists(parent)) { return false }
@@ -177,6 +203,8 @@ QuaxelWorld
             ancestor = Nodes[ancestor - 1].Parent
         }
         Nodes[id - 1].Parent = parent
+        if Has(id, QuaxelComponents.SocketFollower) { Nodes[id - 1].Mask -= QuaxelComponents.SocketFollower }
+        Nodes[id - 1].SocketMissing = false
         return true
     }
 
@@ -350,6 +378,218 @@ QuaxelWorld
             QuaxelMat4.Translation(Volumes[index].Center), QuaxelMat4.Scaling(Volumes[index].Size)))
     }
 
+    int CreateAnimation()
+    {
+        Animations++
+        return (int)Animations.Len - 1
+    }
+
+    bool HasAnimationClip(int animation, string clipName)
+    {
+        return animation >= 0 && animation < Animations.Len && Animations[animation].FindClip(clipName) >= 0
+    }
+
+    bool AddAnimationClip(int animation, string clipName, bool looping)
+    {
+        if animation < 0 || animation >= Animations.Len { return false }
+        return Animations[animation].AddClip(clipName, looping)
+    }
+
+    // Appends to the animation's newest clip. The volume can be shared.
+    bool AddAnimationFrame(int animation, int volume, int milliseconds)
+    {
+        if animation < 0 || animation >= Animations.Len || volume < 0 || volume >= Volumes.Len { return false }
+        return Animations[animation].AddFrame(volume, milliseconds)
+    }
+
+    // Shows the first frame of the first clip, without playing it.
+    bool AttachAnimator(int id, int animation)
+    {
+        if animation < 0 || animation >= Animations.Len { return false }
+        if Animations[animation].ClipCount == 0 || Animations[animation].FrameCount(0) == 0 { return false }
+        if !AttachVoxels(id, Animations[animation].FrameVolume(0, 0)) { return false }
+        QuaxelAnimator animator
+        animator.Animation = animation
+        Nodes[id - 1].Animator = animator
+        Nodes[id - 1].Mask |= QuaxelComponents.Animator
+        return true
+    }
+
+    // Starts from the clip's first frame, unless that clip is already playing,
+    // so a system can request the same clip on every step.
+    bool PlayClip(int id, string clipName)
+    {
+        if !Has(id, QuaxelComponents.Animator) { return false }
+        QuaxelAnimator animator = Nodes[id - 1].Animator
+        int clip = Animations[animator.Animation].FindClip(clipName)
+        if clip < 0 || Animations[animator.Animation].FrameCount(clip) == 0 { return false }
+        if animator.Playing && animator.Clip == clip { return true }
+        animator.Clip = clip
+        animator.Frame = 0
+        animator.Elapsed = 0.0
+        animator.Playing = true
+        Nodes[id - 1].Animator = animator
+        Nodes[id - 1].Volume = Animations[animator.Animation].FrameVolume(clip, 0)
+        return true
+    }
+
+    // Holds the current frame. The next PlayClip starts from the beginning.
+    bool StopClip(int id)
+    {
+        if !Has(id, QuaxelComponents.Animator) { return false }
+        Nodes[id - 1].Animator.Playing = false
+        return true
+    }
+
+    // 1.0 is normal speed. Zero or less holds the current frame.
+    bool SetAnimationSpeed(int id, float speed)
+    {
+        if !Has(id, QuaxelComponents.Animator) { return false }
+        Nodes[id - 1].Animator.Speed = speed
+        return true
+    }
+
+    QuaxelAnimator GetAnimator(int id) { return Nodes[id - 1].Animator }
+
+    string CurrentClipName(int id)
+    {
+        QuaxelAnimator animator = Nodes[id - 1].Animator
+        return Animations[animator.Animation].ClipName(animator.Clip)
+    }
+
+    AdvanceAnimations(float deltaSeconds)
+    {
+        int mask = QuaxelComponents.Voxels | QuaxelComponents.Animator
+        for id : NextWith(0, mask); id != 0; id = NextWith(id, mask) {
+            QuaxelAnimator animator = Nodes[id - 1].Animator
+            if !animator.Playing { continue }
+            Animations[animator.Animation].Advance(animator, deltaSeconds)
+            Nodes[id - 1].Animator = animator
+            Nodes[id - 1].Volume = Animations[animator.Animation].FrameVolume(animator.Clip, animator.Frame)
+        }
+        UpdateSockets()
+    }
+
+    bool AddSocket(int volume, string socketName, float x, float y, float z, QuaxelQuat rotation)
+    {
+        if volume < 0 || volume >= Volumes.Len { return false }
+        return Volumes[volume].AddSocket(socketName, x, y, z, rotation)
+    }
+
+    // Makes id a child that follows the socket on whatever volume the parent is
+    // showing. Id's own "grip" socket, if it has one, is the point that lines up.
+    // Fails if no volume the parent can show has that socket.
+    bool AttachToSocket(int id, int parent, string socket)
+    {
+        if !Has(parent, QuaxelComponents.Voxels) || !OffersSocket(parent, socket) { return false }
+        if !SetParent(id, parent) { return false }
+        if !Has(id, QuaxelComponents.Transform) {
+            AttachTransform(id, QuaxelTransform.Make(QuaxelVec3.Make(0.0, 0.0, 0.0), QuaxelVec3.Make(1.0, 1.0, 1.0)))
+        }
+        Nodes[id - 1].Socket = socket
+        Nodes[id - 1].Mask |= QuaxelComponents.SocketFollower
+        FollowSocket(id)
+        return true
+    }
+
+    -bool OffersSocket(int id, string socket)
+    {
+        if Volumes[Nodes[id - 1].Volume].FindSocket(socket) >= 0 { return true }
+        if !Has(id, QuaxelComponents.Animator) { return false }
+        int animation = Nodes[id - 1].Animator.Animation
+        for i : 0; i < Animations[animation].TotalFrames; i++ {
+            if Volumes[Animations[animation].VolumeAt(i)].FindSocket(socket) >= 0 { return true }
+        }
+        return false
+    }
+
+    // The transform depends only on the parent's volume, not on its pose, so
+    // followers can update in any order.
+    -FollowSocket(int id)
+    {
+        int parentVolume = Nodes[Nodes[id - 1].Parent - 1].Volume
+        int index = Volumes[parentVolume].FindSocket(Nodes[id - 1].Socket)
+        Nodes[id - 1].SocketMissing = index < 0
+        if index < 0 { return }
+        QuaxelVoxelSocket socket = Volumes[parentVolume].SocketAt(index)
+        QuaxelTransform transform = Nodes[id - 1].Transform
+        QuaxelVec3 gripOffset = QuaxelVec3.Make(0.0, 0.0, 0.0)
+        QuaxelQuat rotation = socket.Rotation
+        if Has(id, QuaxelComponents.Voxels) {
+            int grip = Volumes[Nodes[id - 1].Volume].FindSocket("grip")
+            if grip >= 0 {
+                QuaxelVoxelSocket held = Volumes[Nodes[id - 1].Volume].SocketAt(grip)
+                rotation = QuaxelQuat.Multiply(socket.Rotation, held.Rotation.Inverse())
+                gripOffset = QuaxelVec3.Make(
+                    held.Position.X * transform.Scale.X,
+                    held.Position.Y * transform.Scale.Y,
+                    held.Position.Z * transform.Scale.Z)
+            }
+        }
+        transform.Rotation = rotation
+        transform.FacingX = 0.0
+        transform.FacingZ = 1.0
+        transform.Position = QuaxelVec3.Subtract(socket.Position, rotation.Rotate(gripOffset))
+        Nodes[id - 1].Transform = transform
+    }
+
+    // Runs after every animation advance and after the game's FixedStep, so a
+    // PlayClip during the step moves attached items before the frame is drawn.
+    UpdateSockets()
+    {
+        for id : NextWith(0, QuaxelComponents.SocketFollower); id != 0; id = NextWith(id, QuaxelComponents.SocketFollower) {
+            FollowSocket(id)
+        }
+    }
+
+    // True while this node or an ancestor follows a socket its parent's current
+    // frame does not define.
+    bool IsHidden(int id)
+    {
+        int current = id
+        while current != 0 {
+            if Nodes[current - 1].SocketMissing { return true }
+            current = Nodes[current - 1].Parent
+        }
+        return false
+    }
+
+    // The socket's pose in world space, from the node's current volume. Returns
+    // false if that volume has no such socket.
+    bool GetSocketMatrix(int id, string socket, QuaxelMat4& matrix)
+    {
+        if !Has(id, QuaxelComponents.Voxels) { return false }
+        int index = Volumes[Nodes[id - 1].Volume].FindSocket(socket)
+        if index < 0 { return false }
+        QuaxelVoxelSocket found = Volumes[Nodes[id - 1].Volume].SocketAt(index)
+        QuaxelTransform local = QuaxelTransform.Make(found.Position, QuaxelVec3.Make(1.0, 1.0, 1.0))
+        local.Rotation = found.Rotation
+        matrix = QuaxelMat4.Multiply(ModelMatrix(id), local.LocalMatrix())
+        return true
+    }
+
+    // Brightness of the faces whose normals are the volume's X, Y and Z axes.
+    // Rotation tilts the faces. Facing does not, so a character keeps its
+    // shading as it turns.
+    QuaxelVec3 FaceLights(int id)
+    {
+        QuaxelQuat rotation
+        int current = id
+        while current != 0 {
+            rotation = QuaxelQuat.Multiply(Nodes[current - 1].Transform.Rotation, rotation)
+            current = Nodes[current - 1].Parent
+        }
+        return QuaxelVec3.Make(
+            AxisLight(rotation.Rotate(QuaxelVec3.Make(1.0, 0.0, 0.0))),
+            AxisLight(rotation.Rotate(QuaxelVec3.Make(0.0, 1.0, 0.0))),
+            AxisLight(rotation.Rotate(QuaxelVec3.Make(0.0, 0.0, 1.0))))
+    }
+
+    -float AxisLight(QuaxelVec3 normal)
+    {
+        return normal.Y * normal.Y + 0.68 * normal.X * normal.X + 0.42 * normal.Z * normal.Z
+    }
+
     int AddMesh(QuaxelMeshData mesh)
     {
         int volumeIndex = -1
@@ -359,9 +599,9 @@ QuaxelWorld
                 Volumes[volumeIndex].Size.Y = 0.0625
                 Volumes[volumeIndex].Center.Y = -0.03125
             }
-            int red = (int)(QuaxelMath.Clamp(mesh.BaseColor.X, 0.0, 1.0) * 255.0)
-            int green = (int)(QuaxelMath.Clamp(mesh.BaseColor.Y, 0.0, 1.0) * 255.0)
-            int blue = (int)(QuaxelMath.Clamp(mesh.BaseColor.Z, 0.0, 1.0) * 255.0)
+            int red = (int)(Math.Clamp(mesh.BaseColor.X, 0.0, 1.0) * 255.0)
+            int green = (int)(Math.Clamp(mesh.BaseColor.Y, 0.0, 1.0) * 255.0)
+            int blue = (int)(Math.Clamp(mesh.BaseColor.Z, 0.0, 1.0) * 255.0)
             Volumes[volumeIndex].SetVoxel(0, 0, 0, (red << 16) | (green << 8) | blue)
         }
         MeshVolumes += volumeIndex
@@ -384,6 +624,7 @@ QuaxelWorld
         Volumes.Clear()
         VolumeHandles.Clear()
         VolumeDirty.Clear()
+        Animations.Clear()
         CameraNode = 0
         Stepping = false
         HasPendingChanges = false
@@ -505,6 +746,177 @@ T{
         T.IsFalse(world.Exists(id))
         T.AreEqual(world.ActiveCamera, 0)
         T.AreEqual(world.NodeCount, 0)
+    }
+
+    RotationAppliesBeforeFacingAndLeavesIdentityExact()
+    {
+        QuaxelTransform plain = QuaxelTransform.Make(QuaxelVec3.Make(1.0, 2.0, 3.0), QuaxelVec3.Make(2.0, 3.0, 4.0))
+        QuaxelMat4 matrix = plain.LocalMatrix()
+        T.AreEqual(matrix.M[0], 2.0)
+        T.AreEqual(matrix.M[5], 3.0)
+        T.AreEqual(matrix.M[10], 4.0)
+        T.AreEqual(matrix.M[12], 1.0)
+        QuaxelTransform turned = QuaxelTransform.Make(QuaxelVec3.Make(0.0, 0.0, 0.0), QuaxelVec3.Make(1.0, 1.0, 1.0))
+        // Pitch sends +Y to +Z, then facing +X sends +Z to +X.
+        turned.Rotation = QuaxelQuat.FromEuler(0.0, 90.0, 0.0)
+        turned.FacingX = 1.0
+        turned.FacingZ = 0.0
+        QuaxelMat4 model = turned.LocalMatrix()
+        QuaxelVec3 up = model.TransformPoint(QuaxelVec3.Make(0.0, 1.0, 0.0))
+        T.IsTrue(Math.Abs(up.X - 1.0) < 0.0001)
+    }
+
+    SocketRotationAndPositionMoveTheChild()
+    {
+        QuaxelWorld world()
+        int bodyVolume = world.CreateVolume(4, 4, 4)
+        // Cell (3, 1, 1) has its center at (1.5, -0.5, -0.5) in a 4^3 grid.
+        T.IsTrue(world.AddSocket(bodyVolume, "hand", 3.0, 1.0, 1.0, QuaxelQuat.FromEuler(0.0, 90.0, 0.0)))
+        T.IsFalse(world.AddSocket(bodyVolume, "hand", 0.0, 0.0, 0.0, QuaxelQuat.FromEuler(0.0, 0.0, 0.0)))
+        int body = world.CreateNode()
+        world.AttachTransform(body, QuaxelTransform.Make(QuaxelVec3.Make(10.0, 0.0, 0.0), QuaxelVec3.Make(1.0, 1.0, 1.0)))
+        world.AttachVoxels(body, bodyVolume)
+        int itemVolume = world.CreateVolume(1, 5, 1)
+        // The grip is the bottom cell, 2 units below the item's center.
+        world.AddSocket(itemVolume, "grip", 0.0, 0.0, 0.0, QuaxelQuat.FromEuler(0.0, 0.0, 0.0))
+        int item = world.CreateNode()
+        world.AttachVoxels(item, itemVolume)
+        T.IsTrue(world.AttachToSocket(item, body, "hand"))
+        T.AreEqual(world.ParentOf(item), body)
+        QuaxelVec3 center = world.WorldPosition(item)
+        // Pitch points the item's +Y along +Z, so its center lies 2 past the hand.
+        T.IsTrue(Math.Abs(center.X - 11.5) < 0.0001)
+        T.IsTrue(Math.Abs(center.Y + 0.5) < 0.0001)
+        T.IsTrue(Math.Abs(center.Z - 1.5) < 0.0001)
+    }
+
+    GripRotationIsUndoneAndChildScaleIsRespected()
+    {
+        QuaxelWorld world()
+        int bodyVolume = world.CreateVolume(1, 1, 1)
+        world.AddSocket(bodyVolume, "hand", 0.0, 0.0, 0.0, QuaxelQuat.FromEuler(90.0, 0.0, 0.0))
+        int body = world.CreateNode()
+        world.AttachVoxels(body, bodyVolume)
+        int itemVolume = world.CreateVolume(1, 5, 1)
+        world.AddSocket(itemVolume, "grip", 0.0, 0.0, 0.0, QuaxelQuat.FromEuler(90.0, 0.0, 0.0))
+        int item = world.CreateNode()
+        world.AttachTransform(item, QuaxelTransform.Make(QuaxelVec3.Make(0.0, 0.0, 0.0), QuaxelVec3.Make(2.0, 2.0, 2.0)))
+        world.AttachVoxels(item, itemVolume)
+        T.IsTrue(world.AttachToSocket(item, body, "hand"))
+        // Socket and grip rotations cancel. The grip is 2 cells of 2 units below center.
+        QuaxelVec3 center = world.WorldPosition(item)
+        T.IsTrue(Math.Abs(center.Y - 4.0) < 0.0001)
+        T.IsTrue(Math.Abs(center.X) < 0.0001)
+    }
+
+    SocketPosesChangeWithEachAnimationFrame()
+    {
+        QuaxelWorld world()
+        int animation = world.CreateAnimation()
+        world.AddAnimationClip(animation, "swing", true)
+        int first = world.CreateVolume(5, 1, 1)
+        int second = world.CreateVolume(5, 1, 1)
+        world.AddAnimationFrame(animation, first, 250)
+        world.AddAnimationFrame(animation, second, 250)
+        world.AddSocket(first, "hand", 0.0, 0.0, 0.0, QuaxelQuat.FromEuler(0.0, 0.0, 0.0))
+        world.AddSocket(second, "hand", 4.0, 0.0, 0.0, QuaxelQuat.FromEuler(90.0, 0.0, 0.0))
+        int body = world.CreateNode()
+        world.AttachAnimator(body, animation)
+        int item = world.CreateNode()
+        T.IsTrue(world.AttachToSocket(item, body, "hand"))
+        QuaxelTransform pose = world.GetTransform(item)
+        T.AreEqual(pose.Position.X, -2.0)
+        world.PlayClip(body, "swing")
+        world.AdvanceAnimations(0.25)
+        pose = world.GetTransform(item)
+        T.AreEqual(pose.Position.X, 2.0)
+        T.IsTrue(Math.Abs(pose.Rotation.Y - 0.70710678) < 0.0001)
+    }
+
+    FramesWithoutTheSocketHideTheChildAndItsChildren()
+    {
+        QuaxelWorld world()
+        int animation = world.CreateAnimation()
+        world.AddAnimationClip(animation, "swing", true)
+        int first = world.CreateVolume(1, 1, 1)
+        int second = world.CreateVolume(1, 1, 1)
+        world.AddAnimationFrame(animation, first, 250)
+        world.AddAnimationFrame(animation, second, 250)
+        world.AddSocket(second, "hand", 0.0, 0.0, 0.0, QuaxelQuat.FromEuler(0.0, 0.0, 0.0))
+        int body = world.CreateNode()
+        world.AttachAnimator(body, animation)
+        int item = world.CreateNode()
+        int gem = world.CreateChild(item)
+        // Accepted because a later frame of the animation has the socket.
+        T.IsTrue(world.AttachToSocket(item, body, "hand"))
+        T.IsTrue(world.IsHidden(item))
+        T.IsTrue(world.IsHidden(gem))
+        T.IsFalse(world.IsHidden(body))
+        world.PlayClip(body, "swing")
+        world.AdvanceAnimations(0.25)
+        T.IsFalse(world.IsHidden(item))
+        T.IsFalse(world.IsHidden(gem))
+    }
+
+    AttachToSocketRejectsNamesNoFrameDefines()
+    {
+        QuaxelWorld world()
+        int volume = world.CreateVolume(1, 1, 1)
+        int body = world.CreateNode()
+        world.AttachVoxels(body, volume)
+        int item = world.CreateNode()
+        T.IsFalse(world.AttachToSocket(item, body, "typo"))
+        T.AreEqual(world.ParentOf(item), 0)
+    }
+
+    ChangingTheParentEndsTheAttachment()
+    {
+        QuaxelWorld world()
+        int volume = world.CreateVolume(1, 1, 1)
+        world.AddSocket(volume, "hand", 0.0, 0.0, 0.0, QuaxelQuat.FromEuler(0.0, 0.0, 0.0))
+        int body = world.CreateNode()
+        world.AttachVoxels(body, volume)
+        int item = world.CreateNode()
+        world.AttachToSocket(item, body, "hand")
+        T.IsTrue(world.SetParent(item, 0))
+        T.IsFalse(world.Has(item, QuaxelComponents.SocketFollower))
+        world.UpdateSockets()
+        T.AreEqual(world.ParentOf(item), 0)
+    }
+
+    GetSocketMatrixReportsWorldPose()
+    {
+        QuaxelWorld world()
+        int volume = world.CreateVolume(2, 2, 2)
+        world.AddSocket(volume, "tip", 1.0, 1.0, 1.0, QuaxelQuat.FromEuler(0.0, 90.0, 0.0))
+        int node = world.CreateNode()
+        world.AttachTransform(node, QuaxelTransform.Make(QuaxelVec3.Make(5.0, 0.0, 0.0), QuaxelVec3.Make(2.0, 2.0, 2.0)))
+        world.AttachVoxels(node, volume)
+        QuaxelMat4 matrix = QuaxelMat4.Identity()
+        T.IsTrue(world.GetSocketMatrix(node, "tip", matrix))
+        QuaxelVec3 origin = matrix.TransformPoint(QuaxelVec3.Make(0.0, 0.0, 0.0))
+        T.AreEqual(origin.X, 6.0)
+        T.IsFalse(world.GetSocketMatrix(node, "none", matrix))
+    }
+
+    FaceLightsFollowRotationButNotFacing()
+    {
+        QuaxelWorld world()
+        int node = world.CreateNode()
+        QuaxelTransform pose = QuaxelTransform.Make(QuaxelVec3.Make(0.0, 0.0, 0.0), QuaxelVec3.Make(1.0, 1.0, 1.0))
+        pose.FacingX = 0.70710678
+        pose.FacingZ = 0.70710678
+        world.AttachTransform(node, pose)
+        QuaxelVec3 lights = world.FaceLights(node)
+        T.AreEqual(lights.X, 0.68)
+        T.AreEqual(lights.Y, 1.0)
+        T.AreEqual(lights.Z, 0.42)
+        // Rolling 90 degrees swaps which local axes face up and sideways.
+        pose.Rotation = QuaxelQuat.FromEuler(0.0, 0.0, 90.0)
+        world.SetTransform(node, pose)
+        lights = world.FaceLights(node)
+        T.IsTrue(Math.Abs(lights.X - 1.0) < 0.0001)
+        T.IsTrue(Math.Abs(lights.Y - 0.68) < 0.0001)
     }
 
     DestroyingActiveCameraClearsIt()

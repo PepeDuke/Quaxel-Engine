@@ -36,7 +36,8 @@ ownership. The engine schedules the systems that update those nodes.
 
 `QuaxelWorld` gives each node an ID local to that world. IDs start at 1 and
 are not reused, so 0 always means "no node". Engine components are stored on
-the node: `QuaxelTransform`, `QuaxelMeshRenderer` and `QuaxelCamera`. `NextWith`
+the node: `QuaxelTransform`, `QuaxelMeshRenderer`, `QuaxelCamera` and
+`QuaxelAnimator`, which plays [voxel clips](VoxelModels.md#animation). `NextWith`
 walks the active nodes that have a set of components. A camera looks along a
 fixed direction from its node's world position, so attaching it as a child
 makes it follow the parent.

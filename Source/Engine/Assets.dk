@@ -17,12 +17,31 @@ QuaxelAssets
     // printing what went wrong.
     int LoadVoxelModel(QuaxelWorld& world, string path)
     {
+        QuaxelVoxelModelParser parser()
+        if !ReadModel(world, path, parser) { return -1 }
+        return parser.Volume
+    }
+
+    // Loads a .qvox model's clips into a new animation. Returns its index, or -1
+    // after printing what went wrong. A model without clips is an error.
+    int LoadVoxelAnimation(QuaxelWorld& world, string path)
+    {
+        QuaxelVoxelModelParser parser()
+        if !ReadModel(world, path, parser) { return -1 }
+        if parser.Animation < 0 {
+            Print(path + ": the model has no clips")
+            return -1
+        }
+        return parser.Animation
+    }
+
+    -bool ReadModel(QuaxelWorld& world, string path, QuaxelVoxelModelParser& parser)
+    {
         void* file = OpenNearby(path)
         if file == null {
             Print("Asset not found: " + path)
-            return -1
+            return false
         }
-        QuaxelVoxelModelParser parser()
         uint8 [4096] chunk
         int count = QuaxelPlatform.ReadFile(file, &chunk[0], 4096)
         while count > 0 && !parser.Failed {
@@ -32,8 +51,8 @@ QuaxelAssets
         QuaxelPlatform.CloseFile(file)
         if !parser.Finish(world) {
             Print(path + " line " + QuaxelUi.FormatInt(parser.ErrorLine) + ": " + parser.Error)
-            return -1
+            return false
         }
-        return parser.Volume
+        return true
     }
 }

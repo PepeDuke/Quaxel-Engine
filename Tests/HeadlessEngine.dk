@@ -77,6 +77,13 @@ T{
         T.AreEqual(QuaxelAssets.LoadVoxelModel(world, "Tests/Fixtures/DoesNotExist.qvox"), -1)
     }
 
+    SocketsFollowAClipStartedDuringTheStep()
+    {
+        QuaxelSocketTestGame game()
+        T.IsTrue(QuaxelEngine.Run(game))
+        T.AreEqual(game.ItemXAfterStep, 1.5)
+    }
+
     FailedPrepareSkipsSimulationButStillStops()
     {
         QuaxelEngineTestGame game()
@@ -84,5 +91,179 @@ T{
         T.IsFalse(QuaxelEngine.Run(game))
         T.AreEqual(game.Steps, 0)
         T.IsTrue(game.WasStopped)
+    }
+}
+
+QuaxelAnimatorFixture
+#{
+    // Two one-voxel frames in a looping "walk" and a one-frame "idle".
+    int Make(QuaxelWorld& world)
+    {
+        int animation = world.CreateAnimation()
+        world.AddAnimationClip(animation, "walk", true)
+        world.AddAnimationFrame(animation, world.CreateVolume(1, 1, 1), 250)
+        world.AddAnimationFrame(animation, world.CreateVolume(1, 1, 1), 250)
+        world.AddAnimationClip(animation, "idle", true)
+        world.AddAnimationFrame(animation, world.CreateVolume(1, 1, 1), 250)
+        return animation
+    }
+}
+T{
+    AnimatorShowsFirstFrameUntilPlayed()
+    {
+        QuaxelWorld world()
+        int animation = QuaxelAnimatorFixture.Make(world)
+        int node = world.CreateNode()
+        T.IsTrue(world.AttachAnimator(node, animation))
+        T.IsTrue(world.Has(node, QuaxelComponents.Voxels | QuaxelComponents.Animator))
+        T.AreEqual(world.VolumeOf(node), 0)
+        world.AdvanceAnimations(1.0)
+        T.AreEqual(world.VolumeOf(node), 0)
+        T.IsFalse(world.AttachAnimator(node, 7))
+        T.IsFalse(world.AttachAnimator(99, animation))
+    }
+
+    PlayingAClipSwapsTheNodesVolume()
+    {
+        QuaxelWorld world()
+        int animation = QuaxelAnimatorFixture.Make(world)
+        int node = world.CreateNode()
+        world.AttachAnimator(node, animation)
+        T.IsTrue(world.PlayClip(node, "idle"))
+        T.AreEqual(world.VolumeOf(node), 2)
+        T.AreEqual(world.CurrentClipName(node), "idle")
+        T.IsTrue(world.PlayClip(node, "walk"))
+        T.AreEqual(world.VolumeOf(node), 0)
+        world.AdvanceAnimations(0.25)
+        T.AreEqual(world.VolumeOf(node), 1)
+        T.IsFalse(world.PlayClip(node, "missing"))
+        T.AreEqual(world.CurrentClipName(node), "walk")
+    }
+
+    ReplayingARunningClipDoesNotRestartIt()
+    {
+        QuaxelWorld world()
+        int animation = QuaxelAnimatorFixture.Make(world)
+        int node = world.CreateNode()
+        world.AttachAnimator(node, animation)
+        world.PlayClip(node, "walk")
+        world.AdvanceAnimations(0.25)
+        world.PlayClip(node, "walk")
+        T.AreEqual(world.VolumeOf(node), 1)
+        world.StopClip(node)
+        world.AdvanceAnimations(0.25)
+        T.AreEqual(world.VolumeOf(node), 1)
+        world.PlayClip(node, "walk")
+        T.AreEqual(world.VolumeOf(node), 0)
+    }
+
+    NodesSharingAnAnimationPlayIndependently()
+    {
+        QuaxelWorld world()
+        int animation = QuaxelAnimatorFixture.Make(world)
+        int first = world.CreateNode()
+        int second = world.CreateNode()
+        world.AttachAnimator(first, animation)
+        world.AttachAnimator(second, animation)
+        world.PlayClip(first, "walk")
+        world.PlayClip(second, "walk")
+        world.SetAnimationSpeed(second, 0.0)
+        world.AdvanceAnimations(0.25)
+        T.AreEqual(world.VolumeOf(first), 1)
+        T.AreEqual(world.VolumeOf(second), 0)
+    }
+
+    AStoppedAnimatorLeavesManualVoxelsAlone()
+    {
+        QuaxelWorld world()
+        int animation = QuaxelAnimatorFixture.Make(world)
+        int node = world.CreateNode()
+        world.AttachAnimator(node, animation)
+        int manual = world.CreateVolume(1, 1, 1)
+        world.AttachVoxels(node, manual)
+        world.AdvanceAnimations(1.0)
+        T.AreEqual(world.VolumeOf(node), manual)
+    }
+
+    PlayClipNeedsAnAnimator()
+    {
+        QuaxelWorld world()
+        int node = world.CreateNode()
+        T.IsFalse(world.PlayClip(node, "walk"))
+        T.IsFalse(world.StopClip(node))
+        T.IsFalse(world.SetAnimationSpeed(node, 2.0))
+    }
+}
+
+// Each step lasts longer than the fixture's 10 ms frames.
+QuaxelAnimationTestGame : QuaxelGameInstance
+{
+    int Node
+    int [] SeenColors
+    bool EndedStopped
+
+    int HeadlessSteps() { return 3 }
+
+    bool Prepare(QuaxelWorld& world)
+    {
+        int animation = QuaxelAssets.LoadVoxelAnimation(world, "Tests/Fixtures/Blink.qvox")
+        if animation < 0 { return false }
+        Node = world.CreateNode()
+        return world.AttachAnimator(Node, animation) && world.PlayClip(Node, "blink")
+    }
+
+    FixedStep(QuaxelWorld& world, QuaxelInputState& input, float deltaSeconds)
+    {
+        SeenColors += world.GetVoxel(world.VolumeOf(Node), 0, 0, 0)
+        QuaxelAnimator animator = world.GetAnimator(Node)
+        EndedStopped = !animator.Playing
+    }
+}
+T{
+    EngineAdvancesLoadedAnimationsOnEachStep()
+    {
+        QuaxelAnimationTestGame game()
+        T.IsTrue(QuaxelEngine.Run(game))
+        T.AreEqual((int)game.SeenColors.Len, 3)
+        T.AreEqual(game.SeenColors[0], 0x0000FF)
+        T.AreEqual(game.SeenColors[2], 0x0000FF)
+        T.IsTrue(game.EndedStopped)
+    }
+
+    LoadingAnimationFromAStaticModelFails()
+    {
+        QuaxelWorld world()
+        T.AreEqual(QuaxelAssets.LoadVoxelAnimation(world, "Tests/Fixtures/Small.qvox"), -1)
+    }
+}
+
+// Changes clip inside FixedStep. UpdateUi runs where a frame would be drawn.
+QuaxelSocketTestGame : QuaxelGameInstance
+{
+    int Body
+    int Item
+    float ItemXAfterStep
+
+    int HeadlessSteps() { return 1 }
+
+    bool Prepare(QuaxelWorld& world)
+    {
+        QuaxelVoxelModelParser parser()
+        parser.FeedText(world, "qvox 1\nsize 4 1 1\nclip rest loop\nframe 1000\nsocket hand 0 0 0\n....\nclip reach loop\nframe 1000\nsocket hand 3 0 0\n....\n")
+        if !parser.Finish(world) { return false }
+        Body = world.CreateNode()
+        Item = world.CreateNode()
+        return world.AttachAnimator(Body, parser.Animation) && world.AttachToSocket(Item, Body, "hand")
+    }
+
+    FixedStep(QuaxelWorld& world, QuaxelInputState& input, float deltaSeconds)
+    {
+        world.PlayClip(Body, "reach")
+    }
+
+    UpdateUi(QuaxelUi& ui, QuaxelWorld& world)
+    {
+        QuaxelVec3 position = world.GetPosition(Item)
+        ItemXAfterStep = position.X
     }
 }

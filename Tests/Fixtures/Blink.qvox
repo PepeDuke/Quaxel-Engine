@@ -1,0 +1,13 @@
+qvox 1
+size 1 1 1
+
+color r FF0000
+color b 0000FF
+
+clip blink once
+
+frame 10
+r
+
+frame 10
+b

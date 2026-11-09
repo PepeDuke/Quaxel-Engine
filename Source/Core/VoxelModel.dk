@@ -3,6 +3,7 @@
 QuaxelVoxelModelParser
 {
     int Volume = -1
+    int Animation = -1 // Stays -1 for a model without clips.
     bool Failed
     int ErrorLine
     string Error
@@ -11,7 +12,12 @@ QuaxelVoxelModelParser
     -int LineNumber
     -int [] Palette // RGB + 1 for each symbol, or 0 when unused.
     -int SymbolWidth // 1 or 2 once a color is defined.
-    -int Stage // 0 expects the version line, 1 the size, 2 colors and rows.
+    // 0 expects the version line, 1 the size, 2 colors and rows, 3 the first
+    // frame of a clip, and 4 the rows of a frame.
+    -int Stage
+    -int Target // The volume receiving rows.
+    -bool BaseUnused // A file without a base grid uses that volume for its first frame.
+    -bool BaseHasSockets
     -int Width
     -int Height
     -int Depth
@@ -46,6 +52,7 @@ QuaxelVoxelModelParser
     {
         if !Failed && LineLength > 0 { ProcessLine(world) }
         if !Failed && Stage < 2 { Fail("the file ended before its size") }
+        if !Failed && Stage == 3 { Fail("clip has no frames") }
         if !Failed && Y < Height { Fail("the file ended before the last row") }
         return !Failed
     }
@@ -76,6 +83,54 @@ QuaxelVoxelModelParser
         }
         if at + count < end && !IsSpace((int)Line[at + count]) { return false }
         at = SkipSpaces(at + count, end)
+        return true
+    }
+
+    // A word with arguments. Rows have no spaces, so this cannot be a row.
+    -bool TakeDirective(int& at, int end, string word)
+    {
+        int cursor = at
+        if !TakeWord(cursor, end, word) || cursor == end { return false }
+        at = cursor
+        return true
+    }
+
+    // Consumes printable ASCII up to the next space, or returns "".
+    -string TakeName(int& at, int end)
+    {
+        string result = ""
+        while at < end && !IsSpace((int)Line[at]) {
+            if Line[at] <= 32 || Line[at] >= 127 { return "" }
+            result += (string)char((int)Line[at])
+            at++
+        }
+        at = SkipSpaces(at, end)
+        return result
+    }
+
+    // Consumes a signed decimal such as -12.5 and the spaces after it.
+    -bool TakeFloat(int& at, int end, float& value)
+    {
+        bool negative = at < end && Line[at] == 45
+        if negative { at++ }
+        double whole = 0.0
+        double unit = 1.0
+        int digits = 0
+        bool fraction = false
+        while at < end && ((Line[at] >= 48 && Line[at] <= 57) || (Line[at] == 46 && !fraction)) {
+            if Line[at] == 46 {
+                fraction = true
+            } else {
+                if digits == 9 { return false }
+                if fraction { unit *= 0.1 }
+                whole = fraction ? whole + (double)((int)Line[at] - 48) * unit | whole * 10.0 + (double)((int)Line[at] - 48)
+                digits++
+            }
+            at++
+        }
+        if digits == 0 || (at < end && !IsSpace((int)Line[at])) { return false }
+        at = SkipSpaces(at, end)
+        value = (float)(negative ? -whole | whole)
         return true
     }
 
@@ -121,7 +176,19 @@ QuaxelVoxelModelParser
                 if TakeWord(cursor, end, "color") {
                     ProcessColor(cursor, end)
                 } else {
-                    ProcessRow(world, at, end)
+                    if TakeDirective(cursor, end, "clip") {
+                        ProcessClip(world, cursor, end)
+                    } else {
+                        if TakeDirective(cursor, end, "frame") {
+                            ProcessFrame(world, cursor, end)
+                        } else {
+                            if TakeDirective(cursor, end, "socket") {
+                                ProcessSocket(world, cursor, end)
+                            } else {
+                                ProcessRow(world, at, end)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -160,8 +227,97 @@ QuaxelVoxelModelParser
             Fail("size is out of range")
             return
         }
+        Target = Volume
         for i : 0; i < 16384; i++ { Palette += 0 }
         Stage = 2
+    }
+
+    -ProcessClip(QuaxelWorld& world, int at, int end)
+    {
+        if Stage == 3 {
+            Fail("clip has no frames")
+            return
+        }
+        if RowsStarted && Y < Height {
+            Fail("the grid ended before its last row")
+            return
+        }
+        int cursor = at
+        string clipName = TakeName(cursor, end)
+        bool looping = TakeWord(cursor, end, "loop")
+        bool once = !looping && TakeWord(cursor, end, "once")
+        if Length(clipName) == 0 || (!looping && !once) || cursor != end {
+            Fail("expected 'clip <name> loop' or 'clip <name> once'")
+            return
+        }
+        if Animation < 0 { Animation = world.CreateAnimation() }
+        if !world.AddAnimationClip(Animation, clipName, looping) {
+            Fail("clip name is used twice")
+            return
+        }
+        if !RowsStarted && BaseHasSockets {
+            Fail("sockets before the first clip need a grid")
+            return
+        }
+        BaseUnused = !RowsStarted
+        RowsStarted = true
+        Stage = 3
+    }
+
+    -ProcessSocket(QuaxelWorld& world, int at, int end)
+    {
+        if Stage == 3 {
+            Fail("expected 'frame <milliseconds>' after 'clip'")
+            return
+        }
+        int cursor = at
+        string socketName = TakeName(cursor, end)
+        float x = 0.0
+        float y = 0.0
+        float z = 0.0
+        float yaw = 0.0
+        float pitch = 0.0
+        float roll = 0.0
+        bool valid = Length(socketName) > 0 && TakeFloat(cursor, end, x) && TakeFloat(cursor, end, y) && TakeFloat(cursor, end, z)
+        if valid && cursor != end {
+            valid = TakeFloat(cursor, end, yaw) && TakeFloat(cursor, end, pitch) && TakeFloat(cursor, end, roll)
+        }
+        if !valid || cursor != end {
+            Fail("expected 'socket <name> <x> <y> <z> [<yaw> <pitch> <roll>]'")
+            return
+        }
+        if !world.AddSocket(Target, socketName, x, y, z, QuaxelQuat.FromEuler(yaw, pitch, roll)) {
+            Fail("socket name is used twice in one grid")
+            return
+        }
+        if Stage == 2 { BaseHasSockets = true }
+    }
+
+    -ProcessFrame(QuaxelWorld& world, int at, int end)
+    {
+        if Stage == 2 {
+            Fail("'frame' must follow a 'clip' line")
+            return
+        }
+        if Stage == 4 && Y < Height {
+            Fail("the grid ended before its last row")
+            return
+        }
+        int cursor = at
+        int milliseconds = TakeNumber(cursor, end)
+        if milliseconds < 1 || cursor != end {
+            Fail("expected 'frame <milliseconds>'")
+            return
+        }
+        if BaseUnused {
+            BaseUnused = false
+        } else {
+            Target = world.CreateVolume(Width, Height, Depth)
+        }
+        world.AddAnimationFrame(Animation, Target, milliseconds)
+        Y = 0
+        Z = 0
+        Stage = 4
     }
 
     -bool IsSymbol(int value) { return value > 32 && value < 127 && value != 46 && value != 35 }
@@ -223,6 +379,10 @@ QuaxelVoxelModelParser
 
     -ProcessRow(QuaxelWorld& world, int at, int end)
     {
+        if Stage == 3 {
+            Fail("expected 'frame <milliseconds>' after 'clip'")
+            return
+        }
         RowsStarted = true
         if Y >= Height {
             Fail("more rows than the size allows")
@@ -242,7 +402,7 @@ QuaxelVoxelModelParser
                     Fail("row uses an undefined color symbol")
                     return
                 }
-                if !world.SetVoxel(Volume, x, Y, Z, color - 1) {
+                if !world.SetVoxel(Target, x, Y, Z, color - 1) {
                     Fail("the model is too large to store")
                     return
                 }
@@ -386,6 +546,175 @@ T{
         few.FeedText(world, "qvox 1\nsize 1 2 1\n.\n")
         T.IsFalse(few.Finish(world))
         T.AreEqual(few.Error, "the file ended before the last row")
+    }
+
+    AModelWithoutClipsHasNoAnimation()
+    {
+        QuaxelWorld world()
+        QuaxelVoxelModelParser parser()
+        parser.FeedText(world, "qvox 1\nsize 1 1 1\n.\n")
+        T.IsTrue(parser.Finish(world))
+        T.AreEqual(parser.Animation, -1)
+    }
+
+    ClipsReadFramesIntoTheirOwnVolumes()
+    {
+        QuaxelWorld world()
+        QuaxelVoxelModelParser parser()
+        parser.FeedText(world, "qvox 1\nsize 1 1 1\ncolor r FF0000\ncolor g 00FF00\nclip walk loop\nframe 100\nr\nframe 200\ng\nclip hit once\nframe 50\n.\n")
+        T.IsTrue(parser.Finish(world))
+        int node = world.CreateNode()
+        T.IsTrue(world.AttachAnimator(node, parser.Animation))
+        // The first frame reuses the volume that was created for the size.
+        T.AreEqual(world.VolumeOf(node), parser.Volume)
+        T.AreEqual(world.GetVoxel(world.VolumeOf(node), 0, 0, 0), 0xFF0000)
+        T.IsTrue(world.PlayClip(node, "walk"))
+        world.AdvanceAnimations(0.125)
+        T.AreEqual(world.GetVoxel(world.VolumeOf(node), 0, 0, 0), 0x00FF00)
+        T.IsTrue(world.HasAnimationClip(parser.Animation, "hit"))
+        world.StopClip(node)
+        T.IsTrue(world.PlayClip(node, "hit"))
+        T.AreEqual(world.GetVoxel(world.VolumeOf(node), 0, 0, 0), -1)
+    }
+
+    ABaseGridStaysSeparateFromClips()
+    {
+        QuaxelWorld world()
+        QuaxelVoxelModelParser parser()
+        parser.FeedText(world, "qvox 1\nsize 1 1 1\ncolor r FF0000\ncolor g 00FF00\nr\nclip walk loop\nframe 100\ng\n")
+        T.IsTrue(parser.Finish(world))
+        T.AreEqual(world.GetVoxel(parser.Volume, 0, 0, 0), 0xFF0000)
+        int node = world.CreateNode()
+        world.AttachAnimator(node, parser.Animation)
+        T.AreEqual(world.GetVoxel(world.VolumeOf(node), 0, 0, 0), 0x00FF00)
+    }
+
+    RowsSpellingDirectiveWordsAreStillRows()
+    {
+        QuaxelWorld world()
+        QuaxelVoxelModelParser parser()
+        parser.FeedText(world, "qvox 1\nsize 4 1 1\ncolor c 111111\ncolor l 222222\ncolor i 333333\ncolor p 444444\nclip\n")
+        T.IsTrue(parser.Finish(world))
+        T.AreEqual(parser.Animation, -1)
+        T.AreEqual(world.GetVoxel(parser.Volume, 3, 0, 0), 0x444444)
+    }
+
+    RejectsMalformedClips()
+    {
+        QuaxelWorld world()
+        QuaxelVoxelModelParser mode()
+        mode.FeedText(world, "qvox 1\nsize 1 1 1\nclip walk forever\n")
+        T.IsFalse(mode.Finish(world))
+        T.AreEqual(mode.ErrorLine, 3)
+        QuaxelVoxelModelParser twice()
+        twice.FeedText(world, "qvox 1\nsize 1 1 1\nclip a loop\nframe 1\n.\nclip a loop\n")
+        T.IsFalse(twice.Finish(world))
+        T.AreEqual(twice.Error, "clip name is used twice")
+        QuaxelVoxelModelParser empty()
+        empty.FeedText(world, "qvox 1\nsize 1 1 1\nclip a loop\nclip b loop\n")
+        T.IsFalse(empty.Finish(world))
+        T.AreEqual(empty.Error, "clip has no frames")
+        QuaxelVoxelModelParser unfinished()
+        unfinished.FeedText(world, "qvox 1\nsize 1 1 1\nclip a loop\n")
+        T.IsFalse(unfinished.Finish(world))
+        T.AreEqual(unfinished.Error, "clip has no frames")
+    }
+
+    RejectsMalformedFrames()
+    {
+        QuaxelWorld world()
+        QuaxelVoxelModelParser orphan()
+        orphan.FeedText(world, "qvox 1\nsize 1 1 1\nframe 100\n")
+        T.IsFalse(orphan.Finish(world))
+        T.AreEqual(orphan.Error, "'frame' must follow a 'clip' line")
+        QuaxelVoxelModelParser zero()
+        zero.FeedText(world, "qvox 1\nsize 1 1 1\nclip a loop\nframe 0\n")
+        T.IsFalse(zero.Finish(world))
+        T.AreEqual(zero.Error, "expected 'frame <milliseconds>'")
+        QuaxelVoxelModelParser rows()
+        rows.FeedText(world, "qvox 1\nsize 1 1 1\nclip a loop\n.\n")
+        T.IsFalse(rows.Finish(world))
+        T.AreEqual(rows.Error, "expected 'frame <milliseconds>' after 'clip'")
+        QuaxelVoxelModelParser partial()
+        partial.FeedText(world, "qvox 1\nsize 1 2 1\nclip a loop\nframe 1\n.\nframe 1\n")
+        T.IsFalse(partial.Finish(world))
+        T.AreEqual(partial.Error, "the grid ended before its last row")
+        QuaxelVoxelModelParser tooMany()
+        tooMany.FeedText(world, "qvox 1\nsize 1 1 1\nclip a loop\nframe 1\n.\n.\n")
+        T.IsFalse(tooMany.Finish(world))
+        T.AreEqual(tooMany.Error, "more rows than the size allows")
+        QuaxelVoxelModelParser baseGrid()
+        baseGrid.FeedText(world, "qvox 1\nsize 1 2 1\n.\nclip a loop\n")
+        T.IsFalse(baseGrid.Finish(world))
+        T.AreEqual(baseGrid.Error, "the grid ended before its last row")
+    }
+
+    ColorsMustComeBeforeClips()
+    {
+        QuaxelWorld world()
+        QuaxelVoxelModelParser parser()
+        parser.FeedText(world, "qvox 1\nsize 1 1 1\nclip a loop\nframe 1\ncolor r FF0000\n.\n")
+        T.IsFalse(parser.Finish(world))
+        T.AreEqual(parser.Error, "colors must come before the first row")
+    }
+
+    EachFrameCarriesItsOwnSocketPositionAndRotation()
+    {
+        QuaxelWorld world()
+        QuaxelVoxelModelParser parser()
+        parser.FeedText(world, "qvox 1\nsize 4 1 1\nclip swing loop\nframe 250\nsocket hand 0 0 0 0 0 0\n....\nframe 250\nsocket hand 3.5 0 -1 90 0 0\n....\n")
+        T.IsTrue(parser.Finish(world))
+        int body = world.CreateNode()
+        world.AttachAnimator(body, parser.Animation)
+        int item = world.CreateNode()
+        T.IsTrue(world.AttachToSocket(item, body, "hand"))
+        QuaxelTransform pose = world.GetTransform(item)
+        T.AreEqual(pose.Position.X, -1.5)
+        T.AreEqual(pose.Rotation.W, 1.0)
+        world.PlayClip(body, "swing")
+        world.AdvanceAnimations(0.25)
+        pose = world.GetTransform(item)
+        T.AreEqual(pose.Position.X, 2.0)
+        T.AreEqual(pose.Position.Z, -1.0)
+        T.IsTrue(Math.Abs(pose.Rotation.Y - 0.70710678) < 0.0001)
+    }
+
+    SocketsOnAStaticModelAndRotationIsOptional()
+    {
+        QuaxelWorld world()
+        QuaxelVoxelModelParser parser()
+        parser.FeedText(world, "qvox 1\nsize 1 1 1\nsocket grip 0 0 0\n.\n")
+        T.IsTrue(parser.Finish(world))
+        int node = world.CreateNode()
+        world.AttachVoxels(node, parser.Volume)
+        QuaxelMat4 matrix = QuaxelMat4.Identity()
+        T.IsTrue(world.GetSocketMatrix(node, "grip", matrix))
+    }
+
+    RejectsMalformedSockets()
+    {
+        QuaxelWorld world()
+        QuaxelVoxelModelParser partial()
+        partial.FeedText(world, "qvox 1\nsize 1 1 1\nsocket a 0 0 0 90\n.\n")
+        T.IsFalse(partial.Finish(world))
+        T.AreEqual(partial.ErrorLine, 3)
+        QuaxelVoxelModelParser missing()
+        missing.FeedText(world, "qvox 1\nsize 1 1 1\nsocket a 0 0\n.\n")
+        T.IsFalse(missing.Finish(world))
+        QuaxelVoxelModelParser letters()
+        letters.FeedText(world, "qvox 1\nsize 1 1 1\nsocket a 0 0 x\n.\n")
+        T.IsFalse(letters.Finish(world))
+        QuaxelVoxelModelParser twice()
+        twice.FeedText(world, "qvox 1\nsize 1 1 1\nsocket a 0 0 0\nsocket a 1 1 1\n.\n")
+        T.IsFalse(twice.Finish(world))
+        T.AreEqual(twice.Error, "socket name is used twice in one grid")
+        QuaxelVoxelModelParser noFrame()
+        noFrame.FeedText(world, "qvox 1\nsize 1 1 1\nclip a loop\nsocket b 0 0 0\n")
+        T.IsFalse(noFrame.Finish(world))
+        QuaxelVoxelModelParser noGrid()
+        noGrid.FeedText(world, "qvox 1\nsize 1 1 1\nsocket b 0 0 0\nclip a loop\nframe 1\n.\n")
+        T.IsFalse(noGrid.Finish(world))
+        T.AreEqual(noGrid.Error, "sockets before the first clip need a grid")
     }
 
     RejectsEndingBeforeSize()

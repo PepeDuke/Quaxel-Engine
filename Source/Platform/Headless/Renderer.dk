@@ -4,7 +4,7 @@ QuaxelPlatformBackend
     int MapVolume(int previous, int words, void*& mapped) { return -1 }
     UnmapVolume(int handle) {  }
     bool BeginVoxelFrame() { return false }
-    bool TraceVolume(int handle, void* boxFromClip, float left, float top, float right, float bottom)
+    bool TraceVolume(int handle, void* boxFromClip, float left, float top, float right, float bottom, float lightX, float lightY, float lightZ)
     {
         return false
     }

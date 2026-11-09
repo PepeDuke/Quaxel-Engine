@@ -4,6 +4,15 @@ QuaxelVoxelUpload
     int [33554432] Words
 }
 
+// A named pose in a volume's local space. Each animation frame is a volume, so
+// its sockets are per frame.
+QuaxelVoxelSocket
+{
+    string Name
+    QuaxelVec3 Position
+    QuaxelQuat Rotation
+}
+
 // Words starts with the grid dimensions, then one offset per 8^3 brick.
 // A zero offset means empty space. Only written bricks have a payload.
 QuaxelVoxelVolume
@@ -11,6 +20,7 @@ QuaxelVoxelVolume
     -int [] Words
     -int [] OccupiedCounts
     -int [] FreeOffsets
+    -QuaxelVoxelSocket [] Sockets
     -int PayloadStart
     QuaxelVec3 Center
     QuaxelVec3 Size
@@ -26,6 +36,7 @@ QuaxelVoxelVolume
         Words.Clear()
         OccupiedCounts.Clear()
         FreeOffsets.Clear()
+        Sockets.Clear()
         PayloadStart = 3 + bricks
         Center = QuaxelVec3.Make(0.0, 0.0, 0.0)
         Words += width
@@ -73,6 +84,31 @@ QuaxelVoxelVolume
         }
         return true
     }
+
+    int FindSocket(string socketName)
+    {
+        for i : 0; i < Sockets.Len; i++ {
+            if Sockets[i].Name == socketName { return i }
+        }
+        return -1
+    }
+
+    // Whole coordinates name the center of a cell. Names are unique per volume.
+    bool AddSocket(string socketName, float x, float y, float z, QuaxelQuat rotation)
+    {
+        if Words.Len == 0 || FindSocket(socketName) >= 0 { return false }
+        QuaxelVoxelSocket socket
+        socket.Name = socketName
+        socket.Position = QuaxelVec3.Make(
+            x + 0.5 - (float)Words[0] * 0.5,
+            y + 0.5 - (float)Words[1] * 0.5,
+            z + 0.5 - (float)Words[2] * 0.5)
+        socket.Rotation = rotation
+        Sockets += socket
+        return true
+    }
+
+    QuaxelVoxelSocket SocketAt(int index) { return Sockets[index] }
 
     // RGB in the low 24 bits, or -1 for an empty or outside cell.
     int GetVoxel(int x, int y, int z)

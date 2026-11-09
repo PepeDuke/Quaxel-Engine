@@ -203,7 +203,7 @@ QuaxelUiBar : QuaxelUiElement
     Paint(QuaxelUiCanvas& canvas, int left, int top, int width, int height)
     {
         canvas.Rect(left, top, width, height, BackColor)
-        canvas.Rect(left, top, (int)((float)width * QuaxelMath.Clamp(Value, 0.0, 1.0)), height, Color)
+        canvas.Rect(left, top, (int)((float)width * Math.Clamp(Value, 0.0, 1.0)), height, Color)
     }
 
     Receive(QuaxelUiChange& change)

@@ -71,7 +71,8 @@ instance, and worlds composed of nodes and components.
 Games build their interface with Duck markup. The engine lays it out and draws
 it over the world. [User interface](Docs/Ui.md)
 
-Models are 3D color grids stored as editable text files.
+Models are 3D color grids stored as editable text files, and can hold named
+animation clips and per-frame attachment sockets.
 [Voxel models](Docs/VoxelModels.md)
 
 ## Dependency boundary

@@ -5,9 +5,9 @@ QuaxelPlatformBackend
     int MapVolume(int previous, int words, void*& mapped) { return QuaxelVulkan.MapVolume(previous, words, mapped) }
     UnmapVolume(int handle) { QuaxelVulkan.UnmapVolume(handle) }
     bool BeginVoxelFrame() { return BeginFrame(null) }
-    bool TraceVolume(int handle, void* boxFromClip, float left, float top, float right, float bottom)
+    bool TraceVolume(int handle, void* boxFromClip, float left, float top, float right, float bottom, float lightX, float lightY, float lightZ)
     {
-        return QuaxelVulkan.TraceVolume(handle, boxFromClip, left, top, right, bottom)
+        return QuaxelVulkan.TraceVolume(handle, boxFromClip, left, top, right, bottom, lightX, lightY, lightZ)
     }
 
     bool DrawUi(int x, int y, int width, int height, uint color, uint glyphFirst, uint glyphLast, int cell)

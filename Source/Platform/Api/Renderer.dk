@@ -7,9 +7,10 @@ QuaxelRenderer
     int MapVolume(int previous, int words, void*& mapped) { return QuaxelPlatformBackend.MapVolume(previous, words, mapped) }
     UnmapVolume(int handle) { QuaxelPlatformBackend.UnmapVolume(handle) }
     bool BeginVoxelFrame() { return QuaxelPlatformBackend.BeginVoxelFrame() }
-    bool TraceVolume(int handle, void* boxFromClip, float left, float top, float right, float bottom)
+    // The light values are the brightness of faces along the volume's X, Y and Z axes.
+    bool TraceVolume(int handle, void* boxFromClip, float left, float top, float right, float bottom, float lightX, float lightY, float lightZ)
     {
-        return QuaxelPlatformBackend.TraceVolume(handle, boxFromClip, left, top, right, bottom)
+        return QuaxelPlatformBackend.TraceVolume(handle, boxFromClip, left, top, right, bottom, lightX, lightY, lightZ)
     }
 
     // Blends a rectangle over the frame, after its volumes. Color is 0xAARRGGBB

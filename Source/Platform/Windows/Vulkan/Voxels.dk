@@ -21,6 +21,7 @@ VkVoxelParams
     int StartY
     int Srgb
     int Bgra
+    float [3] FaceLight
 }
 
 VkUiParams
@@ -59,7 +60,7 @@ QuaxelVulkan
         long [2] sets = {StorageLayout, StorageLayout}
         VkPushConstantRange params
         params.stageFlags = 32
-        params.vkSize = 88
+        params.vkSize = 100
         VkPipelineLayoutCreateInfo layout
         layout.setLayoutCount = 2
         layout.pSetLayouts = &sets[0]
@@ -206,7 +207,7 @@ QuaxelVulkan
         Vk.CmdBindDescriptorSets(Command, 1, ComputeLayout, 0, 1, &Output.Descriptor, 0, null)
     }
 
-    bool TraceVolume(int handle, void* matrix, float left, float top, float right, float bottom)
+    bool TraceVolume(int handle, void* matrix, float left, float top, float right, float bottom, float lightX, float lightY, float lightZ)
     {
         if !FrameOpen { return Device != 0 }
         if !ComputeFrame || handle < 0 || handle >= Volumes.Count { return false }
@@ -220,6 +221,9 @@ QuaxelVulkan
         int endY = (int)(bottom * (float)Extent.height) + 1
         params.Srgb = Format == 50 || Format == 43 ? 1 | 0
         params.Bgra = Format == 50 || Format == 44 ? 1 | 0
+        params.FaceLight[0] = lightX
+        params.FaceLight[1] = lightY
+        params.FaceLight[2] = lightZ
         if UiBound {
             UiBound = false
             Vk.CmdBindPipeline(Command, 1, ComputePipeline)
@@ -227,7 +231,7 @@ QuaxelVulkan
         }
         VkStorage storage = Volumes.Items[handle]
         Vk.CmdBindDescriptorSets(Command, 1, ComputeLayout, 1, 1, &storage.Descriptor, 0, null)
-        Vk.CmdPushConstants(Command, ComputeLayout, 32, 0, 88, &params)
+        Vk.CmdPushConstants(Command, ComputeLayout, 32, 0, 100, &params)
         Vk.CmdDispatch(Command, (endX - params.StartX + 7) / 8, (endY - params.StartY + 7) / 8, 1)
         MemoryBarrier(0x800, 0x40, 0x800, 0x60) // following volume compares against this depth
         return true

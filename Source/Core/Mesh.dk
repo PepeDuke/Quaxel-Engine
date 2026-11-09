@@ -98,9 +98,9 @@ T{
             }
         }
         for i : 0; i < mesh.VertexCount; i++ {
-            T.AreEqual(QuaxelMath.Abs(mesh.Vertices[i].X), 0.5)
-            T.AreEqual(QuaxelMath.Abs(mesh.Vertices[i].Y), 0.5)
-            T.AreEqual(QuaxelMath.Abs(mesh.Vertices[i].Z), 0.5)
+            T.AreEqual(Math.Abs(mesh.Vertices[i].X), 0.5)
+            T.AreEqual(Math.Abs(mesh.Vertices[i].Y), 0.5)
+            T.AreEqual(Math.Abs(mesh.Vertices[i].Z), 0.5)
         }
     }
 }
