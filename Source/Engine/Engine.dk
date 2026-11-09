@@ -188,7 +188,7 @@ QuaxelEngine
             float top = Math.Clamp((clip[3][1] - ry + 1.0) * 0.5, 0.0, 1.0)
             float bottom = Math.Clamp((clip[3][1] + ry + 1.0) * 0.5, 0.0, 1.0)
             if left >= right || top >= bottom { continue }
-            if clip.Determinant() == 0.0 { continue }
+            if clip.Determinant() (0.0)== 0.0 { continue } // Exact: a small model has a tiny but valid determinant.
             mat4 boxFromClip = clip.Inverse()
             vec3 lights = world.FaceLights(id)
             if !QuaxelRenderer.TraceVolume(world.VolumeHandle(world.VolumeOf(id)), &boxFromClip, left, top, right, bottom, lights.X, lights.Y, lights.Z) { return false }
