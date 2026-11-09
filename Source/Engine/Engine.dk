@@ -4,6 +4,7 @@ QuaxelEngine
     // Live resize runs inside the window system's modal loop, so the redraw
     // handler finds the world here. Set only while the world is being rendered.
     -void* RenderedWorld
+    -void* RenderedUi
     -bool RedrawFailed
 
     // Frames slower than this many steps drop the excess instead of catching up.
@@ -13,13 +14,15 @@ QuaxelEngine
     bool Run(QuaxelGameInstance& game)
     {
         QuaxelWorld world()
+        QuaxelUi ui()
         bool success = game.Prepare(world)
         if !success { Print("Failed to prepare the initial world") }
         if success {
+            ui.Content = game.BuildUi()
             if QuaxelPlatform.SupportsWindowing() {
-                success = RunWindowed(game, world)
+                success = RunWindowed(game, world, ui)
             } else {
-                RunHeadless(game, world)
+                RunHeadless(game, world, ui)
             }
         }
         world.Release()
@@ -34,7 +37,7 @@ QuaxelEngine
         world.EndStep()
     }
 
-    -RunHeadless(QuaxelGameInstance& game, QuaxelWorld& world)
+    -RunHeadless(QuaxelGameInstance& game, QuaxelWorld& world, QuaxelUi& ui)
     {
         QuaxelInputState input
         QuaxelSession session()
@@ -43,12 +46,13 @@ QuaxelEngine
         while session.Running && session.Frame < total {
             SampleInput(input)
             Step(game, world, input)
+            game.UpdateUi(ui, world)
             session.Advance()
         }
         session.Stop()
     }
 
-    -bool RunWindowed(QuaxelGameInstance& game, QuaxelWorld& world)
+    -bool RunWindowed(QuaxelGameInstance& game, QuaxelWorld& world, QuaxelUi& ui)
     {
         if !QuaxelPlatform.OpenWindow(game.WindowTitle(), game.WindowWidth(), game.WindowHeight(), true) {
             Print("Failed to open the window")
@@ -56,7 +60,7 @@ QuaxelEngine
         }
         bool success = QuaxelRenderer.Start()
         if !success { Print("Failed to start the renderer") }
-        if success { success = RunLoop(game, world) }
+        if success { success = RunLoop(game, world, ui) }
         QuaxelRenderer.Stop()
         QuaxelPlatform.CloseWindow()
         return success
@@ -70,7 +74,7 @@ QuaxelEngine
         }
     }
 
-    -bool RunLoop(QuaxelGameInstance& game, QuaxelWorld& world)
+    -bool RunLoop(QuaxelGameInstance& game, QuaxelWorld& world, QuaxelUi& ui)
     {
         long frequency = 0
         long now = 0
@@ -82,6 +86,7 @@ QuaxelEngine
         stepper.Configure(frequency, Quaxel.FixedDeltaSeconds())
         stepper.Reset(now)
         RenderedWorld = &world
+        RenderedUi = &ui
         RedrawFailed = false
         QuaxelPlatform.SetRedrawHandler(RedrawDuringResize)
         QuaxelPlatform.ConsumeWindowStall()
@@ -108,7 +113,13 @@ QuaxelEngine
             int steps = stepper.Advance(now, MaxStepsPerFrame())
             for i : 0; i < steps; i++ { Step(game, world, input) }
 
-            if RedrawFailed || !Render(world, width, height) {
+            game.UpdateUi(ui, world)
+            int mouseX = 0
+            int mouseY = 0
+            QuaxelPlatform.GetMousePosition(mouseX, mouseY)
+            ui.Layout(width, height, mouseX, mouseY, QuaxelPlatform.IsMouseButtonDown())
+
+            if RedrawFailed || !Render(world, ui, width, height) {
                 Print("Rendering failed")
                 success = false
                 break
@@ -116,20 +127,23 @@ QuaxelEngine
         }
         QuaxelPlatform.ClearRedrawHandler()
         RenderedWorld = null
+        RenderedUi = null
         return success
     }
 
     -RedrawDuringResize()
     {
-        if RenderedWorld == null || RedrawFailed { return }
+        if RenderedWorld == null || RenderedUi == null || RedrawFailed { return }
         int width = 0
         int height = 0
         if !QuaxelPlatform.GetWindowSize(width, height) || width == 0 || height == 0 { return }
         QuaxelWorld* world = (QuaxelWorld*)RenderedWorld
-        if !Render(*world, width, height) { RedrawFailed = true }
+        QuaxelUi* ui = (QuaxelUi*)RenderedUi
+        ui.Relayout(width, height)
+        if !Render(*world, *ui, width, height) { RedrawFailed = true }
     }
 
-    -bool Render(QuaxelWorld& world, int width, int height)
+    -bool Render(QuaxelWorld& world, QuaxelUi& ui, int width, int height)
     {
         QuaxelMat4 viewProjection = QuaxelMat4.Identity()
         int cameraNode = world.ActiveCamera
@@ -165,6 +179,10 @@ QuaxelEngine
             QuaxelMat4 boxFromClip
             if !clip.InvertAffine(boxFromClip) { continue }
             if !QuaxelRenderer.TraceVolume(world.VolumeHandle(world.VolumeOf(id)), &boxFromClip.M[0], left, top, right, bottom) { return false }
+        }
+        for i : 0; i < ui.CommandCount; i++ {
+            QuaxelUiCommand command = ui.GetCommand(i)
+            if !QuaxelRenderer.DrawUi(command.X, command.Y, command.Width, command.Height, command.Color, command.GlyphFirst, command.GlyphLast, command.Cell) { return false }
         }
         return QuaxelRenderer.EndFrame()
     }

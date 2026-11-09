@@ -1,0 +1,92 @@
+// One filled rectangle, or one glyph when Cell is positive. Color is 0xAARRGGBB.
+QuaxelUiCommand
+{
+    int X
+    int Y
+    int Width
+    int Height
+    uint Color
+    uint GlyphFirst
+    uint GlyphLast
+    int Cell
+}
+
+// Mouse state for one layout pass. Coordinates are client pixels.
+QuaxelUiPointer
+{
+    int X
+    int Y
+    bool Pressed
+    bool Released
+
+    bool IsInside(int x, int y, int width, int height)
+    {
+        return X >= x && Y >= y && X < x + width && Y < y + height
+    }
+}
+
+// Collects what one layout pass wants drawn, back to front.
+QuaxelUiCanvas
+{
+    QuaxelUiCommand [] Commands
+    QuaxelUiPointer Pointer
+
+    Rect(int x, int y, int width, int height, uint color)
+    {
+        if width <= 0 || height <= 0 || (color >> 24) == (uint)0 { return }
+        QuaxelUiCommand command
+        command.X = x
+        command.Y = y
+        command.Width = width
+        command.Height = height
+        command.Color = color
+        Commands += command
+    }
+
+    Text(int x, int y, string text, uint color, int size)
+    {
+        if size <= 0 || (color >> 24) == (uint)0 { return }
+        long count = Length(text)
+        for i : (long)0; i < count; i++ {
+            uint codeUnit = CodeUnitAt(text, i)
+            if codeUnit != (uint)32 {
+                QuaxelUiCommand command
+                command.X = x + (int)i * 6 * size
+                command.Y = y
+                command.Width = 5 * size
+                command.Height = 7 * size
+                command.Color = color
+                command.Cell = size
+                uint first = 0
+                uint last = 0
+                QuaxelUiFont.Glyph(codeUnit, first, last)
+                command.GlyphFirst = first
+                command.GlyphLast = last
+                Commands += command
+            }
+        }
+    }
+}
+T{
+    InvisibleAndEmptyRectsAreSkipped()
+    {
+        QuaxelUiCanvas canvas
+        canvas.Rect(0, 0, 10, 10, 0x00FFFFFF)
+        canvas.Rect(0, 0, 0, 10, 0xFFFFFFFF)
+        T.AreEqual(canvas.Commands.Len, 0)
+        canvas.Rect(1, 2, 3, 4, 0x80FFFFFF)
+        T.AreEqual(canvas.Commands.Len, 1)
+        T.AreEqual(canvas.Commands[0].Height, 4)
+    }
+
+    TextEmitsOneScaledCommandPerVisibleCharacter()
+    {
+        QuaxelUiCanvas canvas
+        canvas.Text(10, 20, "A B", 0xFFFFFFFF, 2)
+        T.AreEqual(canvas.Commands.Len, 2)
+        T.AreEqual(canvas.Commands[0].X, 10)
+        T.AreEqual(canvas.Commands[1].X, 34)
+        T.AreEqual(canvas.Commands[1].Width, 10)
+        T.AreEqual(canvas.Commands[1].Cell, 2)
+    }
+}

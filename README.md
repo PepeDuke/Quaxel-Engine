@@ -68,6 +68,9 @@ The gameplay architecture uses an engine-owned main loop, a persistent game
 instance, and worlds composed of nodes and components.
 [World and ECS design](Docs/World.md)
 
+Games build their interface with Duck markup. The engine lays it out and draws
+it over the world. [User interface](Docs/Ui.md)
+
 ## Dependency boundary
 
 Dependency direction is `Hellfeather -> Quaxel`; Quaxel must not import game code.

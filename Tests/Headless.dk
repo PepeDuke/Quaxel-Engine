@@ -13,6 +13,13 @@ T{
         T.IsFalse(QuaxelPlatform.IsKeyDown(-1))
         T.IsFalse(QuaxelPlatform.IsKeyDown(256))
         T.IsFalse(QuaxelPlatform.ConsumeWindowStall())
+        T.IsFalse(QuaxelRenderer.DrawUi(0, 0, 1, 1, 0xFFFFFFFF, 0, 0, 0))
+        T.IsFalse(QuaxelPlatform.IsMouseButtonDown())
+        int mouseX = 99
+        int mouseY = 99
+        T.IsFalse(QuaxelPlatform.GetMousePosition(mouseX, mouseY))
+        T.AreEqual(mouseX, 0)
+        T.AreEqual(mouseY, 0)
         QuaxelRenderer.Stop()
         T.IsFalse(QuaxelPlatform.OpenWindow("Headless", 400, 250, false))
         T.IsFalse(QuaxelPlatform.PumpWindow(true))

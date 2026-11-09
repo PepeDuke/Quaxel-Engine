@@ -6,4 +6,10 @@ QuaxelPlatform
     {
         return key >= 0 && key < 256 && QuaxelPlatformBackend.IsKeyDown(key)
     }
+
+    // Reads the last mouse position in client pixels. Clears both on failure.
+    bool GetMousePosition(int& x, int& y) { return QuaxelPlatformBackend.GetMousePosition(x, y) }
+
+    // Reports the left button, which is released when the window loses focus.
+    bool IsMouseButtonDown() { return QuaxelPlatformBackend.IsMouseButtonDown() }
 }

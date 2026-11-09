@@ -1,0 +1,31 @@
+#version 450
+layout(local_size_x=8,local_size_y=8) in;
+layout(push_constant) uniform Params {
+    ivec2 extent;
+    ivec2 start;
+    ivec2 size;
+    uint color; // 0xAARRGGBB, display-encoded
+    uint glyphFirst;
+    uint glyphLast;
+    int cell; // Pixels per glyph cell, or 0 for a solid rectangle.
+    int bgra;
+} pc;
+layout(set=0,binding=0,std430) buffer Output { uint frame[]; };
+
+void main() {
+    ivec2 local = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(local, pc.size))) return;
+    ivec2 pixel = pc.start + local;
+    if (any(lessThan(pixel, ivec2(0))) || any(greaterThanEqual(pixel, pc.extent))) return;
+    if (pc.cell > 0) {
+        ivec2 glyph = local / pc.cell;
+        uint column = glyph.x < 4 ? (pc.glyphFirst >> (8 * glyph.x)) : pc.glyphLast;
+        if (((column >> glyph.y) & 1u) == 0u) return;
+    }
+    int index = pixel.x + pc.extent.x * pixel.y;
+    vec4 source = vec4((pc.color >> 16) & 255u, (pc.color >> 8) & 255u, pc.color & 255u, pc.color >> 24) / 255.0;
+    vec4 target = unpackUnorm4x8(frame[index]);
+    vec3 under = pc.bgra != 0 ? target.bgr : target.rgb;
+    vec3 blended = mix(under, source.rgb, source.a);
+    frame[index] = packUnorm4x8(vec4(pc.bgra != 0 ? blended.bgr : blended, 1.0));
+}

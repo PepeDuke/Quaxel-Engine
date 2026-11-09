@@ -10,6 +10,22 @@ QuaxelTransform
 {
     QuaxelVec3 Position
     QuaxelVec3 Scale
+    // Horizontal unit vector that local +Z faces. The default is identity.
+    float FacingX
+    float FacingZ = 1.0
+
+    QuaxelMat4 LocalMatrix()
+    {
+        QuaxelMat4 local = QuaxelMat4.Scaling(Scale)
+        local.M[0] = FacingZ * Scale.X
+        local.M[2] = -FacingX * Scale.X
+        local.M[8] = FacingX * Scale.Z
+        local.M[10] = FacingZ * Scale.Z
+        local.M[12] = Position.X
+        local.M[13] = Position.Y
+        local.M[14] = Position.Z
+        return local
+    }
 }
 #{
     QuaxelTransform Make(QuaxelVec3 position, QuaxelVec3 scale)
@@ -268,8 +284,7 @@ QuaxelWorld
         while current != 0 {
             if Has(current, QuaxelComponents.Transform) {
                 QuaxelTransform local = Nodes[current - 1].Transform
-                model = QuaxelMat4.Multiply(QuaxelMat4.Multiply(
-                    QuaxelMat4.Translation(local.Position), QuaxelMat4.Scaling(local.Scale)), model)
+                model = QuaxelMat4.Multiply(local.LocalMatrix(), model)
             }
             current = Nodes[current - 1].Parent
         }
@@ -515,6 +530,16 @@ QuaxelGameInstance
 
     // Runs once per fixed simulation step.
     FixedStep(QuaxelWorld& world, QuaxelInputState& input, float deltaSeconds) {}
+
+    // Builds the UI once at startup, using Duck markup. The engine owns the result.
+    markup BuildUi()
+    {
+        markup none
+        return none
+    }
+
+    // Runs once per frame, after fixed steps and before the UI is drawn.
+    UpdateUi(QuaxelUi& ui, QuaxelWorld& world) {}
 
     // Runs after the world has been released.
     Stopped() {}

@@ -1,6 +1,58 @@
 QuaxelVulkan
 #{}
 T{
+    UiBlendsRectanglesAndDrawsGlyphBits()
+    {
+        T.IsTrue(QuaxelPlatformBackend.OpenWindow("UI composite", 128, 128, false))
+        T.IsTrue(QuaxelPlatformBackend.StartRenderer())
+        T.IsTrue(BeginFrame(128, 128, null))
+        T.IsTrue(DrawUi(10, 10, 20, 20, 0xFFFF0000, 0, 0, 0))
+        T.IsTrue(DrawUi(10, 10, 20, 20, 0x800000FF, 0, 0, 0))
+        // Only row 0 of column 0 and row 6 of column 4 are lit, at two pixels per cell.
+        T.IsTrue(DrawUi(50, 50, 10, 14, 0xFF00FF00, 1, 64, 2))
+        // Partly off-screen rectangles are clipped rather than wrapped to the next row.
+        T.IsTrue(DrawUi(-4, 80, 8, 2, 0xFFFFFFFF, 0, 0, 0))
+        VkStorage readback
+        T.IsTrue(CreateStorage(28, 2, 6, readback))
+        MemoryBarrier(0x1800, 0x1040, 0x1000, 0x800)
+        int [7] xs = {15, 9, 51, 53, 59, 3, 127}
+        int [7] ys = {15, 15, 51, 51, 63, 80, 79}
+        VkBufferCopy [7] regions
+        for i : 0; i < 7; i++ {
+            regions[i].srcOffset = (long)(xs[i] + Extent.width * ys[i]) * 4
+            regions[i].dstOffset = (long)i * 4
+            regions[i].bytes = 4
+        }
+        Vk.CmdCopyBuffer(Command, Output.Buffer, readback.Buffer, 7, &regions[0])
+        MemoryBarrier(0x1000, 0x1000, 0x4000, 0x2000)
+        T.IsTrue(EndFrame())
+        T.AreEqual(Vk.WaitForFences(Device, 1, &FrameFence, 1, -1), 0)
+        void* mapped = null
+        T.AreEqual(Vk.MapMemory(Device, readback.Memory, 0, 28, 0, &mapped), 0)
+        uint [7] pixels
+        memcpy(&pixels[0], mapped, 28)
+        Vk.UnmapMemory(Device, readback.Memory)
+        ReleaseStorage(readback)
+        bool bgra = Format == 50 || Format == 44
+        uint clear = 0xFF182030
+        uint green = 0xFF00FF00
+        uint white = 0xFFFFFFFF
+        Stop()
+        QuaxelPlatformBackend.CloseWindow()
+        int redShift = bgra ? 16 | 0
+        int blueShift = bgra ? 0 | 16
+        int red = (int)((pixels[0] >> redShift) & (uint)255)
+        int blue = (int)((pixels[0] >> blueShift) & (uint)255)
+        T.IsTrue(red >= 126 && red <= 128)
+        T.IsTrue(blue >= 127 && blue <= 129)
+        T.AreEqual(pixels[1], clear)
+        T.AreEqual(pixels[2], green)
+        T.AreEqual(pixels[3], clear)
+        T.AreEqual(pixels[4], green)
+        T.AreEqual(pixels[5], white)
+        T.AreEqual(pixels[6], clear)
+    }
+
     RayCrossesEmptyBrickAndWritesFirstHitDepth()
     {
         T.IsTrue(QuaxelPlatformBackend.OpenWindow("Voxel traversal", 128, 128, false))

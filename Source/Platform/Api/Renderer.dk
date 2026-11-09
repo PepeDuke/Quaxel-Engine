@@ -12,6 +12,14 @@ QuaxelRenderer
         return QuaxelPlatformBackend.TraceVolume(handle, boxFromClip, left, top, right, bottom)
     }
 
+    // Blends a rectangle over the frame, after its volumes. Color is 0xAARRGGBB
+    // in display values. With a positive cell, draws a 5 x 7 glyph at that pixel
+    // scale: glyphFirst holds columns 0..3, one byte each, and glyphLast column 4.
+    bool DrawUi(int x, int y, int width, int height, uint color, uint glyphFirst, uint glyphLast, int cell)
+    {
+        return QuaxelPlatformBackend.DrawUi(x, y, width, height, color, glyphFirst, glyphLast, cell)
+    }
+
     // Low-level graphics API for callers submitting explicit triangle geometry.
     int CreateMesh(void* vertices, int vertexCount, void* indices, int indexCount)
     {

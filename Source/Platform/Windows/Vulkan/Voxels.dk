@@ -23,6 +23,21 @@ VkVoxelParams
     int Bgra
 }
 
+VkUiParams
+{
+    int Width
+    int Height
+    int X
+    int Y
+    int RectWidth
+    int RectHeight
+    uint Color
+    uint GlyphFirst
+    uint GlyphLast
+    int Cell
+    int Bgra
+}
+
 QuaxelVulkan
 #{
     -long StorageLayout
@@ -31,6 +46,9 @@ QuaxelVulkan
     -VkVolumeBuffers Volumes
     -VkStorage Output
     -bool ComputeFrame
+    -long UiLayout
+    -long UiPipeline
+    -bool UiBound
 
     -bool CreateComputePipeline()
     {
@@ -57,6 +75,29 @@ QuaxelVulkan
         info.vkLayout = ComputeLayout
         int result = Vk.CreateComputePipelines(Device, 0, 1, &info, null, &ComputePipeline)
         Vk.DestroyShaderModule(Device, shader, null)
+        return result == 0 && CreateUiPipeline()
+    }
+
+    -bool CreateUiPipeline()
+    {
+        VkPushConstantRange params
+        params.stageFlags = 32
+        params.vkSize = 44
+        VkPipelineLayoutCreateInfo layout
+        layout.setLayoutCount = 1
+        layout.pSetLayouts = &StorageLayout
+        layout.pushConstantRangeCount = 1
+        layout.pPushConstantRanges = &params
+        if Vk.CreatePipelineLayout(Device, &layout, null, &UiLayout) != 0 { return false }
+        long shader = UiShaders.Compute(Device)
+        if shader == 0 { return false }
+        VkComputePipelineCreateInfo info
+        info.vkStage.vkStage = 32
+        info.vkStage.vkModule = shader
+        info.vkStage.pName = "main"
+        info.vkLayout = UiLayout
+        int result = Vk.CreateComputePipelines(Device, 0, 1, &info, null, &UiPipeline)
+        Vk.DestroyShaderModule(Device, shader, null)
         return result == 0
     }
 
@@ -76,6 +117,10 @@ QuaxelVulkan
             ReleaseStorage(storage)
         }
         Volumes.Count = 0
+        Vk.DestroyPipeline(Device, UiPipeline, null)
+        Vk.DestroyPipelineLayout(Device, UiLayout, null)
+        UiPipeline = 0
+        UiLayout = 0
         Vk.DestroyPipeline(Device, ComputePipeline, null)
         Vk.DestroyPipelineLayout(Device, ComputeLayout, null)
         Vk.DestroyDescriptorSetLayout(Device, StorageLayout, null)
@@ -156,6 +201,7 @@ QuaxelVulkan
         Vk.CmdFillBuffer(Command, Output.Buffer, 0, bytes, (int)0xff182030)
         Vk.CmdFillBuffer(Command, Output.Buffer, bytes, bytes, 0x3f800000) // far depth = 1
         MemoryBarrier(0x1000, 0x1000, 0x800, 0x60) // transfer write -> compute read/write
+        UiBound = false
         Vk.CmdBindPipeline(Command, 1, ComputePipeline)
         Vk.CmdBindDescriptorSets(Command, 1, ComputeLayout, 0, 1, &Output.Descriptor, 0, null)
     }
@@ -174,11 +220,45 @@ QuaxelVulkan
         int endY = (int)(bottom * (float)Extent.height) + 1
         params.Srgb = Format == 50 || Format == 43 ? 1 | 0
         params.Bgra = Format == 50 || Format == 44 ? 1 | 0
+        if UiBound {
+            UiBound = false
+            Vk.CmdBindPipeline(Command, 1, ComputePipeline)
+            Vk.CmdBindDescriptorSets(Command, 1, ComputeLayout, 0, 1, &Output.Descriptor, 0, null)
+        }
         VkStorage storage = Volumes.Items[handle]
         Vk.CmdBindDescriptorSets(Command, 1, ComputeLayout, 1, 1, &storage.Descriptor, 0, null)
         Vk.CmdPushConstants(Command, ComputeLayout, 32, 0, 88, &params)
         Vk.CmdDispatch(Command, (endX - params.StartX + 7) / 8, (endY - params.StartY + 7) / 8, 1)
         MemoryBarrier(0x800, 0x40, 0x800, 0x60) // following volume compares against this depth
+        return true
+    }
+
+    bool DrawUi(int x, int y, int width, int height, uint color, uint glyphFirst, uint glyphLast, int cell)
+    {
+        if !FrameOpen { return Device != 0 }
+        if !ComputeFrame { return false }
+        if width <= 0 || height <= 0 || x >= Extent.width || y >= Extent.height { return true }
+        if (long)x + width <= 0 || (long)y + height <= 0 { return true }
+        if !UiBound {
+            UiBound = true
+            Vk.CmdBindPipeline(Command, 1, UiPipeline)
+            Vk.CmdBindDescriptorSets(Command, 1, UiLayout, 0, 1, &Output.Descriptor, 0, null)
+        }
+        VkUiParams params
+        params.Width = Extent.width
+        params.Height = Extent.height
+        params.X = x
+        params.Y = y
+        params.RectWidth = width
+        params.RectHeight = height
+        params.Color = color
+        params.GlyphFirst = glyphFirst
+        params.GlyphLast = glyphLast
+        params.Cell = cell
+        params.Bgra = Format == 50 || Format == 44 ? 1 | 0
+        Vk.CmdPushConstants(Command, UiLayout, 32, 0, 44, &params)
+        Vk.CmdDispatch(Command, (width + 7) / 8, (height + 7) / 8, 1)
+        MemoryBarrier(0x800, 0x40, 0x800, 0x60) // the next element blends over this one
         return true
     }
 

@@ -9,6 +9,8 @@ QuaxelPlatformBackend
         return false
     }
 
+    bool DrawUi(int x, int y, int width, int height, uint color, uint glyphFirst, uint glyphLast, int cell) { return false }
+
     int CreateMesh(void* vertices, int vertexCount, void* indices, int indexCount) { return -1 }
     bool BeginFrame(void* viewProjection) { return false }
     bool DrawMesh(int mesh, void* model) { return false }

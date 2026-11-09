@@ -7,6 +7,8 @@ QuaxelEngineTestGame : QuaxelGameInstance
     bool SawHeldKey
     float LastDelta
     int WorldNodes
+    int UiUpdates
+    bool FoundUiText
 
     int HeadlessSteps() { return 4 }
 
@@ -27,6 +29,21 @@ QuaxelEngineTestGame : QuaxelGameInstance
         }
     }
 
+    markup BuildUi()
+    {
+        return {
+            <QuaxelUiPanel Flow=QuaxelUiFlow.Column>
+                <QuaxelUiText Id="label" Text="A"/>
+            </QuaxelUiPanel>
+        }
+    }
+
+    UpdateUi(QuaxelUi& ui, QuaxelWorld& world)
+    {
+        UiUpdates++
+        FoundUiText = ui.SetText("label", "B")
+    }
+
     Stopped() { WasStopped = true }
 }
 T{
@@ -39,6 +56,8 @@ T{
         T.AreEqual(game.WorldNodes, 1)
         T.AreEqual(game.LastDelta, (float)Quaxel.FixedDeltaSeconds())
         T.IsFalse(game.SawHeldKey)
+        T.AreEqual(game.UiUpdates, 4)
+        T.IsTrue(game.FoundUiText)
         T.IsTrue(game.WasStopped)
     }
 

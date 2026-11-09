@@ -10,6 +10,11 @@ QuaxelPlatformBackend
         return QuaxelVulkan.TraceVolume(handle, boxFromClip, left, top, right, bottom)
     }
 
+    bool DrawUi(int x, int y, int width, int height, uint color, uint glyphFirst, uint glyphLast, int cell)
+    {
+        return QuaxelVulkan.DrawUi(x, y, width, height, color, glyphFirst, glyphLast, cell)
+    }
+
     int CreateMesh(void* vertices, int vertexCount, void* indices, int indexCount)
     {
         return QuaxelVulkan.CreateMesh(vertices, vertexCount, indices, indexCount)

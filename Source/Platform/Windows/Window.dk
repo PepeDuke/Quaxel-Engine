@@ -52,6 +52,8 @@ QuaxelWindowsNative
     extern "C" int TranslateMessage(QuaxelWinMessage* msg)
     extern "C" long DispatchMessageW(QuaxelWinMessage* msg)
     extern "C" int PostMessageW(void* window, uint message, uint64 wParam, long lParam)
+    extern "C" void* SetCapture(void* window)
+    extern "C" int ReleaseCapture()
 }
 
 QuaxelWinKeys
@@ -71,6 +73,9 @@ QuaxelPlatformBackend
     -bool Registered
     -bool InSizeMove
     -bool WindowStalled
+    -int MouseX
+    -int MouseY
+    -bool MouseDown
     -QuaxelWinKeys Keys
     -QuaxelWinRedraw Redraw
     -uint Style = 0x00CF0000 // WS_OVERLAPPEDWINDOW
@@ -86,6 +91,21 @@ QuaxelPlatformBackend
     }
 
     bool IsKeyDown(int key) { return Keys.Down[key] }
+
+    bool IsMouseButtonDown() { return MouseDown }
+
+    bool GetMousePosition(int& x, int& y)
+    {
+        x = Window != null ? MouseX | 0
+        y = Window != null ? MouseY | 0
+        return Window != null
+    }
+
+    -TrackMouse(long lParam)
+    {
+        MouseX = (int)(short)lParam // Client coordinates are signed while captured.
+        MouseY = (int)(short)(lParam >> 16)
+    }
 
     SetRedrawHandler(func () handler) { Redraw.Handler = handler }
 
@@ -103,11 +123,26 @@ QuaxelPlatformBackend
         if window == Window {
             if message == 0x0100 || message == 0x0104 { SetKey(wParam, true) } // WM_KEYDOWN, WM_SYSKEYDOWN
             if message == 0x0101 || message == 0x0105 { SetKey(wParam, false) } // WM_KEYUP, WM_SYSKEYUP
-            if message == 0x0008 { ClearKeys() } // WM_KILLFOCUS
+            if message == 0x0008 { // WM_KILLFOCUS
+                ClearKeys()
+                MouseDown = false
+            }
+            if message == 0x0200 { TrackMouse(lParam) } // WM_MOUSEMOVE
+            if message == 0x0201 { // WM_LBUTTONDOWN
+                TrackMouse(lParam)
+                MouseDown = true
+                QuaxelWindowsNative.SetCapture(Window) // Still see the release outside the window.
+            }
+            if message == 0x0202 { // WM_LBUTTONUP
+                TrackMouse(lParam)
+                MouseDown = false
+                QuaxelWindowsNative.ReleaseCapture()
+            }
             if message == 0x0231 { // WM_ENTERSIZEMOVE
                 InSizeMove = true
                 // The modal drag loop consumes key releases.
                 ClearKeys()
+                MouseDown = false
             }
             if message == 0x0232 { // WM_EXITSIZEMOVE
                 InSizeMove = false
@@ -121,6 +156,7 @@ QuaxelPlatformBackend
             if message == 0x0082 { // WM_NCDESTROY
                 InSizeMove = false
                 ClearKeys()
+                MouseDown = false
                 Window = null
             }
         }

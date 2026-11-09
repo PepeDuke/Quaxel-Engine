@@ -81,6 +81,11 @@ values. The Windows backend tracks key-down and key-up messages. It clears held
 keys when the window loses focus or a modal drag starts. Headless builds report
 no held keys.
 
+`GetMousePosition(x, y)` reads the last pointer position in client pixels, and
+`IsMouseButtonDown()` reports the left button. The Windows backend captures the
+mouse while the button is held and releases it on focus loss or a modal drag.
+Headless builds report no pointer.
+
 ## Vulkan renderer
 
 The engine starts Vulkan on the window-owning thread. It uploads new and

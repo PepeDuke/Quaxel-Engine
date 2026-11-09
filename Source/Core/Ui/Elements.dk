@@ -1,0 +1,255 @@
+QuaxelUiFlow : int
+#@{
+    None,
+    Column,
+    Row
+}
+
+QuaxelUiChangeKind : int
+#@{
+    SetText,
+    SetValue,
+    SetVisible,
+    TakeClick
+}
+
+// A request routed through the tree to the element with a matching Id.
+QuaxelUiChange
+{
+    string Id
+    QuaxelUiChangeKind Kind
+    string Text
+    float Value
+    bool Visible
+    bool Clicked
+}
+
+// Attributes shared by every tag. A Width or Height of 0 means automatic: the
+// content's size if it has one, otherwise the space available. AnchorX and
+// AnchorY choose the same point in the parent and in this element, so 0 is the
+// top or left edge, 0.5 the center and 1 the bottom or right edge. X and Y then
+// offset the result in pixels.
+QuaxelUiElement
+{
+    string Id
+    int X
+    int Y
+    int Width
+    int Height
+    float AnchorX
+    float AnchorY
+    bool Visible = true
+
+    int NaturalWidth() { return 0 }
+
+    int NaturalHeight() { return 0 }
+
+    int MeasureWidth()
+    {
+        if !Visible { return 0 }
+        return Width > 0 ? Width | NaturalWidth()
+    }
+
+    int MeasureHeight()
+    {
+        if !Visible { return 0 }
+        return Height > 0 ? Height | NaturalHeight()
+    }
+
+    // Positions this element inside a slot of its parent, then paints it.
+    Place(QuaxelUiCanvas& canvas, int slotX, int slotY, int slotWidth, int slotHeight)
+    {
+        if !Visible { return }
+        int width = MeasureWidth()
+        int height = MeasureHeight()
+        if width == 0 { width = slotWidth }
+        if height == 0 { height = slotHeight }
+        int left = slotX + (int)((float)(slotWidth - width) * AnchorX) + X
+        int top = slotY + (int)((float)(slotHeight - height) * AnchorY) + Y
+        Paint(canvas, left, top, width, height)
+    }
+
+    Paint(QuaxelUiCanvas& canvas, int left, int top, int width, int height) {}
+
+    bool Apply(QuaxelUiChange& change)
+    {
+        if Length(Id) == 0 || Id != change.Id { return false }
+        Receive(change)
+        return true
+    }
+
+    Receive(QuaxelUiChange& change)
+    {
+        if change.Kind == QuaxelUiChangeKind.SetVisible { Visible = change.Visible }
+    }
+}
+
+// The one tag that holds children. Flow stacks them; with None, each child
+// positions itself against the whole panel.
+QuaxelUiPanel : QuaxelUiElement
+{
+    uint Color
+    int Padding
+    int Spacing
+    QuaxelUiFlow Flow
+
+    this{
+    }
+
+    int NaturalWidth()
+    {
+        if Flow == QuaxelUiFlow.None { return 0 }
+        int total = 0
+        int count = 0
+        for child : this.GetChildren() {
+            int size = ?child..MeasureWidth()
+            if size > 0 {
+                count++
+                if Flow == QuaxelUiFlow.Row { total += size } else { if size > total { total = size } }
+            }
+        }
+        if count == 0 { return 0 }
+        return total + Padding * 2 + (Flow == QuaxelUiFlow.Row ? Spacing * (count - 1) | 0)
+    }
+
+    int NaturalHeight()
+    {
+        if Flow == QuaxelUiFlow.None { return 0 }
+        int total = 0
+        int count = 0
+        for child : this.GetChildren() {
+            int size = ?child..MeasureHeight()
+            if size > 0 {
+                count++
+                if Flow == QuaxelUiFlow.Column { total += size } else { if size > total { total = size } }
+            }
+        }
+        if count == 0 { return 0 }
+        return total + Padding * 2 + (Flow == QuaxelUiFlow.Column ? Spacing * (count - 1) | 0)
+    }
+
+    Paint(QuaxelUiCanvas& canvas, int left, int top, int width, int height)
+    {
+        canvas.Rect(left, top, width, height, Color)
+        int innerX = left + Padding
+        int innerY = top + Padding
+        int innerWidth = width - Padding * 2
+        int innerHeight = height - Padding * 2
+        for child : this.GetChildren() {
+            if Flow == QuaxelUiFlow.None {
+                ?child..Place(canvas, innerX, innerY, innerWidth, innerHeight)
+            } else {
+                if Flow == QuaxelUiFlow.Column {
+                    int size = ?child..MeasureHeight()
+                    if size > 0 {
+                        ?child..Place(canvas, innerX, innerY, innerWidth, size)
+                        innerY += size + Spacing
+                    }
+                } else {
+                    int size = ?child..MeasureWidth()
+                    if size > 0 {
+                        ?child..Place(canvas, innerX, innerY, size, innerHeight)
+                        innerX += size + Spacing
+                    }
+                }
+            }
+        }
+    }
+
+    bool Apply(QuaxelUiChange& change)
+    {
+        if Length(Id) != 0 && Id == change.Id {
+            Receive(change)
+            return true
+        }
+        for child : this.GetChildren() {
+            if ?child..Apply(change) { return true }
+        }
+        return false
+    }
+}
+
+QuaxelUiText : QuaxelUiElement
+{
+    string Text
+    uint Color = 0xFFFFFFFF
+    int Size = 2
+
+    int NaturalWidth() { return QuaxelUiFont.TextWidth((int)Length(Text), Size) }
+
+    int NaturalHeight() { return QuaxelUiFont.TextHeight(Size) }
+
+    Paint(QuaxelUiCanvas& canvas, int left, int top, int width, int height)
+    {
+        canvas.Text(left, top, Text, Color, Size)
+    }
+
+    Receive(QuaxelUiChange& change)
+    {
+        this.QuaxelUiElement.Receive(change)
+        if change.Kind == QuaxelUiChangeKind.SetText { Text = change.Text }
+    }
+}
+
+// A horizontal meter. Value runs from 0 to 1.
+QuaxelUiBar : QuaxelUiElement
+{
+    float Value
+    uint Color = 0xFFFFFFFF
+    uint BackColor = 0x80000000
+
+    int NaturalHeight() { return 10 }
+
+    Paint(QuaxelUiCanvas& canvas, int left, int top, int width, int height)
+    {
+        canvas.Rect(left, top, width, height, BackColor)
+        canvas.Rect(left, top, (int)((float)width * QuaxelMath.Clamp(Value, 0.0, 1.0)), height, Color)
+    }
+
+    Receive(QuaxelUiChange& change)
+    {
+        this.QuaxelUiElement.Receive(change)
+        if change.Kind == QuaxelUiChangeKind.SetValue { Value = change.Value }
+    }
+}
+
+// Clicks when pressed and released inside. Read a click with QuaxelUi.TakeClick.
+QuaxelUiButton : QuaxelUiElement
+{
+    string Text
+    uint Color = 0xFF3A3F4B
+    uint HoverColor = 0xFF4E5564
+    uint PressColor = 0xFF2A2E37
+    uint TextColor = 0xFFFFFFFF
+    int Size = 2
+    -bool Armed
+    -bool ClickWaiting
+
+    int NaturalWidth() { return QuaxelUiFont.TextWidth((int)Length(Text), Size) + 12 * Size }
+
+    int NaturalHeight() { return QuaxelUiFont.TextHeight(Size) + 8 * Size }
+
+    Paint(QuaxelUiCanvas& canvas, int left, int top, int width, int height)
+    {
+        bool hovered = canvas.Pointer.IsInside(left, top, width, height)
+        if canvas.Pointer.Pressed && hovered { Armed = true }
+        uint fill = Armed && hovered ? PressColor | (hovered ? HoverColor | Color)
+        if canvas.Pointer.Released {
+            if Armed && hovered { ClickWaiting = true }
+            Armed = false
+        }
+        canvas.Rect(left, top, width, height, fill)
+        int textWidth = QuaxelUiFont.TextWidth((int)Length(Text), Size)
+        canvas.Text(left + (width - textWidth) / 2, top + (height - QuaxelUiFont.TextHeight(Size)) / 2, Text, TextColor, Size)
+    }
+
+    Receive(QuaxelUiChange& change)
+    {
+        this.QuaxelUiElement.Receive(change)
+        if change.Kind == QuaxelUiChangeKind.SetText { Text = change.Text }
+        if change.Kind == QuaxelUiChangeKind.TakeClick {
+            change.Clicked = ClickWaiting
+            ClickWaiting = false
+        }
+    }
+}

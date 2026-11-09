@@ -9,6 +9,14 @@ QuaxelPlatformBackend
     ClearRedrawHandler() {}
     bool ConsumeWindowStall() { return false }
     bool IsKeyDown(int key) { return false }
+    bool IsMouseButtonDown() { return false }
+
+    bool GetMousePosition(int& x, int& y)
+    {
+        x = 0
+        y = 0
+        return false
+    }
 
     bool GetWindowSize(int& width, int& height)
     {
