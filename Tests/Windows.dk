@@ -3,19 +3,34 @@ QuaxelPlatform
 T{
     VulkanDrawResizeAndReopen()
     {
+        // A triangle's position and color records, then its indices.
+        float [18] vertices = {0.0, -0.5, 0.0, 1.0, 0.0, 0.0, -0.5, 0.5, 0.0, 0.0, 1.0, 0.0, 0.5, 0.5, 0.0, 0.0, 0.0, 1.0}
+        uint [3] indices = {0, 1, 2}
+        float [16] identity = {1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0}
         T.IsFalse(QuaxelRenderer.Start())
+        T.AreEqual(QuaxelRenderer.CreateMesh(&vertices[0], 3, &indices[0], 3), -1)
         T.IsTrue(QuaxelPlatform.OpenWindow("Vulkan test", 400, 250, false))
         T.IsTrue(QuaxelRenderer.Start())
         T.IsFalse(QuaxelRenderer.Start())
-        T.IsTrue(QuaxelRenderer.DrawTriangle())
+        int mesh = QuaxelRenderer.CreateMesh(&vertices[0], 3, &indices[0], 3)
+        T.IsTrue(mesh >= 0)
+        T.IsTrue(QuaxelRenderer.BeginFrame(&identity[0]))
+        T.IsTrue(QuaxelRenderer.DrawMesh(mesh, &identity[0]))
+        T.IsTrue(QuaxelRenderer.EndFrame())
         T.IsTrue(QuaxelPlatform.ResizeWindow(500, 300))
         T.IsTrue(QuaxelPlatform.PumpWindow(false))
-        T.IsTrue(QuaxelRenderer.DrawTriangle())
-        T.IsTrue(QuaxelRenderer.DrawTriangle())
+        for i : 0; i < 2; i++ {
+            T.IsTrue(QuaxelRenderer.BeginFrame(&identity[0]))
+            T.IsTrue(QuaxelRenderer.DrawMesh(mesh, &identity[0]))
+            T.IsTrue(QuaxelRenderer.EndFrame())
+        }
         QuaxelRenderer.Stop()
-        T.IsFalse(QuaxelRenderer.DrawTriangle())
+        T.IsFalse(QuaxelRenderer.BeginFrame(&identity[0]))
         T.IsTrue(QuaxelRenderer.Start())
-        T.IsTrue(QuaxelRenderer.DrawTriangle())
+        mesh = QuaxelRenderer.CreateMesh(&vertices[0], 3, &indices[0], 3)
+        T.IsTrue(QuaxelRenderer.BeginFrame(&identity[0]))
+        T.IsTrue(QuaxelRenderer.DrawMesh(mesh, &identity[0]))
+        T.IsTrue(QuaxelRenderer.EndFrame())
         T.IsTrue(QuaxelPlatform.RequestWindowClose())
         T.IsFalse(QuaxelPlatform.PumpWindow(true))
         QuaxelRenderer.Stop()

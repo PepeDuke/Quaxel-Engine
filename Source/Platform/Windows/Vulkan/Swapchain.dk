@@ -2,6 +2,7 @@ QuaxelVulkan
 #{
     -ReleaseTargets()
     {
+        ReleaseStorage(Output)
         int i = 0
         while i < ImageCount {
             Vk.DestroyFramebuffer(Device, Images.Targets[i], null)
@@ -12,6 +13,12 @@ QuaxelVulkan
             Images.Finished[i] = 0
             i++
         }
+        Vk.DestroyImageView(Device, DepthView, null)
+        Vk.DestroyImage(Device, DepthImage, null)
+        Vk.FreeMemory(Device, DepthMemory, null)
+        DepthView = 0
+        DepthImage = 0
+        DepthMemory = 0
         Vk.DestroyPipeline(Device, Pipeline, null)
         Vk.DestroyPipelineLayout(Device, Layout, null)
         Vk.DestroyRenderPass(Device, Pass, null)
@@ -37,7 +44,63 @@ QuaxelVulkan
             }
         }
         if selected.vkFormat == 0 { selected.vkFormat = 50 } // VK_FORMAT_UNDEFINED
+        if ComputeFrame && selected.vkFormat != 50 && selected.vkFormat != 44 && selected.vkFormat != 43 && selected.vkFormat != 37 {
+            for i : 0; i < count; i++ {
+                int format = formats[i].vkFormat
+                if format == 50 || format == 44 || format == 43 || format == 37 {
+                    selected = formats[i]
+                    return true
+                }
+            }
+            return false
+        }
         return true
+    }
+
+    -bool SelectDepthFormat()
+    {
+        int [3] candidates = {126, 130, 129} // D32_SFLOAT, D32_SFLOAT_S8, D24_UNORM_S8
+        for i : 0; i < candidates.Len; i++ {
+            VkFormatProperties properties
+            Vk.GetPhysicalDeviceFormatProperties(Physical, candidates[i], &properties)
+            if (properties.optimalTilingFeatures & 0x200) != 0 { // DEPTH_STENCIL_ATTACHMENT
+                DepthFormat = candidates[i]
+                return true
+            }
+        }
+        return false
+    }
+
+    -bool CreateDepthTarget()
+    {
+        VkImageCreateInfo image
+        image.imageType = 1 // 2D
+        image.vkFormat = DepthFormat
+        image.extent.width = Extent.width
+        image.extent.height = Extent.height
+        image.extent.depth = 1
+        image.mipLevels = 1
+        image.arrayLayers = 1
+        image.samples = 1
+        image.usage = 0x20 // DEPTH_STENCIL_ATTACHMENT
+        if Vk.CreateImage(Device, &image, null, &DepthImage) != 0 { return false }
+        VkMemoryRequirements requirements
+        Vk.GetImageMemoryRequirements(Device, DepthImage, &requirements)
+        int memoryType = FindMemoryType(requirements.memoryTypeBits, 1) // DEVICE_LOCAL
+        if memoryType < 0 { return false }
+        VkMemoryAllocateInfo allocation
+        allocation.allocationSize = requirements.vkSize
+        allocation.memoryTypeIndex = memoryType
+        if Vk.AllocateMemory(Device, &allocation, null, &DepthMemory) != 0 { return false }
+        if Vk.BindImageMemory(Device, DepthImage, DepthMemory, 0) != 0 { return false }
+        VkImageViewCreateInfo view
+        view.image = DepthImage
+        view.viewType = 1 // 2D
+        view.vkFormat = DepthFormat
+        view.subresourceRange.aspectMask = 2 // DEPTH
+        view.subresourceRange.levelCount = 1
+        view.subresourceRange.layerCount = 1
+        return Vk.CreateImageView(Device, &view, null, &DepthView) == 0
     }
 
     -bool CreateTargets(int width, int height)
@@ -65,7 +128,8 @@ QuaxelVulkan
         info.imageColorSpace = selected.colorSpace
         info.imageExtent = Extent
         info.imageArrayLayers = 1
-        info.imageUsage = 16 // COLOR_ATTACHMENT
+        info.imageUsage = ComputeFrame ? 2 | 16 // TRANSFER_DST or COLOR_ATTACHMENT
+        if (caps.supportedUsageFlags & info.imageUsage) == 0 { return false }
         info.preTransform = caps.currentTransform
         info.compositeAlpha = caps.supportedCompositeAlpha & (0 - caps.supportedCompositeAlpha)
         info.presentMode = 2 // FIFO
@@ -77,8 +141,16 @@ QuaxelVulkan
         int count = (int)handles.Len
         if Vk.GetSwapchainImagesKHR(Device, Chain, &count, &handles[0]) != 0 || count == 0 { return false }
         ImageCount = count
-        if !CreatePass() || !CreatePipeline() { return false }
+        if ComputeFrame {
+            if !CreateStorage((long)Extent.width * Extent.height * 8, 3, 1, Output) { return false }
+        } else {
+            if !CreateDepthTarget() || !CreatePass() || !CreatePipeline() { return false }
+        }
         for i : 0...count-1 {
+            Images.Handles[i] = handles[i]
+            VkSemaphoreCreateInfo sem
+            if Vk.CreateSemaphore(Device, &sem, null, &Images.Finished[i]) != 0 { return false }
+            if ComputeFrame { continue }
             VkImageViewCreateInfo view
             view.image = handles[i]
             view.viewType = 1 // 2D
@@ -88,15 +160,14 @@ QuaxelVulkan
             view.subresourceRange.layerCount = 1
             if Vk.CreateImageView(Device, &view, null, &Images.Views[i]) != 0 { return false }
             VkFramebufferCreateInfo framebuffer
+            long [2] attachments = {Images.Views[i], DepthView}
             framebuffer.renderPass = Pass
-            framebuffer.attachmentCount = 1
-            framebuffer.pAttachments = &Images.Views[i]
+            framebuffer.attachmentCount = 2
+            framebuffer.pAttachments = &attachments[0]
             framebuffer.width = Extent.width
             framebuffer.height = Extent.height
             framebuffer.layers = 1
             if Vk.CreateFramebuffer(Device, &framebuffer, null, &Images.Targets[i]) != 0 { return false }
-            VkSemaphoreCreateInfo sem
-            if Vk.CreateSemaphore(Device, &sem, null, &Images.Finished[i]) != 0 { return false }
         }
         return true
     }

@@ -1,0 +1,106 @@
+// Layout shared with Shaders/Mesh.vert: 24 bytes per vertex.
+QuaxelVertex
+{
+    float X
+    float Y
+    float Z
+    float R
+    float G
+    float B
+}
+
+// Fixed capacity keeps mesh data contiguous so it can be uploaded directly.
+QuaxelMeshData
+{
+    QuaxelVertex [24] Vertices
+    uint [36] Indices
+    int VertexCount
+    int IndexCount
+    int RendererHandle = -1
+    int VoxelPrimitive // 1 cube, 2 ground slab
+    QuaxelVec3 BaseColor
+
+    -AddVertex(QuaxelVec3 position, QuaxelVec3 color)
+    {
+        Vertices[VertexCount].X = position.X
+        Vertices[VertexCount].Y = position.Y
+        Vertices[VertexCount].Z = position.Z
+        Vertices[VertexCount].R = color.X
+        Vertices[VertexCount].G = color.Y
+        Vertices[VertexCount].B = color.Z
+        VertexCount++
+    }
+
+    // Corners run counter-clockwise when seen from outside.
+    -AddQuad(QuaxelVec3 a, QuaxelVec3 b, QuaxelVec3 c, QuaxelVec3 d, QuaxelVec3 color)
+    {
+        uint first = (uint)VertexCount
+        AddVertex(a, color)
+        AddVertex(b, color)
+        AddVertex(c, color)
+        AddVertex(d, color)
+        Indices[IndexCount] = first
+        Indices[IndexCount + 1] = first + (uint)1
+        Indices[IndexCount + 2] = first + (uint)2
+        Indices[IndexCount + 3] = first
+        Indices[IndexCount + 4] = first + (uint)2
+        Indices[IndexCount + 5] = first + (uint)3
+        IndexCount += 6
+    }
+}
+#{
+    -QuaxelVec3 P(float x, float y, float z) { return QuaxelVec3.Make(x, y, z) }
+
+    // A 1 x 1 quad on the XZ plane, centered on the origin and facing +Y.
+    QuaxelMeshData Plane(QuaxelVec3 color)
+    {
+        QuaxelMeshData mesh
+        mesh.VoxelPrimitive = 2
+        mesh.BaseColor = color
+        mesh.AddQuad(P(-0.5, 0.0, 0.5), P(0.5, 0.0, 0.5), P(0.5, 0.0, -0.5), P(-0.5, 0.0, -0.5), color)
+        return mesh
+    }
+
+    // A unit cube centered on the origin. Each face is a different shade of color.
+    QuaxelMeshData Cube(QuaxelVec3 color)
+    {
+        QuaxelMeshData mesh
+        mesh.VoxelPrimitive = 1
+        mesh.BaseColor = color
+        mesh.AddQuad(P(-0.5, 0.5, 0.5), P(0.5, 0.5, 0.5), P(0.5, 0.5, -0.5), P(-0.5, 0.5, -0.5), QuaxelVec3.Scale(color, 1.0)) // +Y
+        mesh.AddQuad(P(0.5, -0.5, 0.5), P(0.5, -0.5, -0.5), P(0.5, 0.5, -0.5), P(0.5, 0.5, 0.5), QuaxelVec3.Scale(color, 0.68)) // +X
+        mesh.AddQuad(P(-0.5, -0.5, 0.5), P(0.5, -0.5, 0.5), P(0.5, 0.5, 0.5), P(-0.5, 0.5, 0.5), QuaxelVec3.Scale(color, 0.42)) // +Z
+        mesh.AddQuad(P(-0.5, -0.5, -0.5), P(-0.5, -0.5, 0.5), P(-0.5, 0.5, 0.5), P(-0.5, 0.5, -0.5), QuaxelVec3.Scale(color, 0.55)) // -X
+        mesh.AddQuad(P(0.5, -0.5, -0.5), P(-0.5, -0.5, -0.5), P(-0.5, 0.5, -0.5), P(0.5, 0.5, -0.5), QuaxelVec3.Scale(color, 0.32)) // -Z
+        mesh.AddQuad(P(-0.5, -0.5, -0.5), P(0.5, -0.5, -0.5), P(0.5, -0.5, 0.5), P(-0.5, -0.5, 0.5), QuaxelVec3.Scale(color, 0.2)) // -Y
+        return mesh
+    }
+}
+T{
+    PlaneIsOneQuadAtZeroHeight()
+    {
+        QuaxelMeshData mesh = QuaxelMeshData.Plane(QuaxelVec3.Make(1.0, 1.0, 1.0))
+        T.AreEqual(mesh.VertexCount, 4)
+        T.AreEqual(mesh.IndexCount, 6)
+        for i : 0; i < mesh.VertexCount; i++ {
+            T.AreEqual(mesh.Vertices[i].Y, 0.0)
+        }
+    }
+
+    CubeIsUnitSizedWithSixShades()
+    {
+        QuaxelMeshData mesh = QuaxelMeshData.Cube(QuaxelVec3.Make(1.0, 1.0, 1.0))
+        T.AreEqual(mesh.VertexCount, 24)
+        T.AreEqual(mesh.IndexCount, 36)
+        for face : 0; face < 6; face++ {
+            for other : face + 1; other < 6; other++ {
+                T.AreNotEqual(mesh.Vertices[face * 4].R, mesh.Vertices[other * 4].R)
+            }
+        }
+        for i : 0; i < mesh.VertexCount; i++ {
+            T.AreEqual(QuaxelMath.Abs(mesh.Vertices[i].X), 0.5)
+            T.AreEqual(QuaxelMath.Abs(mesh.Vertices[i].Y), 0.5)
+            T.AreEqual(QuaxelMath.Abs(mesh.Vertices[i].Z), 0.5)
+        }
+    }
+}

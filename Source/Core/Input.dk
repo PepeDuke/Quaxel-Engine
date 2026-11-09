@@ -1,0 +1,48 @@
+// Key values are platform-neutral. Letters use their uppercase ASCII codes.
+QuaxelKey : int
+#@{
+    A: 65,
+    D: 68,
+    S: 83,
+    W: 87
+}
+
+// One snapshot of held keys. The engine samples it once before each batch of
+// fixed steps. Tests can build one by hand to supply synthetic input.
+QuaxelInputState
+{
+    bool [256] Down
+
+    bool IsDown(QuaxelKey key) { return Down[(int)key] }
+
+    SetDown(QuaxelKey key, bool held) { Down[(int)key] = held }
+
+    Clear()
+    {
+        for i : 0; i < Down.Len; i++ { Down[i] = false }
+    }
+
+    // 1 when only positive is held, -1 when only negative is held, otherwise 0.
+    float Axis(QuaxelKey positive, QuaxelKey negative)
+    {
+        float value = 0.0
+        if IsDown(positive) { value += 1.0 }
+        if IsDown(negative) { value -= 1.0 }
+        return value
+    }
+}
+T{
+    AxisCancelsOpposingKeys()
+    {
+        QuaxelInputState input
+        T.AreEqual(input.Axis(QuaxelKey.D, QuaxelKey.A), 0.0)
+        input.SetDown(QuaxelKey.D, true)
+        T.AreEqual(input.Axis(QuaxelKey.D, QuaxelKey.A), 1.0)
+        input.SetDown(QuaxelKey.A, true)
+        T.AreEqual(input.Axis(QuaxelKey.D, QuaxelKey.A), 0.0)
+        input.SetDown(QuaxelKey.D, false)
+        T.AreEqual(input.Axis(QuaxelKey.D, QuaxelKey.A), -1.0)
+        input.Clear()
+        T.IsFalse(input.IsDown(QuaxelKey.A))
+    }
+}

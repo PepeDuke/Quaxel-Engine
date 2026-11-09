@@ -1,6 +1,17 @@
 QuaxelPlatformBackend
 #{
     bool StartRenderer() { return false }
-    bool DrawTriangle() { return false }
+    int MapVolume(int previous, int words, void*& mapped) { return -1 }
+    UnmapVolume(int handle) {  }
+    bool BeginVoxelFrame() { return false }
+    bool TraceVolume(int handle, void* boxFromClip, float left, float top, float right, float bottom)
+    {
+        return false
+    }
+
+    int CreateMesh(void* vertices, int vertexCount, void* indices, int indexCount) { return -1 }
+    bool BeginFrame(void* viewProjection) { return false }
+    bool DrawMesh(int mesh, void* model) { return false }
+    bool EndFrame() { return false }
     StopRenderer() {}
 }

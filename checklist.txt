@@ -1,0 +1,60 @@
+Playable milestone: move a cube across a plane with WASD
+
+Done when Hellfeather opens a 3D scene, the cube rests on the ground, and
+holding WASD moves it in the corresponding screen direction at a steady speed.
+Use a fixed orthographic camera for this first scene. Frame the whole plane
+so the player can see where they are going.
+
+1. Give the engine ownership of the simulation
+[x] Implement the first GameInstance, World, and Node lifecycle from Docs/World.md.
+    Let Hellfeather supply the starting scene and player controls. Quaxel owns
+    startup, message pumping, fixed updates, rendering, and teardown.
+[x] Give nodes world-local IDs and attach Transform, MeshRenderer, and Camera
+    components. Let Hellfeather mark its player with a PlayerController
+    component containing movement speed in world units per second.
+[x] Drive fixed updates from the existing platform clock and fixed timestep.
+    Sample input before stepping and render after stepping. Reset elapsed
+    time on restore so a long minimize or window drag cannot teleport the player.
+
+2. Build the isometric view and starting scene
+[x] Use Y for height and XZ for the ground. Implement the vector and matrix
+    operations needed for model transforms, a look-at view, and a Vulkan
+    orthographic projection with depth in the 0..1 range.
+[x] In Hellfeather, spawn a ground node with a plane mesh and a player node
+    with a unit cube mesh. Put the plane at Y=0 and the cube center at Y=0.5.
+[x] Spawn a camera looking at the plane center from the (+X, +Y, +Z) diagonal.
+    Equal offsets give a 45-degree yaw and about 35.3 degrees of elevation.
+    Update orthographic bounds on resize to preserve proportions and framing.
+
+3. Render the world in place of the demo triangle
+[x] Define reusable cube and plane geometry. Upload vertices and indices once.
+    Give the ground a contrasting color and shade the cube faces distinctly
+    so movement and orientation are easy to see.
+[x] Extend the Vulkan pipeline and shaders to read mesh vertices and apply
+    model, view, and projection transforms. Draw each node that has both
+    Transform and MeshRenderer using the world's active camera.
+[x] Add a depth attachment, clear depth each frame, and enable depth testing
+    and writes. Recreate size-dependent targets on resize and release GPU
+    resources on shutdown. Have live resize redraw the current world.
+
+4. Turn keyboard state into movement
+[x] Expose held-key state through Quaxel's platform API. Track key-down and
+    key-up on Windows, clear held keys on focus loss, and provide neutral
+    input in headless runs.
+[x] In Hellfeather, map D minus A to camera-right and W minus S to
+    camera-forward. Project the camera axes onto XZ and normalize each axis.
+    W should move toward the top of the screen and D toward the right.
+[x] On each fixed step, combine the two axes. For a nonzero direction,
+    normalize it and move by speed times the fixed timestep. Opposing keys
+    cancel and diagonals travel at the same speed as single-key movement.
+[x] Clamp the cube center to the plane edges minus its half-width and keep
+    its height fixed so the whole cube stays on the ground.
+
+5. Verify the playable build
+[x] Add Duck tests for no input, opposite keys, camera-relative directions,
+    diagonal speed, distance after one simulated second, and plane boundaries.
+[x] Run the Windows build. Hold and release each key, try W+D, and switch away
+    while holding a key. Verify the cube stops on release or loss of focus.
+[x] Drag the window border, minimize and restore, then close it. Verify the
+    cube keeps its position and proportions and Vulkan validation stays clean.
+[x] Run the headless simulation tests with synthetic input and no GPU.

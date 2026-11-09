@@ -1,0 +1,211 @@
+VkStorage
+{
+    long Buffer
+    long Memory
+    long Pool
+    long Descriptor
+}
+
+VkVolumeBuffers
+{
+    VkStorage [4096] Items
+    int Count
+}
+
+VkVoxelParams
+{
+    float [16] Matrix
+    int Width
+    int Height
+    int StartX
+    int StartY
+    int Srgb
+    int Bgra
+}
+
+QuaxelVulkan
+#{
+    -long StorageLayout
+    -long ComputeLayout
+    -long ComputePipeline
+    -VkVolumeBuffers Volumes
+    -VkStorage Output
+    -bool ComputeFrame
+
+    -bool CreateComputePipeline()
+    {
+        VkDescriptorSetLayoutBinding binding
+        VkDescriptorSetLayoutCreateInfo descriptor
+        descriptor.pBindings = &binding
+        if Vk.CreateDescriptorSetLayout(Device, &descriptor, null, &StorageLayout) != 0 { return false }
+        long [2] sets = {StorageLayout, StorageLayout}
+        VkPushConstantRange params
+        params.stageFlags = 32
+        params.vkSize = 88
+        VkPipelineLayoutCreateInfo layout
+        layout.setLayoutCount = 2
+        layout.pSetLayouts = &sets[0]
+        layout.pushConstantRangeCount = 1
+        layout.pPushConstantRanges = &params
+        if Vk.CreatePipelineLayout(Device, &layout, null, &ComputeLayout) != 0 { return false }
+        long shader = VoxelShaders.Compute(Device)
+        if shader == 0 { return false }
+        VkComputePipelineCreateInfo info
+        info.vkStage.vkStage = 32
+        info.vkStage.vkModule = shader
+        info.vkStage.pName = "main"
+        info.vkLayout = ComputeLayout
+        int result = Vk.CreateComputePipelines(Device, 0, 1, &info, null, &ComputePipeline)
+        Vk.DestroyShaderModule(Device, shader, null)
+        return result == 0
+    }
+
+    -ReleaseStorage(VkStorage& storage)
+    {
+        Vk.DestroyDescriptorPool(Device, storage.Pool, null)
+        Vk.DestroyBuffer(Device, storage.Buffer, null)
+        Vk.FreeMemory(Device, storage.Memory, null)
+        VkStorage empty
+        storage = empty
+    }
+
+    -ReleaseCompute()
+    {
+        for i : 0; i < Volumes.Count; i++ {
+            VkStorage storage = Volumes.Items[i]
+            ReleaseStorage(storage)
+        }
+        Volumes.Count = 0
+        Vk.DestroyPipeline(Device, ComputePipeline, null)
+        Vk.DestroyPipelineLayout(Device, ComputeLayout, null)
+        Vk.DestroyDescriptorSetLayout(Device, StorageLayout, null)
+        ComputePipeline = 0
+        ComputeLayout = 0
+        StorageLayout = 0
+    }
+
+    -bool CreateStorage(long bytes, int usage, int flags, VkStorage& storage)
+    {
+        if bytes <= 0 || bytes > 134217728 { return false }
+        VkBufferCreateInfo buffer
+        buffer.vkSize = bytes
+        buffer.usage = usage | 32 // STORAGE_BUFFER
+        if Vk.CreateBuffer(Device, &buffer, null, &storage.Buffer) != 0 { return false }
+        VkMemoryRequirements requirements
+        Vk.GetBufferMemoryRequirements(Device, storage.Buffer, &requirements)
+        VkMemoryAllocateInfo alloc
+        alloc.memoryTypeIndex = FindMemoryType(requirements.memoryTypeBits, flags)
+        alloc.allocationSize = requirements.vkSize
+        if alloc.memoryTypeIndex < 0 || Vk.AllocateMemory(Device, &alloc, null, &storage.Memory) != 0 { return false }
+        if Vk.BindBufferMemory(Device, storage.Buffer, storage.Memory, 0) != 0 { return false }
+        VkDescriptorPoolSize size
+        VkDescriptorPoolCreateInfo pool
+        pool.pPoolSizes = &size
+        if Vk.CreateDescriptorPool(Device, &pool, null, &storage.Pool) != 0 { return false }
+        VkDescriptorSetAllocateInfo setInfo
+        setInfo.descriptorPool = storage.Pool
+        setInfo.pSetLayouts = &StorageLayout
+        if Vk.AllocateDescriptorSets(Device, &setInfo, &storage.Descriptor) != 0 { return false }
+        VkDescriptorBufferInfo data
+        data.buffer = storage.Buffer
+        data.range = bytes
+        VkWriteDescriptorSet write
+        write.dstSet = storage.Descriptor
+        write.pBufferInfo = &data
+        Vk.UpdateDescriptorSets(Device, 1, &write, 0, null)
+        return true
+    }
+
+    // Called before recording a frame. Replace a published buffer only after
+    // the previous frame has finished using its descriptor and storage.
+    int MapVolume(int previous, int words, void*& mapped)
+    {
+        if Device == 0 || previous < -1 || previous >= Volumes.Count { return -1 }
+        if previous >= 0 && Vk.WaitForFences(Device, 1, &FrameFence, 1, -1) != 0 { return -1 }
+        if previous < 0 && Volumes.Count >= 4096 { return -1 }
+        VkStorage storage
+        long bytes = (long)words * 4
+        if !CreateStorage(bytes, 0, 6, storage) || Vk.MapMemory(Device, storage.Memory, 0, bytes, 0, &mapped) != 0 {
+            ReleaseStorage(storage)
+            return -1
+        }
+        if previous < 0 {
+            Volumes.Items[Volumes.Count] = storage
+            Volumes.Count++
+            return (int)Volumes.Count - 1
+        }
+        VkStorage old = Volumes.Items[previous]
+        ReleaseStorage(old)
+        Volumes.Items[previous] = storage
+        return previous
+    }
+
+    UnmapVolume(int handle) { Vk.UnmapMemory(Device, Volumes.Items[handle].Memory) }
+
+    -MemoryBarrier(int srcStage, int srcAccess, int dstStage, int dstAccess)
+    {
+        VkMemoryBarrier barrier
+        barrier.srcAccessMask = srcAccess
+        barrier.dstAccessMask = dstAccess
+        Vk.CmdPipelineBarrier(Command, srcStage, dstStage, 0, 1, &barrier, 0, null, 0, null)
+    }
+
+    -ClearVoxelFrame()
+    {
+        long bytes = (long)Extent.width * Extent.height * 4
+        Vk.CmdFillBuffer(Command, Output.Buffer, 0, bytes, (int)0xff182030)
+        Vk.CmdFillBuffer(Command, Output.Buffer, bytes, bytes, 0x3f800000) // far depth = 1
+        MemoryBarrier(0x1000, 0x1000, 0x800, 0x60) // transfer write -> compute read/write
+        Vk.CmdBindPipeline(Command, 1, ComputePipeline)
+        Vk.CmdBindDescriptorSets(Command, 1, ComputeLayout, 0, 1, &Output.Descriptor, 0, null)
+    }
+
+    bool TraceVolume(int handle, void* matrix, float left, float top, float right, float bottom)
+    {
+        if !FrameOpen { return Device != 0 }
+        if !ComputeFrame || handle < 0 || handle >= Volumes.Count { return false }
+        VkVoxelParams params
+        memcpy(&params.Matrix[0], matrix, 64)
+        params.Width = Extent.width
+        params.Height = Extent.height
+        params.StartX = (int)(left * (float)Extent.width)
+        params.StartY = (int)(top * (float)Extent.height)
+        int endX = (int)(right * (float)Extent.width) + 1
+        int endY = (int)(bottom * (float)Extent.height) + 1
+        params.Srgb = Format == 50 || Format == 43 ? 1 | 0
+        params.Bgra = Format == 50 || Format == 44 ? 1 | 0
+        VkStorage storage = Volumes.Items[handle]
+        Vk.CmdBindDescriptorSets(Command, 1, ComputeLayout, 1, 1, &storage.Descriptor, 0, null)
+        Vk.CmdPushConstants(Command, ComputeLayout, 32, 0, 88, &params)
+        Vk.CmdDispatch(Command, (endX - params.StartX + 7) / 8, (endY - params.StartY + 7) / 8, 1)
+        MemoryBarrier(0x800, 0x40, 0x800, 0x60) // following volume compares against this depth
+        return true
+    }
+
+    -CopyVoxelFrame()
+    {
+        MemoryBarrier(0x1800, 0x1040, 0x1000, 0x800)
+        VkImageMemoryBarrier image
+        image.image = Images.Handles[FrameImage]
+        image.subresourceRange.aspectMask = 1
+        image.subresourceRange.levelCount = 1
+        image.subresourceRange.layerCount = 1
+        image.newLayout = 7 // TRANSFER_DST_OPTIMAL
+        image.dstAccessMask = 0x1000
+        Vk.CmdPipelineBarrier(Command, 0x1000, 0x1000, 0, 0, null, 0, null, 1, &image)
+        VkBufferImageCopy region
+        region.imageExtent.width = Extent.width
+        region.imageExtent.height = Extent.height
+        region.imageExtent.depth = 1
+        Vk.CmdCopyBufferToImage(Command, Output.Buffer, image.image, 7, 1, &region)
+        image.oldLayout = 7
+        image.newLayout = 1000001002 // PRESENT_SRC_KHR
+        image.srcAccessMask = 0x1000
+        image.dstAccessMask = 0
+        Vk.CmdPipelineBarrier(Command, 0x1000, 0x2000, 0, 0, null, 0, null, 1, &image)
+    }
+}
+
+
+
+

@@ -5,6 +5,10 @@ QuaxelPlatformBackend
     bool RequestWindowClose() { return false }
     bool PumpWindow(bool wait) { return false }
     CloseWindow() {}
+    SetRedrawHandler(func () handler) {}
+    ClearRedrawHandler() {}
+    bool ConsumeWindowStall() { return false }
+    bool IsKeyDown(int key) { return false }
 
     bool GetWindowSize(int& width, int& height)
     {

@@ -1,0 +1,77 @@
+// Converts clock readings into a whole number of fixed simulation steps.
+QuaxelFixedStepper
+{
+    -long Frequency
+    -long Previous
+    -double StepSeconds
+    -double Elapsed
+
+    Configure(long frequency, double stepSeconds)
+    {
+        Frequency = frequency
+        StepSeconds = stepSeconds
+        Elapsed = 0.0
+    }
+
+    // Forgets all elapsed time. Call after any stall that should not be simulated.
+    Reset(long now)
+    {
+        Previous = now
+        Elapsed = 0.0
+    }
+
+    // Returns the steps owed since the last reading, at most maxSteps.
+    // Time beyond that limit is dropped so one hitch cannot move the world far.
+    int Advance(long now, int maxSteps)
+    {
+        if Frequency <= 0 || StepSeconds <= 0.0 { return 0 }
+        if now > Previous { Elapsed += (double)(now - Previous) / (double)Frequency }
+        Previous = now
+        int steps = 0
+        while Elapsed >= StepSeconds && steps < maxSteps {
+            Elapsed -= StepSeconds
+            steps++
+        }
+        if Elapsed >= StepSeconds { Elapsed = 0.0 }
+        return steps
+    }
+}
+T{
+    AccumulatesWholeSteps()
+    {
+        QuaxelFixedStepper stepper
+        stepper.Configure(1000, 0.01)
+        stepper.Reset(0)
+        T.AreEqual(stepper.Advance(5, 10), 0)
+        T.AreEqual(stepper.Advance(10, 10), 1)
+        T.AreEqual(stepper.Advance(35, 10), 2)
+    }
+
+    ResetDiscardsAStall()
+    {
+        QuaxelFixedStepper stepper
+        stepper.Configure(1000, 0.01)
+        stepper.Reset(0)
+        T.AreEqual(stepper.Advance(5, 10), 0)
+        stepper.Reset(60000)
+        T.AreEqual(stepper.Advance(60000, 10), 0)
+        T.AreEqual(stepper.Advance(60004, 10), 0)
+    }
+
+    LongHitchIsCappedAndNotRepaid()
+    {
+        QuaxelFixedStepper stepper
+        stepper.Configure(1000, 0.01)
+        stepper.Reset(0)
+        T.AreEqual(stepper.Advance(5000, 4), 4)
+        T.AreEqual(stepper.Advance(5000, 4), 0)
+    }
+
+    ClockGoingBackwardsAddsNoTime()
+    {
+        QuaxelFixedStepper stepper
+        stepper.Configure(1000, 0.01)
+        stepper.Reset(100)
+        T.AreEqual(stepper.Advance(50, 10), 0)
+    }
+}

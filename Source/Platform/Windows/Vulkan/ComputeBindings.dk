@@ -1,0 +1,133 @@
+VkDescriptorSetLayoutBinding
+{
+    int binding
+    int descriptorType = 7
+    int descriptorCount = 1
+    int stageFlags = 32
+    void* pImmutableSamplers
+}
+
+VkDescriptorSetLayoutCreateInfo
+{
+    int sType = 32
+    void* pNext
+    int vkFlags
+    int bindingCount = 1
+    void* pBindings
+}
+
+VkDescriptorPoolSize
+{
+    int descriptorType = 7
+    int descriptorCount = 1
+}
+
+VkDescriptorPoolCreateInfo
+{
+    int sType = 33
+    void* pNext
+    int vkFlags
+    int maxSets = 1
+    int poolSizeCount = 1
+    void* pPoolSizes
+}
+
+VkDescriptorSetAllocateInfo
+{
+    int sType = 34
+    void* pNext
+    long descriptorPool
+    int descriptorSetCount = 1
+    void* pSetLayouts
+}
+
+VkDescriptorBufferInfo
+{
+    long buffer
+    long vkOffset
+    long range
+}
+
+VkWriteDescriptorSet
+{
+    int sType = 35
+    void* pNext
+    long dstSet
+    int dstBinding
+    int dstArrayElement
+    int descriptorCount = 1
+    int descriptorType = 7
+    void* pImageInfo
+    void* pBufferInfo
+    void* pTexelBufferView
+}
+
+VkComputePipelineCreateInfo
+{
+    int sType = 29
+    void* pNext
+    int vkFlags
+    VkPipelineShaderStageCreateInfo vkStage
+    long vkLayout
+    long basePipelineHandle
+    int basePipelineIndex
+}
+
+VkMemoryBarrier
+{
+    int sType = 46
+    void* pNext
+    int srcAccessMask
+    int dstAccessMask
+}
+
+VkImageMemoryBarrier
+{
+    int sType = 45
+    void* pNext
+    int srcAccessMask
+    int dstAccessMask
+    int oldLayout
+    int newLayout
+    int srcQueueFamilyIndex = -1
+    int dstQueueFamilyIndex = -1
+    long image
+    VkImageSubresourceRange subresourceRange
+}
+
+VkBufferCopy
+{
+    long srcOffset
+    long dstOffset
+    long bytes
+}
+
+VkBufferImageCopy
+{
+    long bufferOffset
+    int bufferRowLength
+    int bufferImageHeight
+    int aspectMask = 1
+    int mipLevel
+    int baseArrayLayer
+    int layerCount = 1
+    int [3] imageOffset
+    VkExtent3D imageExtent
+}
+
+Vk
+#{
+    extern "C" CmdCopyBuffer(long cmd, long src, long dst, int count, void* regions) = "vkCmdCopyBuffer"
+    extern "C" int CreateDescriptorSetLayout(long device, void* info, void* allocator, void* layout) = "vkCreateDescriptorSetLayout"
+    extern "C" DestroyDescriptorSetLayout(long device, long layout, void* allocator) = "vkDestroyDescriptorSetLayout"
+    extern "C" int CreateDescriptorPool(long device, void* info, void* allocator, void* pool) = "vkCreateDescriptorPool"
+    extern "C" DestroyDescriptorPool(long device, long pool, void* allocator) = "vkDestroyDescriptorPool"
+    extern "C" int AllocateDescriptorSets(long device, void* info, void* sets) = "vkAllocateDescriptorSets"
+    extern "C" UpdateDescriptorSets(long device, int writes, void* updates, int copies, void* copyInfo) = "vkUpdateDescriptorSets"
+    extern "C" int CreateComputePipelines(long device, long cache, int count, void* info, void* allocator, void* pipelines) = "vkCreateComputePipelines"
+    extern "C" CmdDispatch(long cmd, int x, int y, int z) = "vkCmdDispatch"
+    extern "C" CmdBindDescriptorSets(long cmd, int point, long layout, int first, int count, void* sets, int dynamicCount, void* offsets) = "vkCmdBindDescriptorSets"
+    extern "C" CmdFillBuffer(long cmd, long buffer, long offset, long bytes, int data) = "vkCmdFillBuffer"
+    extern "C" CmdPipelineBarrier(long cmd, int srcStage, int dstStage, int flags, int barriers, void* memory, int buffers, void* bufferInfo, int images, void* imageInfo) = "vkCmdPipelineBarrier"
+    extern "C" CmdCopyBufferToImage(long cmd, long src, long dst, int layout, int count, void* regions) = "vkCmdCopyBufferToImage"
+}

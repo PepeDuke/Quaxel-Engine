@@ -7,6 +7,7 @@ VkInstanceExtensions
 
 VkTargets
 {
+    long [32] Handles
     long [32] Views
     long [32] Targets
     long [32] Finished
@@ -32,6 +33,15 @@ QuaxelVulkan
     -int Format
     -int ImageCount
     -VkTargets Images
+    -long DepthImage
+    -long DepthMemory
+    -long DepthView
+    -int DepthFormat
+    -int MeshCount
+    -VkMeshes Meshes
+    -bool FrameOpen
+    -int FrameImage
+    -int FrameAcquireResult
 
     -bool SelectDevice()
     {
@@ -47,7 +57,7 @@ QuaxelVulkan
             if familyCount == 0 { continue }
             for j : 0...familyCount-1 {
                 int present = 0
-                if (families[j].queueFlags & 1) != 0 && Vk.GetPhysicalDeviceSurfaceSupportKHR(adapters[i], j, Surface, &present) == 0 && present != 0 {
+                if (families[j].queueFlags & 3) == 3 && Vk.GetPhysicalDeviceSurfaceSupportKHR(adapters[i], j, Surface, &present) == 0 && present != 0 {
                     float priority = 1.0
                     VkDeviceQueueCreateInfo queueInfo
                     queueInfo.queueFamilyIndex = j
@@ -83,6 +93,7 @@ QuaxelVulkan
         surfaceInfo.hwnd = windowHandle
         if Vk.CreateWin32SurfaceKHR(Instance, &surfaceInfo, null, &Surface) != 0 { return false }
         if !SelectDevice() { return false }
+        if !CreateComputePipeline() || !SelectDepthFormat() { return false }
         VkCommandPoolCreateInfo poolInfo
         poolInfo.queueFamilyIndex = Family
         poolInfo.vkFlags = 2 // RESET_COMMAND_BUFFER
@@ -112,7 +123,9 @@ QuaxelVulkan
     {
         if Device != 0 {
             Vk.DeviceWaitIdle(Device)
+            ReleaseMeshes()
             ReleaseTargets()
+            ReleaseCompute()
             Vk.DestroyFence(Device, FrameFence, null)
             Vk.DestroySemaphore(Device, Acquired, null)
             Vk.DestroyCommandPool(Device, Pool, null)
@@ -122,6 +135,8 @@ QuaxelVulkan
             Vk.DestroySurfaceKHR(Instance, Surface, null)
             Vk.DestroyInstance(Instance, null)
         }
+        FrameOpen = false
+        DepthFormat = 0
         FrameFence = 0
         Acquired = 0
         Pool = 0

@@ -1,37 +1,44 @@
 QuaxelVulkan
 #{
-    -bool RecordFrame(int image)
+    -bool RecordFrameStart(int image, void* viewProjection)
     {
         if Vk.ResetCommandBuffer(Command, 0) != 0 { return false }
         VkCommandBufferBeginInfo beginInfo
         if Vk.BeginCommandBuffer(Command, &beginInfo) != 0 { return false }
-        float [4] clear = {0.012, 0.018, 0.030, 1.0}
+        if ComputeFrame {
+            ClearVoxelFrame()
+            return true
+        }
+        // Two VkClearValue unions: color, then depth and stencil.
+        float [8] clear = {0.012, 0.018, 0.030, 1.0, 1.0, 0.0, 0.0, 0.0}
         VkRenderPassBeginInfo render
         render.renderPass = Pass
         render.framebuffer = Images.Targets[image]
         render.renderArea.extent = Extent
-        render.clearValueCount = 1
+        render.clearValueCount = 2
         render.pClearValues = &clear[0]
         Vk.CmdBeginRenderPass(Command, &render, 0)
         Vk.CmdBindPipeline(Command, 0, Pipeline)
-        Vk.CmdDraw(Command, 3, 1, 0, 0)
-        Vk.CmdEndRenderPass(Command)
-        return Vk.EndCommandBuffer(Command) == 0
+        Vk.CmdPushConstants(Command, Layout, 1, 64, 64, viewProjection) // VERTEX
+        return true
     }
 
-    bool Draw(int width, int height)
+    // Leaves FrameOpen false when there is nothing to draw into yet.
+    bool BeginFrame(int width, int height, void* viewProjection)
     {
+        bool compute = viewProjection == null
+        FrameOpen = false
         if Device == 0 { return false }
         if width == 0 || height == 0 { return true }
-        if Chain == 0 || width != Extent.width || height != Extent.height {
+        if compute != ComputeFrame || Chain == 0 || width != Extent.width || height != Extent.height {
             if Vk.DeviceWaitIdle(Device) != 0 { return false }
             ReleaseTargets()
+            ComputeFrame = compute
             if !CreateTargets(width, height) { return false }
             if Chain == 0 { return true }
         }
         if Vk.WaitForFences(Device, 1, &FrameFence, 1, -1) != 0 { return false }
-        int image = 0
-        int acquiredResult = Vk.AcquireNextImageKHR(Device, Chain, -1, Acquired, 0, &image)
+        int acquiredResult = Vk.AcquireNextImageKHR(Device, Chain, -1, Acquired, 0, &FrameImage)
         #int outOfDate = -1000001004
         #int suboptimal = 1000001003
         if acquiredResult == outOfDate {
@@ -39,8 +46,31 @@ QuaxelVulkan
             return true
         }
         if acquiredResult != 0 && acquiredResult != suboptimal { return false }
-        if !RecordFrame(image) { return false }
-        int colorOutput = 0x400
+        if !RecordFrameStart(FrameImage, viewProjection) { return false }
+        FrameAcquireResult = acquiredResult
+        FrameOpen = true
+        return true
+    }
+
+    bool DrawMesh(int mesh, void* model)
+    {
+        if !FrameOpen { return Device != 0 }
+        if ComputeFrame || mesh < 0 || mesh >= MeshCount { return false }
+        long zero = 0
+        Vk.CmdPushConstants(Command, Layout, 1, 0, 64, model) // VERTEX
+        Vk.CmdBindVertexBuffers(Command, 0, 1, &Meshes.Items[mesh].VertexBuffer, &zero)
+        Vk.CmdBindIndexBuffer(Command, Meshes.Items[mesh].IndexBuffer, 0, 1) // UINT32
+        Vk.CmdDrawIndexed(Command, Meshes.Items[mesh].IndexCount, 1, 0, 0, 0)
+        return true
+    }
+
+    bool EndFrame()
+    {
+        if !FrameOpen { return Device != 0 }
+        FrameOpen = false
+        if ComputeFrame { CopyVoxelFrame() } else { Vk.CmdEndRenderPass(Command) }
+        if Vk.EndCommandBuffer(Command) != 0 { return false }
+        int colorOutput = ComputeFrame ? 0x1000 | 0x400
         VkSubmitInfo submit
         submit.waitSemaphoreCount = 1
         submit.pWaitSemaphores = &Acquired
@@ -48,17 +78,19 @@ QuaxelVulkan
         submit.commandBufferCount = 1
         submit.pCommandBuffers = &Command
         submit.signalSemaphoreCount = 1
-        submit.pSignalSemaphores = &Images.Finished[image]
+        submit.pSignalSemaphores = &Images.Finished[FrameImage]
         if Vk.ResetFences(Device, 1, &FrameFence) != 0 { return false }
         if Vk.QueueSubmit(GraphicsQueue, 1, &submit, FrameFence) != 0 { return false }
         VkPresentInfoKHR present
         present.waitSemaphoreCount = 1
-        present.pWaitSemaphores = &Images.Finished[image]
+        present.pWaitSemaphores = &Images.Finished[FrameImage]
         present.swapchainCount = 1
         present.pSwapchains = &Chain
-        present.pImageIndices = &image
+        present.pImageIndices = &FrameImage
         int result = Vk.QueuePresentKHR(GraphicsQueue, &present)
-        if result == outOfDate || result == suboptimal || (result == 0 && acquiredResult == suboptimal) {
+        #int outOfDate = -1000001004
+        #int suboptimal = 1000001003
+        if result == outOfDate || result == suboptimal || (result == 0 && FrameAcquireResult == suboptimal) {
             Extent.width = 0
             return true
         }

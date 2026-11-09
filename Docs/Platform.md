@@ -6,9 +6,9 @@ backend calls native libraries. This does not require Duck interfaces or a
 runtime plugin loader.
 
 ```text
-Hellfeather -> quaxel_core
-           -> quaxel_platform -> quaxel_platform_backend
-                                Windows OR Headless (Linux: future)
+Hellfeather -> quaxel_engine -> quaxel_core
+                             -> quaxel_platform -> quaxel_platform_backend
+                                                   Windows OR Headless (Linux: future)
 ```
 
 ## Ownership and dependencies
@@ -18,6 +18,7 @@ Hellfeather -> quaxel_core
 | quaxel_core | Source/Core | Portable engine state and logic; no platform dependency |
 | quaxel_platform | Source/Platform/Api | Public platform-neutral service contract |
 | quaxel_platform_backend | Source/Platform/Windows or Headless | One concrete implementation of that contract |
+| quaxel_engine | Source/Engine | The main loop; joins core to the platform API |
 
 `Quaxel.dkp` builds core by itself. `Quaxel.Windows.dkp` and
 `Quaxel.Headless.dkp` each reference core and select exactly one implementation
@@ -31,8 +32,8 @@ Duck checks direct module dependencies: importing the shared API does not expose
 backend functions. This is an architectural boundary, not a security boundary;
 a developer could deliberately add a backend dependency to a manifest.
 
-Platform services sit beside core, not inside it. A future application/window
-module may depend on both. Backends must not import gameplay or depend on the
+Platform services sit beside core, not inside it. `quaxel_engine` depends on
+both. Backends must not import gameplay or depend on the
 shared API, which would introduce a cycle. Core must remain independently
 buildable with no window system or native platform libraries.
 
@@ -67,24 +68,33 @@ The x64 Windows backend supports one main window per process.
 | `ResizeWindow(width, height)` | Requests new client dimensions while preserving position. Returns true on success. |
 | `RequestWindowClose()` | Queues a close request. Pump messages to complete it. |
 | `CloseWindow()` | Destroys the window immediately and releases its class. Safe to repeat. |
+| `SetRedrawHandler(handler)` | Sets a function called during live resize, while the normal loop is blocked. `ClearRedrawHandler()` removes it. |
+| `ConsumeWindowStall()` | Returns true once after a window drag blocked the loop, so that time is not simulated. |
 
 Headless reports false for window capability and operations and zero for size.
-A game can choose its headless path before opening a window.
+`QuaxelEngine.Run` uses this to select its headless path.
+
+## Input
+
+`QuaxelPlatform.IsKeyDown(key)` reports whether a key is held, using `QuaxelKey`
+values. The Windows backend tracks key-down and key-up messages. It clears held
+keys when the window loses focus or a modal drag starts. Headless builds report
+no held keys.
 
 ## Vulkan renderer
 
-After opening the main window, call `QuaxelRenderer.Start()`. On success,
-poll with `QuaxelPlatform.PumpWindow(false)` and call `DrawTriangle()` each
-frame. Both renderer calls return false on failure. When the client size is
-zero, wait for messages and resume drawing after restore. Call
-`QuaxelRenderer.Stop()` at shutdown. Closing the native window also releases
-the renderer. These operations run on the window-owning thread.
+The engine starts Vulkan on the window-owning thread. It uploads new and
+edited voxel volumes before opening a frame. Each visible volume dispatches
+an 8×8 compute shader over its projected screen rectangle. Rays clip to the
+volume and stop at the first occupied cell or the closest depth already
+written by another volume. A transfer copies the finished colors to the
+swapchain image for FIFO presentation.
 
-The Windows backend uses Vulkan 1.0, a queue that supports both graphics and
-presentation, FIFO presentation, and a single frame in flight. It rebuilds
-the swapchain, framebuffers and pipeline when the extent changes or the
-swapchain becomes out of date. The triangle's positions and colors come from
-the vertex shader. Headless builds omit the Vulkan bindings and link inputs.
+The backend uses one graphics/compute/present queue and one frame in flight.
+Resizing recreates the output buffer and swapchain. Volume storage survives
+resize and expires when the renderer stops. The low-level indexed graphics
+API remains available for explicit graphics clients. Headless builds omit
+the Vulkan bindings and link inputs.
 
 ## Text contract
 

@@ -1,0 +1,147 @@
+// Typed view of mapped Vulkan storage. Only the allocated prefix is accessed.
+QuaxelVoxelUpload
+{
+    int [33554432] Words
+}
+
+// Words starts with the grid dimensions, then one offset per 8^3 brick.
+// A zero offset means empty space. Only written bricks have a payload.
+QuaxelVoxelVolume
+{
+    -int [] Words
+    -int [] OccupiedCounts
+    -int [] FreeOffsets
+    -int PayloadStart
+    QuaxelVec3 Center
+    QuaxelVec3 Size
+
+    // Spread the three bits of a brick-local coordinate into positions 0, 3, 6.
+    -int Spread(int v) { return (v & 1) | ((v & 2) << 2) | ((v & 4) << 4) }
+
+    bool Configure(int width, int height, int depth)
+    {
+        if width < 1 || height < 1 || depth < 1 || width > 4096 || height > 4096 || depth > 4096 { return false }
+        int bricks = ((width + 7) / 8) * ((height + 7) / 8) * ((depth + 7) / 8)
+        if bricks > 33554428 { return false }
+        Words.Clear()
+        OccupiedCounts.Clear()
+        FreeOffsets.Clear()
+        PayloadStart = 3 + bricks
+        Center = QuaxelVec3.Make(0.0, 0.0, 0.0)
+        Words += width
+        Words += height
+        Words += depth
+        for i : 0; i < bricks; i++ { Words += 0 }
+        Size = QuaxelVec3.Make((float)width, (float)height, (float)depth)
+        return true
+    }
+
+    // RGB in the low 24 bits. A negative value erases the cell.
+    bool SetVoxel(int x, int y, int z, int rgb)
+    {
+        if Words.Len == 0 || x < 0 || y < 0 || z < 0 || x >= Words[0] || y >= Words[1] || z >= Words[2] { return false }
+        int columns = (Words[0] + 7) / 8
+        int rows = (Words[1] + 7) / 8
+        int brick = 3 + x / 8 + columns * (y / 8 + rows * (z / 8))
+        int offset = Words[brick]
+        if offset == 0 {
+            if rgb < 0 { return true }
+            // Vulkan 1.0 guarantees a 128 MiB storage buffer range.
+            if FreeOffsets.Len > 0 {
+                offset = (FreeOffsets--)
+            } else {
+                if Words.Len > 33554432 - 512 { return false }
+                offset = (int)Words.Len
+                for i : 0; i < 512; i++ { Words += 0 }
+                OccupiedCounts += 0
+            }
+            Words[brick] = offset
+        }
+        int cell = offset + (Spread(x) | (Spread(y) << 1) | (Spread(z) << 2))
+        int slot = (offset - PayloadStart) / 512
+        if rgb < 0 {
+            if Words[cell] == 0 { return true }
+            Words[cell] = 0
+            OccupiedCounts[slot]--
+            if OccupiedCounts[slot] == 0 {
+                Words[brick] = 0
+                FreeOffsets += offset
+            }
+        } else {
+            if Words[cell] == 0 { OccupiedCounts[slot]++ }
+            Words[cell] = (rgb & 0xffffff) + 1
+        }
+        return true
+    }
+
+    CopyTo(void* destination)
+    {
+        QuaxelVoxelUpload* upload = (QuaxelVoxelUpload*)destination
+        for i : 0; i < 3; i++ { upload.Words[i] = Words[i] }
+        int span = 1
+        while span * 8 < Words[0] || span * 8 < Words[1] || span * 8 < Words[2] { span *= 2 }
+        int next = PayloadStart
+        PackBricks(upload, 0, 0, 0, span, next)
+    }
+
+    // Visit octants in Morton order. Clip rectangular grids without storing
+    // padded bricks. The directory stays directly addressable by brick XYZ.
+    -PackBricks(QuaxelVoxelUpload* upload, int x, int y, int z, int span, int& next)
+    {
+        if x * 8 >= Words[0] || y * 8 >= Words[1] || z * 8 >= Words[2] { return }
+        if span > 1 {
+            int half = span / 2
+            for child : 0; child < 8; child++ {
+                PackBricks(upload, x + (child & 1) * half, y + ((child >> 1) & 1) * half,
+                    z + ((child >> 2) & 1) * half, half, next)
+            }
+            return
+        }
+        int columns = (Words[0] + 7) / 8
+        int rows = (Words[1] + 7) / 8
+        int brick = 3 + x + columns * (y + rows * z)
+        int offset = Words[brick]
+        upload.Words[brick] = 0
+        if offset == 0 { return }
+        upload.Words[brick] = next
+        for i : 0; i < 512; i++ { upload.Words[next + i] = Words[offset + i] }
+        next += 512
+    }
+}
+@{
+    WordCount: (int)Words.Len - (int)FreeOffsets.Len * 512
+}
+T{
+    UploadPacksMortonBricksAndCellsRegardlessOfWriteOrder()
+    {
+        QuaxelVoxelVolume volume()
+        T.IsTrue(volume.Configure(24, 16, 8))
+        // Morton brick (0,1,0) precedes (2,0,0), opposite directory order.
+        T.IsTrue(volume.SetVoxel(16, 0, 0, 0xaabbcc))
+        T.IsTrue(volume.SetVoxel(1, 10, 4, 0x123456))
+        int [1033] packed
+        volume.CopyTo(&packed[0])
+        T.AreEqual(packed[3 + 3], 9)
+        T.AreEqual(packed[3 + 2], 521)
+        // Morton(1,2,4) = 1 + 16 + 256.
+        T.AreEqual(packed[9 + 273], 0x123457)
+        T.AreEqual(packed[521], 0xaabbcd)
+    }
+
+    SparseWritesAllocateOnlyTouchedBricks()
+    {
+        QuaxelVoxelVolume volume()
+        T.IsTrue(volume.Configure(17, 8, 2))
+        T.AreEqual(volume.WordCount, 6)
+        T.IsTrue(volume.SetVoxel(16, 7, 1, -1))
+        T.AreEqual(volume.WordCount, 6)
+        T.IsTrue(volume.SetVoxel(16, 7, 1, 0))
+        T.IsTrue(volume.SetVoxel(16, 6, 0, 0xffffff))
+        T.AreEqual(volume.WordCount, 518)
+        T.IsFalse(volume.SetVoxel(17, 0, 0, 0))
+        T.IsTrue(volume.SetVoxel(16, 6, 0, -1))
+        T.IsTrue(volume.SetVoxel(16, 7, 1, -1))
+        T.IsTrue(volume.SetVoxel(0, 0, 0, 0))
+        T.AreEqual(volume.WordCount, 518)
+    }
+}

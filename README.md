@@ -44,9 +44,18 @@ values.
 All engine runtime and game source is Duck; PowerShell is only a build launcher.
 The Duck bootstrap compiler and build tool are currently implemented in C++.
 
-The x64 Windows backend provides a performance clock and one resizable main
-window. Hellfeather draws a colored triangle using Vulkan in a 960 x 540 client
-area. The headless build runs three fixed simulation steps.
+`quaxel_engine` (`Source/Engine`) owns the main loop. A game derives from
+`QuaxelGameInstance` and passes itself to `QuaxelEngine.Run`, which handles
+startup, message pumping, fixed updates, rendering and teardown. Core also
+provides vector and matrix math, worlds, nodes and components, input snapshots,
+and reusable plane and cube geometry.
+
+The x64 Windows backend provides a performance clock, held-key state and one
+resizable main window. Its Vulkan compute shader renders the active world by casting orthographic
+rays through sparse voxel volumes. Empty 8×8×8 bricks are skipped in one
+step. Occupied bricks use incremental Amanatides–Woo grid traversal. In a 960 x 540
+client area, Hellfeather shows a cube on a plane that WASD moves. The headless
+build runs three fixed simulation steps with neutral input and no GPU.
 
 Windows builds require the x64 Vulkan SDK. The Windows build launchers stage
 its import library automatically. Before calling Duck directly on a fresh
@@ -54,6 +63,10 @@ checkout, run `./configure-vulkan.ps1`. The executable uses the graphics
 driver's Vulkan runtime. Shader bytecode is embedded in the Windows module.
 After editing the GLSL in `Shaders/`, run `./Shaders/compile.ps1` with
 `VULKAN_SDK` set, then rebuild.
+
+The gameplay architecture uses an engine-owned main loop, a persistent game
+instance, and worlds composed of nodes and components.
+[World and ECS design](Docs/World.md)
 
 ## Dependency boundary
 

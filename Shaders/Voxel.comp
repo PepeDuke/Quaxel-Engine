@@ -1,0 +1,97 @@
+#version 450
+layout(local_size_x=8,local_size_y=8) in;
+layout(push_constant) uniform Params {
+    mat4 boxFromClip;
+    ivec2 extent;
+    ivec2 start;
+    int srgb;
+    int bgra;
+} pc;
+layout(set=0,binding=0,std430) buffer Output { uint frame[]; };
+layout(set=1,binding=0,std430) readonly buffer Grid { int words[]; };
+// Morton index for an 8^3 brick, with x/y/z at bit positions 3i + 0/1/2.
+int mortonCell(ivec3 p) {
+    ivec3 bits = (p & 1) | ((p & 2) << 2) | ((p & 4) << 4);
+    return bits.x | (bits.y << 1) | (bits.z << 2);
+}
+
+ivec3 enteringCell(vec3 position, vec3 direction) {
+    return ivec3(mix(floor(position), ceil(position) - 1.0, lessThan(direction, vec3(0))));
+}
+
+void main() {
+    ivec2 pixel = pc.start + ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(pixel, pc.extent))) return;
+    int index = pixel.x + pc.extent.x * pixel.y;
+    vec2 xy = (vec2(pixel) + 0.5) * (2.0 / vec2(pc.extent)) - 1.0;
+    vec3 nearBox = (pc.boxFromClip * vec4(xy, 0, 1)).xyz + 0.5;
+    vec3 ray = pc.boxFromClip[2].xyz;
+    ivec3 dims = ivec3(words[0], words[1], words[2]);
+    ivec3 bricks = (dims + 7) / 8;
+    vec3 origin = nearBox * dims;
+    vec3 dir = ray * dims;
+    ivec3 stepDir = ivec3(sign(dir));
+    bvec3 parallel = equal(stepDir, ivec3(0));
+    vec3 invDir = 1.0 / mix(dir, vec3(1.0), parallel);
+    ivec3 positive = max(stepDir, ivec3(0));
+    int depthIndex = index + pc.extent.x * pc.extent.y;
+    float t = 0.0, end = uintBitsToFloat(frame[depthIndex]);
+    int face = 1;
+    for (int a = 0; a < 3; ++a) {
+        if (dir[a] == 0.0) {
+            if (origin[a] < 0 || origin[a] >= dims[a]) return;
+        } else {
+            float t0 = -origin[a] * invDir[a], t1 = (dims[a] - origin[a]) * invDir[a];
+            if (min(t0,t1) > t) { t = min(t0,t1); face = a; }
+            end = min(end, max(t0,t1));
+        }
+    }
+    if (t >= end) return;
+    ivec3 cell = clamp(enteringCell(origin + t * dir, dir), ivec3(0), dims-1);
+    while (all(greaterThanEqual(cell, ivec3(0))) && all(lessThan(cell, dims))) {
+        ivec3 brick = cell / 8;
+        int offset = words[3 + brick.x + bricks.x * (brick.y + bricks.y * brick.z)];
+        ivec3 low = brick * 8;
+        ivec3 edge = low + positive * 8;
+        vec3 next = mix((vec3(edge) - origin) * invDir, vec3(2.0), parallel);
+        float brickExit = min(next.x, min(next.y, next.z));
+        if (offset != 0) {
+            // Amanatides & Woo DDA. Reinitialize at each brick to bound drift.
+            vec3 tMax = mix((vec3(cell + positive) - origin) * invDir, vec3(2.0), parallel);
+            vec3 tDelta = abs(invDir);
+            ivec3 local = cell - low;
+            while (all(greaterThanEqual(local, ivec3(0))) && all(lessThan(local, ivec3(8)))) {
+                int value = words[offset + mortonCell(local)];
+                if (value != 0) {
+                    int rgb = value - 1;
+                    float light = face == 1 ? 1.0 : (face == 0 ? 0.68 : 0.42);
+                    vec3 linear = vec3(rgb >> 16, (rgb >> 8) & 255, rgb & 255) * (light / 255.0);
+                    vec3 encoded = linear;
+                    if (pc.srgb != 0)
+                        encoded = mix(12.92 * linear, 1.055 * pow(linear, vec3(1.0/2.4)) - 0.055,
+                                      greaterThan(linear, vec3(0.0031308)));
+                    frame[index] = packUnorm4x8(vec4(pc.bgra != 0 ? encoded.bgr : encoded, 1));
+                    frame[depthIndex] = floatBitsToUint(t);
+                    return;
+                }
+                t = min(tMax.x, min(tMax.y, tMax.z));
+                if (t >= min(end, brickExit)) break;
+                bvec3 crossedCell = equal(tMax, vec3(t));
+                local += mix(ivec3(0), stepDir, crossedCell);
+                tMax += mix(vec3(0.0), tDelta, crossedCell);
+                face = crossedCell.x ? 0 : (crossedCell.y ? 1 : 2);
+            }
+        }
+        t = brickExit;
+        if (t >= end) break;
+        // Reconstruct lateral coordinates after a brick jump. Advance all
+        // tied axes explicitly so a ray through a corner always makes progress.
+        cell = clamp(enteringCell(origin + t * dir, dir), low, low + 7);
+        bvec3 crossed = equal(next, vec3(t));
+        cell = mix(cell, edge + min(stepDir, ivec3(0)), crossed);
+        face = crossed.x ? 0 : (crossed.y ? 1 : 2);
+    }
+    return;
+}
+
+

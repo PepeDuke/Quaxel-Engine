@@ -1,0 +1,171 @@
+// Owns the main loop: startup, message pumping, fixed updates, rendering, teardown.
+QuaxelEngine
+#{
+    // Live resize runs inside the window system's modal loop, so the redraw
+    // handler finds the world here. Set only while the world is being rendered.
+    -void* RenderedWorld
+    -bool RedrawFailed
+
+    // Frames slower than this many steps drop the excess instead of catching up.
+    -int MaxStepsPerFrame() { return 5 }
+
+    // Runs the game to completion. Returns false if startup or rendering failed.
+    bool Run(QuaxelGameInstance& game)
+    {
+        QuaxelWorld world()
+        bool success = game.Prepare(world)
+        if !success { Print("Failed to prepare the initial world") }
+        if success {
+            if QuaxelPlatform.SupportsWindowing() {
+                success = RunWindowed(game, world)
+            } else {
+                RunHeadless(game, world)
+            }
+        }
+        world.Release()
+        game.Stopped()
+        return success
+    }
+
+    -Step(QuaxelGameInstance& game, QuaxelWorld& world, QuaxelInputState& input)
+    {
+        world.BeginStep()
+        game.FixedStep(world, input, (float)Quaxel.FixedDeltaSeconds())
+        world.EndStep()
+    }
+
+    -RunHeadless(QuaxelGameInstance& game, QuaxelWorld& world)
+    {
+        QuaxelInputState input
+        QuaxelSession session()
+        session.Begin()
+        int total = game.HeadlessSteps()
+        while session.Running && session.Frame < total {
+            SampleInput(input)
+            Step(game, world, input)
+            session.Advance()
+        }
+        session.Stop()
+    }
+
+    -bool RunWindowed(QuaxelGameInstance& game, QuaxelWorld& world)
+    {
+        if !QuaxelPlatform.OpenWindow(game.WindowTitle(), game.WindowWidth(), game.WindowHeight(), true) {
+            Print("Failed to open the window")
+            return false
+        }
+        bool success = QuaxelRenderer.Start()
+        if !success { Print("Failed to start the renderer") }
+        if success { success = RunLoop(game, world) }
+        QuaxelRenderer.Stop()
+        QuaxelPlatform.CloseWindow()
+        return success
+    }
+
+
+    -SampleInput(QuaxelInputState& input)
+    {
+        for key : 0; key < input.Down.Len; key++ {
+            input.Down[key] = QuaxelPlatform.IsKeyDown(key)
+        }
+    }
+
+    -bool RunLoop(QuaxelGameInstance& game, QuaxelWorld& world)
+    {
+        long frequency = 0
+        long now = 0
+        if !QuaxelPlatform.GetClockFrequency(frequency) || !QuaxelPlatform.ReadClock(now) {
+            Print("The platform clock is unavailable")
+            return false
+        }
+        QuaxelFixedStepper stepper
+        stepper.Configure(frequency, Quaxel.FixedDeltaSeconds())
+        stepper.Reset(now)
+        RenderedWorld = &world
+        RedrawFailed = false
+        QuaxelPlatform.SetRedrawHandler(RedrawDuringResize)
+        QuaxelPlatform.ConsumeWindowStall()
+
+        bool success = true
+        bool minimized = false
+        QuaxelInputState input
+        while QuaxelPlatform.PumpWindow(minimized) {
+            int width = 0
+            int height = 0
+            if !QuaxelPlatform.GetWindowSize(width, height) { break }
+            if width == 0 || height == 0 {
+                minimized = true
+                continue
+            }
+            if !QuaxelPlatform.ReadClock(now) {
+                success = false
+                break
+            }
+            if QuaxelPlatform.ConsumeWindowStall() || minimized { stepper.Reset(now) }
+            minimized = false
+
+            SampleInput(input)
+            int steps = stepper.Advance(now, MaxStepsPerFrame())
+            for i : 0; i < steps; i++ { Step(game, world, input) }
+
+            if RedrawFailed || !Render(world, width, height) {
+                Print("Rendering failed")
+                success = false
+                break
+            }
+        }
+        QuaxelPlatform.ClearRedrawHandler()
+        RenderedWorld = null
+        return success
+    }
+
+    -RedrawDuringResize()
+    {
+        if RenderedWorld == null || RedrawFailed { return }
+        int width = 0
+        int height = 0
+        if !QuaxelPlatform.GetWindowSize(width, height) || width == 0 || height == 0 { return }
+        QuaxelWorld* world = (QuaxelWorld*)RenderedWorld
+        if !Render(*world, width, height) { RedrawFailed = true }
+    }
+
+    -bool Render(QuaxelWorld& world, int width, int height)
+    {
+        QuaxelMat4 viewProjection = QuaxelMat4.Identity()
+        int cameraNode = world.ActiveCamera
+        if cameraNode != 0 && world.Has(cameraNode, QuaxelComponents.Transform) {
+            QuaxelCamera camera = world.GetCamera(cameraNode)
+            camera.UpdateBounds(width, height)
+            world.SetCamera(cameraNode, camera)
+            viewProjection = camera.ViewProjection(world.WorldPosition(cameraNode))
+        }
+        int mask = QuaxelComponents.Transform | QuaxelComponents.Voxels
+        for id : world.NextWith(0, mask); id != 0; id = world.NextWith(id, mask) {
+            int volume = world.VolumeOf(id)
+            if world.NeedsVolumeUpload(volume) {
+                void* mapped = null
+                int handle = QuaxelRenderer.MapVolume(world.VolumeHandle(volume), world.VolumeWords(volume), mapped)
+                if handle < 0 { return false }
+                world.CopyVolume(volume, mapped)
+                QuaxelRenderer.UnmapVolume(handle)
+                world.SetVolumeHandle(volume, handle)
+            }
+        }
+        if !QuaxelRenderer.BeginVoxelFrame() { return false }
+        for id : world.NextWith(0, mask); id != 0; id = world.NextWith(id, mask) {
+            QuaxelMat4 model = world.VolumeModel(id)
+            QuaxelMat4 clip = QuaxelMat4.Multiply(viewProjection, model)
+            float rx = (QuaxelMath.Abs(clip.M[0]) + QuaxelMath.Abs(clip.M[4]) + QuaxelMath.Abs(clip.M[8])) * 0.5
+            float ry = (QuaxelMath.Abs(clip.M[1]) + QuaxelMath.Abs(clip.M[5]) + QuaxelMath.Abs(clip.M[9])) * 0.5
+            float left = QuaxelMath.Clamp((clip.M[12] - rx + 1.0) * 0.5, 0.0, 1.0)
+            float right = QuaxelMath.Clamp((clip.M[12] + rx + 1.0) * 0.5, 0.0, 1.0)
+            float top = QuaxelMath.Clamp((clip.M[13] - ry + 1.0) * 0.5, 0.0, 1.0)
+            float bottom = QuaxelMath.Clamp((clip.M[13] + ry + 1.0) * 0.5, 0.0, 1.0)
+            if left >= right || top >= bottom { continue }
+            QuaxelMat4 boxFromClip
+            if !clip.InvertAffine(boxFromClip) { continue }
+            if !QuaxelRenderer.TraceVolume(world.VolumeHandle(world.VolumeOf(id)), &boxFromClip.M[0], left, top, right, bottom) { return false }
+        }
+        return QuaxelRenderer.EndFrame()
+    }
+}

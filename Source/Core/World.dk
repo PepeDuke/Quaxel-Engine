@@ -1,0 +1,521 @@
+QuaxelComponents
+#{
+    #int Transform = 1
+    #int MeshRenderer = 2
+    #int Camera = 4
+    #int Voxels = 8
+}
+
+QuaxelTransform
+{
+    QuaxelVec3 Position
+    QuaxelVec3 Scale
+}
+#{
+    QuaxelTransform Make(QuaxelVec3 position, QuaxelVec3 scale)
+    {
+        QuaxelTransform result
+        result.Position = position
+        result.Scale = scale
+        return result
+    }
+}
+
+QuaxelMeshRenderer
+{
+    int Mesh
+}
+
+// An orthographic camera. The owning node's world position is the eye, so a
+// camera attached to a parent node moves with it.
+QuaxelCamera
+{
+    QuaxelVec3 Direction
+    QuaxelVec3 Up
+    float FrameHalfWidth
+    float FrameHalfHeight
+    float Near
+    float Far
+    -float HalfWidth
+    -float HalfHeight
+
+    // Widens one axis to match the viewport, keeping the whole frame visible
+    // and world units square at every window shape.
+    UpdateBounds(int width, int height)
+    {
+        if width <= 0 || height <= 0 { return }
+        float aspect = (float)width / (float)height
+        HalfHeight = FrameHalfHeight
+        HalfWidth = FrameHalfHeight * aspect
+        if HalfWidth < FrameHalfWidth {
+            HalfWidth = FrameHalfWidth
+            HalfHeight = FrameHalfWidth / aspect
+        }
+    }
+
+    QuaxelVec3 Forward() { return QuaxelVec3.Normalize(Direction) }
+
+    QuaxelVec3 Right() { return QuaxelVec3.Normalize(QuaxelVec3.Cross(Forward(), Up)) }
+
+    QuaxelMat4 ViewProjection(QuaxelVec3 eye)
+    {
+        return QuaxelMat4.Multiply(
+            QuaxelMat4.Orthographic(-HalfWidth, HalfWidth, -HalfHeight, HalfHeight, Near, Far),
+            QuaxelMat4.LookAt(eye, QuaxelVec3.Add(eye, Direction), Up))
+    }
+}
+@{
+    BoundsHalfWidth: HalfWidth
+    BoundsHalfHeight: HalfHeight
+}
+T{
+    BoundsKeepFrameVisibleAtAnyAspect()
+    {
+        QuaxelCamera camera
+        camera.FrameHalfWidth = 8.0
+        camera.FrameHalfHeight = 4.5
+        camera.UpdateBounds(1600, 900)
+        T.AreEqual(camera.BoundsHalfWidth, 8.0)
+        T.AreEqual(camera.BoundsHalfHeight, 4.5)
+        camera.UpdateBounds(1800, 900)
+        T.AreEqual(camera.BoundsHalfWidth, 9.0)
+        T.AreEqual(camera.BoundsHalfHeight, 4.5)
+        camera.UpdateBounds(800, 800)
+        T.AreEqual(camera.BoundsHalfWidth, 8.0)
+        T.AreEqual(camera.BoundsHalfHeight, 8.0)
+    }
+
+    BoundsIgnoreMinimizedViewport()
+    {
+        QuaxelCamera camera
+        camera.FrameHalfWidth = 2.0
+        camera.FrameHalfHeight = 1.0
+        camera.UpdateBounds(200, 100)
+        camera.UpdateBounds(0, 0)
+        T.AreEqual(camera.BoundsHalfWidth, 2.0)
+    }
+}
+
+// Components live inline. Mask records which ones are attached.
+QuaxelNode
+{
+    int Id
+    int Parent
+    int Mask
+    bool Alive
+    bool Active
+    bool PendingDestroy
+    QuaxelTransform Transform
+    int Volume
+    QuaxelMeshRenderer MeshRenderer
+    QuaxelCamera Camera
+}
+
+// Node IDs are local to one world. An ID is never reused while the world lives
+// and 0 is never a valid node.
+QuaxelWorld
+{
+    -QuaxelNode [] Nodes
+    -QuaxelMeshData [] Meshes
+    -QuaxelVoxelVolume [] Volumes
+    -int [] VolumeHandles
+    -bool [] VolumeDirty
+    -int [] MeshVolumes
+    -int CameraNode
+    -bool Stepping
+    -bool HasPendingChanges
+
+    bool Exists(int id) { return id >= 1 && id <= Nodes.Len && Nodes[id - 1].Alive }
+
+    bool IsActive(int id) { return Exists(id) && Nodes[id - 1].Active }
+
+    // A node created during a step joins queries once that step ends.
+    int CreateNode()
+    {
+        QuaxelNode node
+        node.Id = (int)Nodes.Len + 1
+        node.Alive = true
+        node.Active = !Stepping
+        Nodes += node
+        if Stepping { HasPendingChanges = true }
+        return node.Id
+    }
+
+    int CreateChild(int parent)
+    {
+        if !Exists(parent) { return 0 }
+        int id = CreateNode()
+        Nodes[id - 1].Parent = parent
+        return id
+    }
+
+    int ParentOf(int id) { return Exists(id) ? Nodes[id - 1].Parent | 0 }
+
+    // Pass 0 to detach. Rejects a parent that would create a cycle.
+    bool SetParent(int id, int parent)
+    {
+        if !Exists(id) || (parent != 0 && !Exists(parent)) { return false }
+        int ancestor = parent
+        while ancestor != 0 {
+            if ancestor == id { return false }
+            ancestor = Nodes[ancestor - 1].Parent
+        }
+        Nodes[id - 1].Parent = parent
+        return true
+    }
+
+    // During a step, the node and its descendants stay valid until the step ends.
+    bool DestroyNode(int id)
+    {
+        if !Exists(id) { return false }
+        if Stepping {
+            Nodes[id - 1].PendingDestroy = true
+            HasPendingChanges = true
+            return true
+        }
+        RemoveTree(id)
+        return true
+    }
+
+    -RemoveTree(int id)
+    {
+        for i : 0; i < Nodes.Len; i++ {
+            if Nodes[i].Alive && Nodes[i].Parent == id { RemoveTree(i + 1) }
+        }
+        QuaxelNode empty
+        empty.Id = id
+        Nodes[id - 1] = empty
+        if CameraNode == id { CameraNode = 0 }
+    }
+
+    BeginStep() { Stepping = true }
+
+    // Applies changes requested during the step, keeping queries stable inside it.
+    EndStep()
+    {
+        Stepping = false
+        if !HasPendingChanges { return }
+        HasPendingChanges = false
+        for i : 0; i < Nodes.Len; i++ {
+            if Nodes[i].Alive && Nodes[i].PendingDestroy { RemoveTree(i + 1) }
+        }
+        for i : 0; i < Nodes.Len; i++ {
+            if Nodes[i].Alive { Nodes[i].Active = true }
+        }
+    }
+
+    // Finds the next active node with every component in mask. Start with 0;
+    // 0 is returned when there are no more.
+    int NextWith(int after, int mask)
+    {
+        for i : after; i < Nodes.Len; i++ {
+            if Nodes[i].Active && (Nodes[i].Mask & mask) == mask { return i + 1 }
+        }
+        return 0
+    }
+
+    bool Has(int id, int mask) { return Exists(id) && (Nodes[id - 1].Mask & mask) == mask }
+
+    bool AttachTransform(int id, QuaxelTransform transform)
+    {
+        if !Exists(id) { return false }
+        Nodes[id - 1].Transform = transform
+        Nodes[id - 1].Mask |= QuaxelComponents.Transform
+        return true
+    }
+
+    bool AttachMeshRenderer(int id, QuaxelMeshRenderer renderer)
+    {
+        if !Exists(id) || renderer.Mesh < 0 || renderer.Mesh >= MeshVolumes.Len { return false }
+        if !AttachVoxels(id, MeshVolumes[renderer.Mesh]) { return false }
+        Nodes[id - 1].MeshRenderer = renderer
+        Nodes[id - 1].Mask |= QuaxelComponents.MeshRenderer
+        return true
+    }
+
+    bool AttachCamera(int id, QuaxelCamera camera)
+    {
+        if !Exists(id) { return false }
+        Nodes[id - 1].Camera = camera
+        Nodes[id - 1].Mask |= QuaxelComponents.Camera
+        return true
+    }
+
+    QuaxelTransform GetTransform(int id) { return Nodes[id - 1].Transform }
+
+    QuaxelVec3 GetPosition(int id) { return Nodes[id - 1].Transform.Position }
+
+    SetTransform(int id, QuaxelTransform transform) { Nodes[id - 1].Transform = transform }
+
+    int MeshOf(int id) { return Nodes[id - 1].MeshRenderer.Mesh }
+
+    QuaxelCamera GetCamera(int id) { return Nodes[id - 1].Camera }
+
+    SetCamera(int id, QuaxelCamera camera) { Nodes[id - 1].Camera = camera }
+
+    bool SetActiveCamera(int id)
+    {
+        if !Has(id, QuaxelComponents.Camera) { return false }
+        CameraNode = id
+        return true
+    }
+
+    // Combines this node's transform with those of its ancestors.
+    QuaxelMat4 ModelMatrix(int id)
+    {
+        QuaxelMat4 model = QuaxelMat4.Identity()
+        int current = id
+        while current != 0 {
+            if Has(current, QuaxelComponents.Transform) {
+                QuaxelTransform local = Nodes[current - 1].Transform
+                model = QuaxelMat4.Multiply(QuaxelMat4.Multiply(
+                    QuaxelMat4.Translation(local.Position), QuaxelMat4.Scaling(local.Scale)), model)
+            }
+            current = Nodes[current - 1].Parent
+        }
+        return model
+    }
+
+    QuaxelVec3 WorldPosition(int id)
+    {
+        QuaxelMat4 model = ModelMatrix(id)
+        return model.TransformPoint(QuaxelVec3.Make(0.0, 0.0, 0.0))
+    }
+
+    int CreateVolume(int width, int height, int depth)
+    {
+        Volumes++
+        int index = (int)Volumes.Len - 1
+        if !Volumes[index].Configure(width, height, depth) {
+            Volumes--
+            return -1
+        }
+        VolumeHandles += -1
+        VolumeDirty += true
+        return index
+    }
+
+    bool SetVoxel(int index, int x, int y, int z, int rgb)
+    {
+        if index < 0 || index >= Volumes.Len || !Volumes[index].SetVoxel(x, y, z, rgb) { return false }
+        VolumeDirty[index] = true
+        return true
+    }
+
+    bool NeedsVolumeUpload(int index) { return VolumeDirty[index] }
+
+    bool AttachVoxels(int id, int volume)
+    {
+        if !Exists(id) || volume < 0 || volume >= Volumes.Len { return false }
+        Nodes[id - 1].Volume = volume
+        Nodes[id - 1].Mask |= QuaxelComponents.Voxels
+        return true
+    }
+
+    int VolumeOf(int id) { return Nodes[id - 1].Volume }
+    int VolumeHandle(int index) { return VolumeHandles[index] }
+    SetVolumeHandle(int index, int handle)
+    {
+        VolumeHandles[index] = handle
+        VolumeDirty[index] = false
+    }
+    CopyVolume(int index, void* destination) { Volumes[index].CopyTo(destination) }
+    int VolumeWords(int index) { return Volumes[index].WordCount }
+
+    QuaxelMat4 VolumeModel(int id)
+    {
+        int index = VolumeOf(id)
+        return QuaxelMat4.Multiply(ModelMatrix(id), QuaxelMat4.Multiply(
+            QuaxelMat4.Translation(Volumes[index].Center), QuaxelMat4.Scaling(Volumes[index].Size)))
+    }
+
+    int AddMesh(QuaxelMeshData mesh)
+    {
+        int volumeIndex = -1
+        if mesh.VoxelPrimitive != 0 {
+            volumeIndex = CreateVolume(1, 1, 1)
+            if mesh.VoxelPrimitive == 2 {
+                Volumes[volumeIndex].Size.Y = 0.0625
+                Volumes[volumeIndex].Center.Y = -0.03125
+            }
+            int red = (int)(QuaxelMath.Clamp(mesh.BaseColor.X, 0.0, 1.0) * 255.0)
+            int green = (int)(QuaxelMath.Clamp(mesh.BaseColor.Y, 0.0, 1.0) * 255.0)
+            int blue = (int)(QuaxelMath.Clamp(mesh.BaseColor.Z, 0.0, 1.0) * 255.0)
+            Volumes[volumeIndex].SetVoxel(0, 0, 0, (red << 16) | (green << 8) | blue)
+        }
+        MeshVolumes += volumeIndex
+        Meshes += mesh
+        return (int)Meshes.Len - 1
+    }
+
+    QuaxelMeshData GetMesh(int index) { return Meshes[index] }
+
+    SetMeshRendererHandle(int index, int handle) { Meshes[index].RendererHandle = handle }
+
+    int MeshRendererHandle(int index) { return Meshes[index].RendererHandle }
+
+    // Releases every node and component. All node IDs from this world expire.
+    Release()
+    {
+        Nodes.Clear()
+        Meshes.Clear()
+        MeshVolumes.Clear()
+        Volumes.Clear()
+        VolumeHandles.Clear()
+        VolumeDirty.Clear()
+        CameraNode = 0
+        Stepping = false
+        HasPendingChanges = false
+    }
+}
+@{
+    ActiveCamera: CameraNode
+    NodeCount: (int)Nodes.Len
+    MeshCount: (int)Meshes.Len
+}
+T{
+    IdsAreLocalAndStartAtOne()
+    {
+        QuaxelWorld first()
+        QuaxelWorld second()
+        T.AreEqual(first.CreateNode(), 1)
+        T.AreEqual(first.CreateNode(), 2)
+        T.AreEqual(second.CreateNode(), 1)
+        T.IsFalse(first.Exists(0))
+        T.IsFalse(first.Exists(3))
+    }
+
+    AttachedComponentsAreQueryable()
+    {
+        QuaxelWorld world()
+        int bare = world.CreateNode()
+        int drawn = world.CreateNode()
+        QuaxelTransform transform = QuaxelTransform.Make(QuaxelVec3.Make(1.0, 2.0, 3.0), QuaxelVec3.Make(1.0, 1.0, 1.0))
+        T.IsTrue(world.AttachTransform(bare, transform))
+        T.IsTrue(world.AttachTransform(drawn, transform))
+        QuaxelMeshRenderer renderer
+        renderer.Mesh = world.AddMesh(QuaxelMeshData.Cube(QuaxelVec3.Make(0.5, 0.5, 0.5)))
+        T.IsTrue(world.AttachMeshRenderer(drawn, renderer))
+        int mask = QuaxelComponents.Transform | QuaxelComponents.MeshRenderer
+        T.AreEqual(world.NextWith(0, mask), drawn)
+        T.AreEqual(world.NextWith(drawn, mask), 0)
+        T.AreEqual(world.MeshOf(drawn), renderer.Mesh)
+        T.IsTrue(world.Has(drawn, QuaxelComponents.Voxels))
+        QuaxelVec3 position = world.GetPosition(bare)
+        T.AreEqual(position.Y, 2.0)
+    }
+
+    ChangesDuringAStepApplyAfterIt()
+    {
+        QuaxelWorld world()
+        int kept = world.CreateNode()
+        int doomed = world.CreateNode()
+        world.BeginStep()
+        int added = world.CreateNode()
+        T.IsFalse(world.IsActive(added))
+        T.IsTrue(world.DestroyNode(doomed))
+        T.IsTrue(world.IsActive(doomed))
+        world.EndStep()
+        T.IsTrue(world.IsActive(kept))
+        T.IsTrue(world.IsActive(added))
+        T.IsFalse(world.Exists(doomed))
+    }
+
+    DestroyRemovesDescendants()
+    {
+        QuaxelWorld world()
+        int parent = world.CreateNode()
+        int child = world.CreateChild(parent)
+        int grandchild = world.CreateChild(child)
+        int other = world.CreateNode()
+        T.IsTrue(world.DestroyNode(parent))
+        T.IsFalse(world.Exists(child))
+        T.IsFalse(world.Exists(grandchild))
+        T.IsTrue(world.Exists(other))
+    }
+
+    SetParentRejectsCycles()
+    {
+        QuaxelWorld world()
+        int a = world.CreateNode()
+        int b = world.CreateChild(a)
+        T.IsFalse(world.SetParent(a, b))
+        T.IsFalse(world.SetParent(a, a))
+        T.IsTrue(world.SetParent(b, 0))
+        T.AreEqual(world.ParentOf(b), 0)
+        T.IsTrue(world.SetParent(a, b))
+    }
+
+    ModelMatrixFollowsParents()
+    {
+        QuaxelWorld world()
+        int parent = world.CreateNode()
+        int child = world.CreateChild(parent)
+        world.AttachTransform(parent, QuaxelTransform.Make(QuaxelVec3.Make(10.0, 0.0, 0.0), QuaxelVec3.Make(2.0, 2.0, 2.0)))
+        world.AttachTransform(child, QuaxelTransform.Make(QuaxelVec3.Make(1.0, 0.0, 0.0), QuaxelVec3.Make(1.0, 1.0, 1.0)))
+        QuaxelMat4 model = world.ModelMatrix(child)
+        QuaxelVec3 origin = model.TransformPoint(QuaxelVec3.Make(0.0, 0.0, 0.0))
+        T.AreEqual(origin.X, 12.0)
+    }
+
+    WorldPositionFollowsParent()
+    {
+        QuaxelWorld world()
+        int parent = world.CreateNode()
+        int child = world.CreateChild(parent)
+        world.AttachTransform(parent, QuaxelTransform.Make(QuaxelVec3.Make(3.0, 0.0, 0.0), QuaxelVec3.Make(1.0, 1.0, 1.0)))
+        world.AttachTransform(child, QuaxelTransform.Make(QuaxelVec3.Make(0.0, 2.0, 0.0), QuaxelVec3.Make(1.0, 1.0, 1.0)))
+        QuaxelVec3 first = world.WorldPosition(child)
+        T.AreEqual(first.X, 3.0)
+        T.AreEqual(first.Y, 2.0)
+        world.SetTransform(parent, QuaxelTransform.Make(QuaxelVec3.Make(-1.0, 0.0, 0.0), QuaxelVec3.Make(1.0, 1.0, 1.0)))
+        QuaxelVec3 second = world.WorldPosition(child)
+        T.AreEqual(second.X, -1.0)
+    }
+
+    ReleaseExpiresNodes()
+    {
+        QuaxelWorld world()
+        int id = world.CreateNode()
+        QuaxelCamera camera
+        T.IsTrue(world.AttachCamera(id, camera))
+        T.IsTrue(world.SetActiveCamera(id))
+        world.Release()
+        T.IsFalse(world.Exists(id))
+        T.AreEqual(world.ActiveCamera, 0)
+        T.AreEqual(world.NodeCount, 0)
+    }
+
+    DestroyingActiveCameraClearsIt()
+    {
+        QuaxelWorld world()
+        int id = world.CreateNode()
+        QuaxelCamera camera
+        world.AttachCamera(id, camera)
+        world.SetActiveCamera(id)
+        world.DestroyNode(id)
+        T.AreEqual(world.ActiveCamera, 0)
+    }
+}
+
+// The game derives from this and overrides what it needs. It outlives its worlds.
+QuaxelGameInstance
+{
+    string WindowTitle() { return "Quaxel" }
+
+    int WindowWidth() { return 960 }
+
+    int WindowHeight() { return 540 }
+
+    // Steps to simulate when no window is available, as there is nothing to close.
+    int HeadlessSteps() { return 3 }
+
+    // Builds the initial world before it is activated. Return false to abort startup.
+    bool Prepare(QuaxelWorld& world) { return true }
+
+    // Runs once per fixed simulation step.
+    FixedStep(QuaxelWorld& world, QuaxelInputState& input, float deltaSeconds) {}
+
+    // Runs after the world has been released.
+    Stopped() {}
+}

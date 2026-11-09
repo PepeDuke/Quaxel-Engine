@@ -1,0 +1,95 @@
+VkMesh
+{
+    long VertexBuffer
+    long VertexMemory
+    long IndexBuffer
+    long IndexMemory
+    int IndexCount
+}
+
+VkMeshes
+{
+    VkMesh [64] Items
+}
+
+QuaxelVulkan
+#{
+    extern "C" void* memcpy(void* target, void* source, long byteCount)
+
+    -int FindMemoryType(int allowedTypes, int requiredFlags)
+    {
+        VkPhysicalDeviceMemoryProperties properties
+        Vk.GetPhysicalDeviceMemoryProperties(Physical, &properties)
+        for i : 0; i < properties.memoryTypeCount; i++ {
+            bool allowed = (allowedTypes & (1 << i)) != 0
+            if allowed && (properties.memoryTypes[i].propertyFlags & requiredFlags) == requiredFlags { return i }
+        }
+        return -1
+    }
+
+    // The memory stays host-visible, but is written only here.
+    -bool CreateFilledBuffer(void* source, long byteCount, int usage, long& buffer, long& memory)
+    {
+        VkBufferCreateInfo info
+        info.vkSize = byteCount
+        info.usage = usage
+        if Vk.CreateBuffer(Device, &info, null, &buffer) != 0 { return false }
+        VkMemoryRequirements requirements
+        Vk.GetBufferMemoryRequirements(Device, buffer, &requirements)
+        int memoryType = FindMemoryType(requirements.memoryTypeBits, 6) // HOST_VISIBLE | HOST_COHERENT
+        if memoryType < 0 { return false }
+        VkMemoryAllocateInfo allocation
+        allocation.allocationSize = requirements.vkSize
+        allocation.memoryTypeIndex = memoryType
+        if Vk.AllocateMemory(Device, &allocation, null, &memory) != 0 { return false }
+        if Vk.BindBufferMemory(Device, buffer, memory, 0) != 0 { return false }
+        void* mapped = null
+        if Vk.MapMemory(Device, memory, 0, byteCount, 0, &mapped) != 0 { return false }
+        memcpy(mapped, source, byteCount)
+        Vk.UnmapMemory(Device, memory)
+        return true
+    }
+
+    -DestroyMesh(VkMesh& mesh)
+    {
+        Vk.DestroyBuffer(Device, mesh.VertexBuffer, null)
+        Vk.FreeMemory(Device, mesh.VertexMemory, null)
+        Vk.DestroyBuffer(Device, mesh.IndexBuffer, null)
+        Vk.FreeMemory(Device, mesh.IndexMemory, null)
+        VkMesh empty
+        mesh = empty
+    }
+
+    -ReleaseMeshes()
+    {
+        for i : 0; i < MeshCount; i++ { DestroyMesh(Meshes.Items[i]) }
+        MeshCount = 0
+    }
+
+    int CreateMesh(void* vertices, int vertexCount, void* indices, int indexCount)
+    {
+        if Device == 0 || vertices == null || indices == null || vertexCount <= 0 || indexCount <= 0 { return -1 }
+        if MeshCount >= 64 { return -1 } // Capacity of VkMeshes
+        long vertexBytes = (long)vertexCount * 24
+        long indexBytes = (long)indexCount * 4
+        long vertexBuffer = 0
+        long vertexMemory = 0
+        long indexBuffer = 0
+        long indexMemory = 0
+        bool created = CreateFilledBuffer(vertices, vertexBytes, 0x80, vertexBuffer, vertexMemory) // VERTEX_BUFFER
+        if created { created = CreateFilledBuffer(indices, indexBytes, 0x40, indexBuffer, indexMemory) } // INDEX_BUFFER
+        VkMesh mesh
+        mesh.VertexBuffer = vertexBuffer
+        mesh.VertexMemory = vertexMemory
+        mesh.IndexBuffer = indexBuffer
+        mesh.IndexMemory = indexMemory
+        mesh.IndexCount = indexCount
+        if !created {
+            DestroyMesh(mesh)
+            return -1
+        }
+        Meshes.Items[MeshCount] = mesh
+        MeshCount++
+        return MeshCount - 1
+    }
+}

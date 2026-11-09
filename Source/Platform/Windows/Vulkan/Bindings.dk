@@ -444,6 +444,128 @@ VkFenceCreateInfo
     int vkFlags
 }
 
+VkFormatProperties
+{
+    int linearTilingFeatures
+    int optimalTilingFeatures
+    int bufferFeatures
+}
+
+VkMemoryType
+{
+    int propertyFlags
+    int heapIndex
+}
+
+VkMemoryHeap
+{
+    long vkSize
+    int heapFlags
+}
+
+VkPhysicalDeviceMemoryProperties
+{
+    int memoryTypeCount
+    VkMemoryType [32] memoryTypes
+    int memoryHeapCount
+    VkMemoryHeap [16] memoryHeaps
+}
+
+VkMemoryRequirements
+{
+    long vkSize
+    long alignment
+    int memoryTypeBits
+}
+
+VkMemoryAllocateInfo
+{
+    int sType = 5 // VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO
+    void* pNext
+    long allocationSize
+    int memoryTypeIndex
+}
+
+VkBufferCreateInfo
+{
+    int sType = 12 // VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO
+    void* pNext
+    int vkFlags
+    long vkSize
+    int usage
+    int sharingMode
+    int queueFamilyIndexCount
+    void* pQueueFamilyIndices
+}
+
+VkImageCreateInfo
+{
+    int sType = 14 // VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO
+    void* pNext
+    int vkFlags
+    int imageType
+    int vkFormat
+    VkExtent3D extent
+    int mipLevels
+    int arrayLayers
+    int samples
+    int tiling
+    int usage
+    int sharingMode
+    int queueFamilyIndexCount
+    void* pQueueFamilyIndices
+    int initialLayout
+}
+
+VkVertexInputBindingDescription
+{
+    int binding
+    int stride
+    int inputRate
+}
+
+VkVertexInputAttributeDescription
+{
+    int location
+    int binding
+    int vkFormat
+    int vkOffset
+}
+
+VkPushConstantRange
+{
+    int stageFlags
+    int vkOffset
+    int vkSize
+}
+
+VkStencilOpState
+{
+    int failOp
+    int passOp
+    int depthFailOp
+    int compareOp
+    int compareMask
+    int writeMask
+    int reference
+}
+
+VkPipelineDepthStencilStateCreateInfo
+{
+    int sType = 25 // VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO
+    void* pNext
+    int vkFlags
+    int depthTestEnable
+    int depthWriteEnable
+    int depthCompareOp
+    int depthBoundsTestEnable
+    int stencilTestEnable
+    VkStencilOpState front
+    VkStencilOpState back
+    float minDepthBounds
+    float maxDepthBounds
+}
+
 Vk
 #{
     extern "C" int CreateInstance(void* pCreateInfo, void* pAllocator, void* pInstance) = "vkCreateInstance"
@@ -481,7 +603,24 @@ Vk
     extern "C" int EndCommandBuffer(long commandBuffer) = "vkEndCommandBuffer"
     extern "C" CmdBeginRenderPass(long commandBuffer, void* pRenderPassBegin, int contents) = "vkCmdBeginRenderPass"
     extern "C" CmdBindPipeline(long commandBuffer, int pipelineBindPoint, long pipeline) = "vkCmdBindPipeline"
-    extern "C" CmdDraw(long commandBuffer, int vertexCount, int instanceCount, int firstVertex, int firstInstance) = "vkCmdDraw"
+    extern "C" GetPhysicalDeviceFormatProperties(long physicalDevice, int vkFormat, void* pFormatProperties) = "vkGetPhysicalDeviceFormatProperties"
+    extern "C" GetPhysicalDeviceMemoryProperties(long physicalDevice, void* pMemoryProperties) = "vkGetPhysicalDeviceMemoryProperties"
+    extern "C" int AllocateMemory(long device, void* pAllocateInfo, void* pAllocator, void* pMemory) = "vkAllocateMemory"
+    extern "C" FreeMemory(long device, long memory, void* pAllocator) = "vkFreeMemory"
+    extern "C" int MapMemory(long device, long memory, long vkOffset, long vkSize, int vkFlags, void* ppData) = "vkMapMemory"
+    extern "C" UnmapMemory(long device, long memory) = "vkUnmapMemory"
+    extern "C" int CreateBuffer(long device, void* pCreateInfo, void* pAllocator, void* pBuffer) = "vkCreateBuffer"
+    extern "C" DestroyBuffer(long device, long buffer, void* pAllocator) = "vkDestroyBuffer"
+    extern "C" GetBufferMemoryRequirements(long device, long buffer, void* pMemoryRequirements) = "vkGetBufferMemoryRequirements"
+    extern "C" int BindBufferMemory(long device, long buffer, long memory, long memoryOffset) = "vkBindBufferMemory"
+    extern "C" int CreateImage(long device, void* pCreateInfo, void* pAllocator, void* pImage) = "vkCreateImage"
+    extern "C" DestroyImage(long device, long image, void* pAllocator) = "vkDestroyImage"
+    extern "C" GetImageMemoryRequirements(long device, long image, void* pMemoryRequirements) = "vkGetImageMemoryRequirements"
+    extern "C" int BindImageMemory(long device, long image, long memory, long memoryOffset) = "vkBindImageMemory"
+    extern "C" CmdPushConstants(long commandBuffer, long pipelineLayout, int stageFlags, int vkOffset, int vkSize, void* pValues) = "vkCmdPushConstants"
+    extern "C" CmdBindVertexBuffers(long commandBuffer, int firstBinding, int bindingCount, void* pBuffers, void* pOffsets) = "vkCmdBindVertexBuffers"
+    extern "C" CmdBindIndexBuffer(long commandBuffer, long buffer, long vkOffset, int indexType) = "vkCmdBindIndexBuffer"
+    extern "C" CmdDrawIndexed(long commandBuffer, int indexCount, int instanceCount, int firstIndex, int vertexOffset, int firstInstance) = "vkCmdDrawIndexed"
     extern "C" CmdEndRenderPass(long commandBuffer) = "vkCmdEndRenderPass"
     extern "C" int CreateSemaphore(long device, void* pCreateInfo, void* pAllocator, void* pSemaphore) = "vkCreateSemaphore"
     extern "C" DestroySemaphore(long device, long semaphore, void* pAllocator) = "vkDestroySemaphore"

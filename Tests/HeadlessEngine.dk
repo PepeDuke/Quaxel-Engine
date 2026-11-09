@@ -1,0 +1,53 @@
+QuaxelEngineTestGame : QuaxelGameInstance
+{
+    int Steps
+    bool Prepared
+    bool WasStopped
+    bool RefusePrepare
+    bool SawHeldKey
+    float LastDelta
+    int WorldNodes
+
+    int HeadlessSteps() { return 4 }
+
+    bool Prepare(QuaxelWorld& world)
+    {
+        Prepared = true
+        world.CreateNode()
+        return !RefusePrepare
+    }
+
+    FixedStep(QuaxelWorld& world, QuaxelInputState& input, float deltaSeconds)
+    {
+        Steps++
+        LastDelta = deltaSeconds
+        WorldNodes = world.NodeCount
+        if input.IsDown(QuaxelKey.W) || input.IsDown(QuaxelKey.A) || input.IsDown(QuaxelKey.S) || input.IsDown(QuaxelKey.D) {
+            SawHeldKey = true
+        }
+    }
+
+    Stopped() { WasStopped = true }
+}
+T{
+    HeadlessRunDrivesLifecycleWithoutAGpu()
+    {
+        QuaxelEngineTestGame game()
+        T.IsTrue(QuaxelEngine.Run(game))
+        T.IsTrue(game.Prepared)
+        T.AreEqual(game.Steps, 4)
+        T.AreEqual(game.WorldNodes, 1)
+        T.AreEqual(game.LastDelta, (float)Quaxel.FixedDeltaSeconds())
+        T.IsFalse(game.SawHeldKey)
+        T.IsTrue(game.WasStopped)
+    }
+
+    FailedPrepareSkipsSimulationButStillStops()
+    {
+        QuaxelEngineTestGame game()
+        game.RefusePrepare = true
+        T.IsFalse(QuaxelEngine.Run(game))
+        T.AreEqual(game.Steps, 0)
+        T.IsTrue(game.WasStopped)
+    }
+}

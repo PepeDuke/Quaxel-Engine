@@ -23,6 +23,15 @@ QuaxelPlatform
         return QuaxelPlatformBackend.PumpWindow(wait)
     }
 
+    // Called from inside PumpWindow when the window needs a new frame during a
+    // live resize, while the normal loop is blocked.
+    SetRedrawHandler(func () handler) { QuaxelPlatformBackend.SetRedrawHandler(handler) }
+    ClearRedrawHandler() { QuaxelPlatformBackend.ClearRedrawHandler() }
+
+    // True once after the window blocked the loop, such as a border drag.
+    // Elapsed time across that gap should not be simulated.
+    bool ConsumeWindowStall() { return QuaxelPlatformBackend.ConsumeWindowStall() }
+
     bool RequestWindowClose() { return QuaxelPlatformBackend.RequestWindowClose() }
     CloseWindow() { QuaxelPlatformBackend.CloseWindow() }
 }

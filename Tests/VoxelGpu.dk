@@ -1,0 +1,60 @@
+QuaxelVulkan
+#{}
+T{
+    RayCrossesEmptyBrickAndWritesFirstHitDepth()
+    {
+        T.IsTrue(QuaxelPlatformBackend.OpenWindow("Voxel traversal", 128, 128, false))
+        T.IsTrue(QuaxelPlatformBackend.StartRenderer())
+        // One column, 23 cells deep. The final cell is occupied.
+        int [518] words
+        words[0] = 1
+        words[1] = 1
+        words[2] = 23
+        words[5] = 6
+        words[6 + 288] = 0xff0001
+        void* mapped = null
+        int handle = MapVolume(-1, 518, mapped)
+        T.IsTrue(handle >= 0)
+        memcpy(mapped, &words[0], 2072)
+        UnmapVolume(handle)
+        T.IsTrue(BeginFrame(128, 128, null))
+        float [16] matrix = {1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0}
+        T.IsTrue(TraceVolume(handle, &matrix[0], 0.0, 0.0, 1.0, 1.0))
+        // A second instance covers the left side. Its ray enters through +Z
+        // and hits the last voxel at depth 0.25. Then redraw the farther one.
+        matrix[10] = -1.0
+        matrix[14] = 0.75
+        T.IsTrue(TraceVolume(handle, &matrix[0], 0.0, 0.0, 0.375, 1.0))
+        matrix[10] = 1.0
+        matrix[14] = 0.0
+        T.IsTrue(TraceVolume(handle, &matrix[0], 0.0, 0.0, 1.0, 1.0))
+        VkStorage readback
+        T.IsTrue(CreateStorage(12, 2, 6, readback))
+        MemoryBarrier(0x1800, 0x1040, 0x1000, 0x800)
+        long frameBytes = (long)Extent.width * Extent.height * 4
+        VkBufferCopy [3] regions
+        regions[0].srcOffset = frameBytes // depth at an uncovered corner
+        regions[0].bytes = 4
+        regions[1].srcOffset = frameBytes + (Extent.width / 2 + Extent.width * (Extent.height / 2)) * 4
+        regions[1].dstOffset = 4
+        regions[1].bytes = 4
+        regions[2].srcOffset = frameBytes + (Extent.width / 3 + Extent.width * (Extent.height / 2)) * 4
+        regions[2].dstOffset = 8
+        regions[2].bytes = 4
+        Vk.CmdCopyBuffer(Command, Output.Buffer, readback.Buffer, 3, &regions[0])
+        MemoryBarrier(0x1000, 0x1000, 0x4000, 0x2000)
+        T.IsTrue(EndFrame())
+        T.AreEqual(Vk.WaitForFences(Device, 1, &FrameFence, 1, -1), 0)
+        T.AreEqual(Vk.MapMemory(Device, readback.Memory, 0, 12, 0, &mapped), 0)
+        float [3] depths
+        memcpy(&depths[0], mapped, 12)
+        Vk.UnmapMemory(Device, readback.Memory)
+        ReleaseStorage(readback)
+        Stop()
+        QuaxelPlatformBackend.CloseWindow()
+        T.AreEqual(depths[0], 1.0)
+        T.AreEqual(depths[2], 0.25)
+        float expected = 22.0 / 23.0 - 0.5
+        T.IsTrue(depths[1] > expected - 0.00001 && depths[1] < expected + 0.00001)
+    }
+}

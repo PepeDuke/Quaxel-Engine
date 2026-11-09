@@ -1,6 +1,28 @@
 QuaxelRenderer
 #{
     bool Start() { return QuaxelPlatformBackend.StartRenderer() }
-    bool DrawTriangle() { return QuaxelPlatformBackend.DrawTriangle() }
+
+    // Upload before opening the frame. Pass -1 for new storage or a handle to replace.
+    // Unmap before dispatch. All handles expire when the renderer stops.
+    int MapVolume(int previous, int words, void*& mapped) { return QuaxelPlatformBackend.MapVolume(previous, words, mapped) }
+    UnmapVolume(int handle) { QuaxelPlatformBackend.UnmapVolume(handle) }
+    bool BeginVoxelFrame() { return QuaxelPlatformBackend.BeginVoxelFrame() }
+    bool TraceVolume(int handle, void* boxFromClip, float left, float top, float right, float bottom)
+    {
+        return QuaxelPlatformBackend.TraceVolume(handle, boxFromClip, left, top, right, bottom)
+    }
+
+    // Low-level graphics API for callers submitting explicit triangle geometry.
+    int CreateMesh(void* vertices, int vertexCount, void* indices, int indexCount)
+    {
+        return QuaxelPlatformBackend.CreateMesh(vertices, vertexCount, indices, indexCount)
+    }
+
+    // Matrices point at 16 column-major floats and are read during the call.
+    // A frame that cannot be presented yet is skipped: every call still succeeds.
+    bool BeginFrame(void* viewProjection) { return QuaxelPlatformBackend.BeginFrame(viewProjection) }
+    bool DrawMesh(int mesh, void* model) { return QuaxelPlatformBackend.DrawMesh(mesh, model) }
+    bool EndFrame() { return QuaxelPlatformBackend.EndFrame() }
+
     Stop() { QuaxelPlatformBackend.StopRenderer() }
 }

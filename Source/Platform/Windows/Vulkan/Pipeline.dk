@@ -9,20 +9,35 @@ QuaxelVulkan
         color.stencilLoadOp = 2 // DONT_CARE
         color.stencilStoreOp = 1
         color.finalLayout = 1000001002 // PRESENT_SRC_KHR
+        VkAttachmentDescription depth
+        depth.vkFormat = DepthFormat
+        depth.samples = 1
+        depth.loadOp = 1 // CLEAR
+        depth.storeOp = 1 // DONT_CARE
+        depth.stencilLoadOp = 2 // DONT_CARE
+        depth.stencilStoreOp = 1
+        depth.finalLayout = 3 // DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+        VkAttachmentDescription [2] attachments = {color, depth}
         VkAttachmentReference reference
         reference.vkLayout = 2 // COLOR_ATTACHMENT_OPTIMAL
+        VkAttachmentReference depthReference
+        depthReference.attachment = 1
+        depthReference.vkLayout = 3
         VkSubpassDescription subpass
         subpass.colorAttachmentCount = 1
         subpass.pColorAttachments = &reference
+        subpass.pDepthStencilAttachment = &depthReference
 
+        // The depth image is reused every frame, so last frame's writes must finish first.
         VkSubpassDependency dependency
         dependency.srcSubpass = -1 // VK_SUBPASS_EXTERNAL
-        dependency.srcStageMask = 0x400 // COLOR_ATTACHMENT_OUTPUT
-        dependency.dstStageMask = 0x400
-        dependency.dstAccessMask = 0x100 // COLOR_ATTACHMENT_WRITE
+        dependency.srcStageMask = 0x700 // COLOR_ATTACHMENT_OUTPUT | EARLY and LATE_FRAGMENT_TESTS
+        dependency.dstStageMask = 0x700
+        dependency.srcAccessMask = 0x400 // DEPTH_STENCIL_ATTACHMENT_WRITE
+        dependency.dstAccessMask = 0x500 // COLOR_ATTACHMENT_WRITE | DEPTH_STENCIL_ATTACHMENT_WRITE
         VkRenderPassCreateInfo info
-        info.attachmentCount = 1
-        info.pAttachments = &color
+        info.attachmentCount = 2
+        info.pAttachments = &attachments[0]
         info.subpassCount = 1
         info.pSubpasses = &subpass
         info.dependencyCount = 1
@@ -39,7 +54,18 @@ QuaxelVulkan
         stages[1].vkStage = 16 // FRAGMENT
         stages[1].vkModule = fragmentShader
         stages[1].pName = "main"
+        VkVertexInputBindingDescription binding
+        binding.stride = 24
+        VkVertexInputAttributeDescription [2] attributes
+        attributes[0].vkFormat = 106 // R32G32B32_SFLOAT, position
+        attributes[1].location = 1
+        attributes[1].vkFormat = 106 // color
+        attributes[1].vkOffset = 12
         VkPipelineVertexInputStateCreateInfo vertexInput
+        vertexInput.vertexBindingDescriptionCount = 1
+        vertexInput.pVertexBindingDescriptions = &binding
+        vertexInput.vertexAttributeDescriptionCount = 2
+        vertexInput.pVertexAttributeDescriptions = &attributes[0]
         VkPipelineInputAssemblyStateCreateInfo assembly
         assembly.topology = 3 // TRIANGLE_LIST
         VkViewport viewport
@@ -57,6 +83,11 @@ QuaxelVulkan
         raster.lineWidth = 1.0
         VkPipelineMultisampleStateCreateInfo sampling
         sampling.rasterizationSamples = 1
+        VkPipelineDepthStencilStateCreateInfo depthState
+        depthState.depthTestEnable = 1
+        depthState.depthWriteEnable = 1
+        depthState.depthCompareOp = 1 // LESS
+        depthState.maxDepthBounds = 1.0
         VkPipelineColorBlendAttachmentState attachment
         attachment.colorWriteMask = 15 // RGBA
         VkPipelineColorBlendStateCreateInfo blend
@@ -70,6 +101,7 @@ QuaxelVulkan
         info.pViewportState = &viewportState
         info.pRasterizationState = &raster
         info.pMultisampleState = &sampling
+        info.pDepthStencilState = &depthState
         info.pColorBlendState = &blend
         info.vkLayout = Layout
         info.renderPass = Pass
@@ -78,10 +110,15 @@ QuaxelVulkan
 
     -bool CreatePipeline()
     {
+        VkPushConstantRange transforms
+        transforms.stageFlags = 1 // VERTEX
+        transforms.vkSize = 128 // model and view-projection matrices
         VkPipelineLayoutCreateInfo info
+        info.pushConstantRangeCount = 1
+        info.pPushConstantRanges = &transforms
         if Vk.CreatePipelineLayout(Device, &info, null, &Layout) != 0 { return false }
-        long vertex = TriangleShaders.Vertex(Device)
-        long fragment = TriangleShaders.Fragment(Device)
+        long vertex = MeshShaders.Vertex(Device)
+        long fragment = MeshShaders.Fragment(Device)
         bool ready = vertex != 0 && fragment != 0 && BuildPipeline(vertex, fragment)
         Vk.DestroyShaderModule(Device, fragment, null)
         Vk.DestroyShaderModule(Device, vertex, null)

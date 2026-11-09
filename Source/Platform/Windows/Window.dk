@@ -54,26 +54,73 @@ QuaxelWindowsNative
     extern "C" int PostMessageW(void* window, uint message, uint64 wParam, long lParam)
 }
 
+QuaxelWinKeys
+{
+    bool [256] Down
+}
+
+QuaxelWinRedraw
+{
+    func () Handler
+}
+
 QuaxelPlatformBackend
 #{
     -void* Window
     -void* Instance
     -bool Registered
     -bool InSizeMove
+    -bool WindowStalled
+    -QuaxelWinKeys Keys
+    -QuaxelWinRedraw Redraw
     -uint Style = 0x00CF0000 // WS_OVERLAPPEDWINDOW
+
+    -ClearKeys()
+    {
+        for i : 0; i < 256; i++ { Keys.Down[i] = false }
+    }
+
+    -SetKey(uint64 virtualKey, bool down)
+    {
+        if virtualKey < (uint64)256 { Keys.Down[(int)virtualKey] = down }
+    }
+
+    bool IsKeyDown(int key) { return Keys.Down[key] }
+
+    SetRedrawHandler(func () handler) { Redraw.Handler = handler }
+
+    ClearRedrawHandler() { Redraw.Handler = null }
+
+    bool ConsumeWindowStall()
+    {
+        bool stalled = WindowStalled
+        WindowStalled = false
+        return stalled
+    }
 
     -long WindowProc(void* window, uint message, uint64 wParam, long lParam)
     {
         if window == Window {
-            if message == 0x0231 { InSizeMove = true } // WM_ENTERSIZEMOVE
-            if message == 0x0232 { InSizeMove = false } // WM_EXITSIZEMOVE
+            if message == 0x0100 || message == 0x0104 { SetKey(wParam, true) } // WM_KEYDOWN, WM_SYSKEYDOWN
+            if message == 0x0101 || message == 0x0105 { SetKey(wParam, false) } // WM_KEYUP, WM_SYSKEYUP
+            if message == 0x0008 { ClearKeys() } // WM_KILLFOCUS
+            if message == 0x0231 { // WM_ENTERSIZEMOVE
+                InSizeMove = true
+                // The modal drag loop consumes key releases.
+                ClearKeys()
+            }
+            if message == 0x0232 { // WM_EXITSIZEMOVE
+                InSizeMove = false
+                WindowStalled = true
+            }
             // The game loop resumes only after DefWindowProcW finishes the drag.
             if message == 0x0005 && InSizeMove && wParam != (uint64)1 { // WM_SIZE, except SIZE_MINIMIZED
-                if QuaxelVulkan.IsStarted() { DrawTriangle() }
+                if QuaxelVulkan.IsStarted() && Redraw.Handler != null { Redraw.Handler() }
             }
             if message == 0x0002 { StopRenderer() } // WM_DESTROY
             if message == 0x0082 { // WM_NCDESTROY
                 InSizeMove = false
+                ClearKeys()
                 Window = null
             }
         }

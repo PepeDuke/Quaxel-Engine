@@ -1,0 +1,9 @@
+QuaxelPlatform
+#{
+    // Reports whether a key is held. Key codes use QuaxelKey values. Held keys
+    // are cleared when the window loses focus. Headless builds report none held.
+    bool IsKeyDown(int key)
+    {
+        return key >= 0 && key < 256 && QuaxelPlatformBackend.IsKeyDown(key)
+    }
+}
