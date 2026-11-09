@@ -1,0 +1,291 @@
+// Every tunable of terrain generation. Distances are world units and heights
+// are voxel cells unless noted.
+QuaxelTerrainConfig
+{
+    uint Seed = (uint)1
+    int SiteGrid = 6
+    float SiteSpacing = 44.0
+    float ActiveChance = 0.8
+    float MinClearingRadius = 10.0
+    float MaxClearingRadius = 18.0
+    float MinPassRadius = 3.5
+    float MaxPassRadius = 5.5
+    float LoopFraction = 0.25
+    // Per axis. The pass radius must exceed DetailWarp * sqrt(2) + the walker's radius.
+    float DetailWarp = 1.5
+    // Keep the warp's slope below 1 so the layout stays connected.
+    float ShapeWarp = 10.0
+    int PlainsAmplitude = 8
+    int Lip = 6
+    int Peak = 40
+    int Ridge = 24
+    float RampWidth = 5.0
+    // Half width of the path that stays open along every pass centerline.
+    float ReservedPath = 2.0
+}
+
+// One clearing. X, Z and Radius are in layout space, before the warp is applied.
+QuaxelTerrainSite
+{
+    int Index
+    uint Seed
+    int Module
+    float X
+    float Z
+    float Radius
+    int PortCount
+    // Unit vectors from the center toward each connected clearing.
+    float [4] PortX
+    float [4] PortZ
+    // Unit vector between the two ports that are farthest apart.
+    float AxisX = 1.0
+    float AxisZ
+
+    AddPort(float x, float z)
+    {
+        float length = Math.Hypot(x, z)
+        PortX[PortCount] = x / length
+        PortZ[PortCount] = z / length
+        PortCount++
+        FindAxis()
+    }
+
+    -FindAxis()
+    {
+        float widest = -1.0
+        for a : 0; a < PortCount; a++ {
+            for b : a + 1; b < PortCount; b++ {
+                float x = PortX[a] - PortX[b]
+                float z = PortZ[a] - PortZ[b]
+                float gap = x * x + z * z
+                if gap > widest && gap > 0.0 {
+                    float length = Math.Sqrt(gap)
+                    widest = gap
+                    AxisX = x / length
+                    AxisZ = z / length
+                }
+            }
+        }
+    }
+}
+
+// A capsule joining two clearings, in layout space.
+QuaxelTerrainPass
+{
+    float AX
+    float AZ
+    float BX
+    float BZ
+    float Radius
+}
+
+// Picks clearings on a jittered lattice and joins them with a randomized
+// spanning tree plus some loops. Only the largest connected group is kept.
+QuaxelTerrainLayout
+{
+    QuaxelTerrainSite [] Sites
+    QuaxelTerrainPass [] Passes
+    -int [] Parent
+
+    // Retries with a derived seed when too few lattice sites survive.
+    bool Build(QuaxelTerrainConfig config)
+    {
+        for attempt : 0; attempt < 32; attempt++ {
+            if TryBuild(config, config.Seed + (uint)attempt * (uint)0x9E3779B1) { return true }
+        }
+        return false
+    }
+
+    -int Find(int value)
+    {
+        while Parent[value] != value {
+            Parent[value] = Parent[Parent[value]]
+            value = Parent[value]
+        }
+        return value
+    }
+
+    -bool TryBuild(QuaxelTerrainConfig config, uint seed)
+    {
+        Sites.Clear()
+        Passes.Clear()
+        Parent.Clear()
+        QuaxelRandom random
+        random.Begin(seed)
+        int grid = config.SiteGrid
+        int total = grid * grid
+        bool [] active
+        float [] positionX
+        float [] positionZ
+        float [] radius
+        for i : 0; i < total; i++ {
+            active += random.Unit() < config.ActiveChance
+            positionX += ((float)(i % grid) + 0.5 + random.Range(-0.2, 0.2)) * config.SiteSpacing
+            positionZ += ((float)(i / grid) + 0.5 + random.Range(-0.2, 0.2)) * config.SiteSpacing
+            radius += random.Range(config.MinClearingRadius, config.MaxClearingRadius)
+            Parent += i
+        }
+
+        int [] edgeA
+        int [] edgeB
+        for i : 0; i < total; i++ {
+            if !active[i] { continue }
+            if i % grid + 1 < grid && active[i + 1] {
+                edgeA += i
+                edgeB += i + 1
+            }
+            if i + grid < total && active[i + grid] {
+                edgeA += i
+                edgeB += i + grid
+            }
+        }
+        int edges = (int)edgeA.Len
+        for i : edges - 1; i > 0; i-- {
+            int other = random.Below(i + 1)
+            int a = edgeA[i]
+            int b = edgeB[i]
+            edgeA[i] = edgeA[other]
+            edgeB[i] = edgeB[other]
+            edgeA[other] = a
+            edgeB[other] = b
+        }
+
+        bool [] inTree
+        for i : 0; i < edges; i++ {
+            int a = Find(edgeA[i])
+            int b = Find(edgeB[i])
+            inTree += a != b
+            if a != b { Parent[a] = b }
+        }
+
+        int [] groupSize
+        for i : 0; i < total; i++ { groupSize += 0 }
+        int largest = -1
+        int largestSize = 0
+        for i : 0; i < total; i++ {
+            if !active[i] { continue }
+            int root = Find(i)
+            groupSize[root]++
+            if groupSize[root] > largestSize {
+                largestSize = groupSize[root]
+                largest = root
+            }
+        }
+        if largestSize * 10 < total * 6 { return false }
+
+        int [] siteOf
+        for i : 0; i < total; i++ {
+            siteOf += -1
+            if active[i] && Find(i) == largest {
+                siteOf[i] = (int)Sites.Len
+                QuaxelTerrainSite site
+                site.Index = (int)Sites.Len
+                site.Seed = seed + (uint)(i + 1) * (uint)0x85EBCA77
+                site.X = positionX[i]
+                site.Z = positionZ[i]
+                site.Radius = radius[i]
+                Sites += site
+            }
+        }
+
+        int spare = 0
+        for i : 0; i < edges; i++ {
+            if !inTree[i] && siteOf[edgeA[i]] >= 0 { spare++ }
+        }
+        int loops = spare > 0 ? Math.Max(1, (int)((float)spare * config.LoopFraction)) | 0
+        for i : 0; i < edges; i++ {
+            if siteOf[edgeA[i]] < 0 { continue }
+            if !inTree[i] {
+                if loops == 0 { continue }
+                loops--
+            }
+            Connect(siteOf[edgeA[i]], siteOf[edgeB[i]], random.Range(config.MinPassRadius, config.MaxPassRadius))
+        }
+        return true
+    }
+
+    -Connect(int first, int second, float radius)
+    {
+        float x = Sites[second].X - Sites[first].X
+        float z = Sites[second].Z - Sites[first].Z
+        Sites[first].AddPort(x, z)
+        Sites[second].AddPort(-x, -z)
+        QuaxelTerrainPass pass
+        pass.AX = Sites[first].X
+        pass.AZ = Sites[first].Z
+        pass.BX = Sites[second].X
+        pass.BZ = Sites[second].Z
+        pass.Radius = radius
+        Passes += pass
+    }
+
+    // True when every site can reach the first through passes.
+    bool IsConnected()
+    {
+        if Sites.Len == 0 { return false }
+        bool [] seen
+        for i : 0; i < Sites.Len; i++ { seen += false }
+        seen[0] = true
+        int found = 1
+        bool grew = true
+        while grew {
+            grew = false
+            for i : 0; i < Passes.Len; i++ {
+                int a = SiteAt(Passes[i].AX, Passes[i].AZ)
+                int b = SiteAt(Passes[i].BX, Passes[i].BZ)
+                if seen[a] != seen[b] {
+                    seen[a] = true
+                    seen[b] = true
+                    found++
+                    grew = true
+                }
+            }
+        }
+        return found == Sites.Len
+    }
+
+    -int SiteAt(float x, float z)
+    {
+        for i : 0; i < Sites.Len; i++ {
+            if Sites[i].X == x && Sites[i].Z == z { return i }
+        }
+        return 0
+    }
+}
+T{
+    EverySeedBuildsAConnectedMapWithEnoughClearings()
+    {
+        for seed : 1; seed <= 12; seed++ {
+            QuaxelTerrainConfig config
+            config.Seed = (uint)seed
+            QuaxelTerrainLayout layout()
+            T.IsTrue(layout.Build(config))
+            T.IsTrue(layout.IsConnected())
+            T.IsTrue(layout.Sites.Len >= 22)
+        }
+    }
+
+    SameSeedBuildsTheSameMap()
+    {
+        QuaxelTerrainConfig config
+        config.Seed = (uint)5
+        QuaxelTerrainLayout first()
+        QuaxelTerrainLayout second()
+        first.Build(config)
+        second.Build(config)
+        T.AreEqual(first.Sites.Len, second.Sites.Len)
+        T.AreEqual(first.Passes.Len, second.Passes.Len)
+        for i : 0; i < first.Sites.Len; i++ { T.AreEqual(first.Sites[i].X, second.Sites[i].X) }
+    }
+
+    AxisRunsBetweenTheWidestPorts()
+    {
+        QuaxelTerrainSite site
+        site.AddPort(1.0, 0.0)
+        site.AddPort(0.0, 1.0)
+        site.AddPort(-3.0, 0.0)
+        T.AreEqual(site.PortCount, 3)
+        T.AreEqual(Math.Abs(site.AxisX), 1.0)
+        T.AreEqual(site.AxisZ, 0.0)
+    }
+}

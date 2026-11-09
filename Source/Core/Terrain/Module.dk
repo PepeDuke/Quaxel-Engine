@@ -1,0 +1,106 @@
+QuaxelTerrainKind
+#{
+    #int Open = 0
+    #int Mountain = 1
+    #int Water = 2
+    #int Structure = 3
+}
+
+// Games may add their own IDs from Custom upward and color them in SurfaceColor.
+QuaxelTerrainSurface
+#{
+    #int Grass = 0
+    #int Rock = 1
+    #int Water = 2
+    #int Bridge = 3
+    #int Yard = 4
+    #int Custom = 16
+}
+
+// One column being generated. Height is the number of solid cells.
+QuaxelTerrainColumn
+{
+    int Floor
+    int Height
+    int Surface
+    int Kind
+
+    MakeWater(int depth)
+    {
+        Height = Floor - depth
+        Surface = QuaxelTerrainSurface.Water
+        Kind = QuaxelTerrainKind.Water
+    }
+
+    // Blocks the column at a height above the floor.
+    MakeBlocked(int rise, int surface)
+    {
+        Height = Floor + rise
+        Surface = surface
+        Kind = QuaxelTerrainKind.Structure
+    }
+}
+
+// What a module needs from a clearing. Plain data, read by the router.
+QuaxelTerrainModuleRules
+{
+    float MinRadius
+    int MinPorts = 1
+    int MaxPorts = 4
+    // The clearing must not overlap any other.
+    bool Isolated
+    // The fraction of clearings wanted, from 0 to 1.
+    float Share
+    int MaxCount = 1000000
+}
+
+// A voxel model a module would like in its clearing.
+QuaxelTerrainOffer
+{
+    int Group
+    int Volume
+    float X
+    float Z
+    int Half
+    int Height
+}
+
+// Collects a module's placement requests. The generator accepts at most one
+// offer per group, the first that passes its checks.
+QuaxelTerrainPlacer
+{
+    QuaxelTerrainOffer [] Offers
+
+    // X and Z are layout-space offsets from the clearing center. Half and Height
+    // are in cells; the model's footprint is Half * 2 square.
+    Offer(int group, int volume, float x, float z, int half, int height)
+    {
+        QuaxelTerrainOffer offer
+        offer.Group = group
+        offer.Volume = volume
+        offer.X = x
+        offer.Z = z
+        offer.Half = half
+        offer.Height = height
+        Offers += offer
+    }
+}
+
+// The base module holds the rules and the defaults, which give a plain valley.
+// A variant overrides only what differs. A module must be a pure function of the
+// site and position, taking randomness only from site.Seed.
+QuaxelTerrainModule
+{
+    QuaxelTerrainModuleRules Rules()
+    {
+        QuaxelTerrainModuleRules rules
+        return rules
+    }
+
+    // Edits one column of this module's clearing. X and Z are layout-space
+    // offsets from the clearing center.
+    Column(QuaxelTerrainSite site, float x, float z, QuaxelTerrainColumn& column) {}
+
+    // Requests voxel models, once per clearing.
+    Place(QuaxelTerrainSite site, QuaxelTerrainPlacer& placer) {}
+}

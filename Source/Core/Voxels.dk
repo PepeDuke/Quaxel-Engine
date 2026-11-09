@@ -47,6 +47,16 @@ QuaxelVoxelVolume
         return true
     }
 
+    // Empties the grid and keeps its dimensions.
+    bool Reset()
+    {
+        if Words.Len < 3 { return false }
+        int width = Words[0]
+        int height = Words[1]
+        int depth = Words[2]
+        return Configure(width, height, depth)
+    }
+
     // RGB in the low 24 bits. A negative value erases the cell.
     bool SetVoxel(int x, int y, int z, int rgb)
     {

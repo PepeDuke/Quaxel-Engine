@@ -75,6 +75,9 @@ Models are 3D color grids stored as editable text files, and can hold named
 animation clips and per-frame attachment sockets.
 [Voxel models](Docs/VoxelModels.md)
 
+Worlds can be generated as seeded maps of clearings, passes and mountains, with
+each clearing filled by a swappable module. [Terrain generation](Docs/Terrain.md)
+
 ## Dependency boundary
 
 Dependency direction is `Hellfeather -> Quaxel`; Quaxel must not import game code.

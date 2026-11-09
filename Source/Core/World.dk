@@ -325,6 +325,14 @@ QuaxelWorld
         return index
     }
 
+    // Empties a volume so its slot can be reused. Volumes are never released.
+    bool ResetVolume(int index)
+    {
+        if index < 0 || index >= Volumes.Len || !Volumes[index].Reset() { return false }
+        VolumeDirty[index] = true
+        return true
+    }
+
     bool SetVoxel(int index, int x, int y, int z, int rgb)
     {
         if index < 0 || index >= Volumes.Len || !Volumes[index].SetVoxel(x, y, z, rgb) { return false }

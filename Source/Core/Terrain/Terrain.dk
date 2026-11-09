@@ -1,0 +1,932 @@
+// A model accepted into a clearing. Column and Row are the corner shared by its
+// four central columns, in layout columns.
+QuaxelTerrainPlacement
+{
+    int Column
+    int Row
+    int Half
+    int Height
+    int Reach
+    int Base
+    int Volume
+    int Site
+}
+
+// One resident slot of terrain data and its render node.
+QuaxelTerrainChunk
+{
+    bool Valid
+    int X
+    int Z
+    int Node
+    int Volume
+    int [] Heights
+    int [] Kinds
+    int [] PlacementNodes
+}
+
+// Generates and streams terrain, and answers walkability queries. A game derives
+// from this to route clearings to its modules, as HellfeatherTerrain does.
+//
+// World columns are one Cell wide. Layout columns are world columns plus a fixed
+// origin, which puts the spawn clearing at the world origin.
+QuaxelTerrain
+{
+    -QuaxelTerrainConfig Config
+    QuaxelTerrainLayout Layout
+    QuaxelTerrainPlacement [] Placements
+    -QuaxelTerrainChunk [] Chunks
+    -int LastChunk
+    -int OriginColumn
+    -int OriginRow
+    -int SpawnLevel
+    -int SpawnSite
+    -uint WarpSeedX
+    -uint WarpSeedZ
+    -uint DetailSeedX
+    -uint DetailSeedZ
+    -uint FloorSeed
+    -uint RidgeSeed
+    -int CenterX
+    -int CenterZ
+
+    // Prims near the region being generated, flattened for the field loop.
+    -int [] NearSites
+    -float [] NearSiteX
+    -float [] NearSiteZ
+    -float [] NearSiteRadius
+    -float [] NearPassAX
+    -float [] NearPassAZ
+    -float [] NearPassBX
+    -float [] NearPassBZ
+    -float [] NearPassRadius
+
+    // The chunk being generated. Grids are Span * Span, or Core * Core for columns.
+    -int BuildPhase
+    -int BuildChunkX
+    -int BuildChunkZ
+    -int BuildRow
+    -int BuildStartColumn
+    -int BuildStartRow
+    -int BuildPlacementStart
+    -int [] NearPlacements
+    -float [] NodeWarpX
+    -float [] NodeWarpZ
+    -float [] NodeFloor
+    -float [] Dist
+    -float [] QueryX
+    -float [] QueryZ
+    -int [] FloorGrid
+    -int [] Ceiling
+    -int [] CoreHeight
+    -int [] CoreKind
+    -int [] CoreSurface
+
+    // Router. Override these to add modules. ID 0 is the fallback for any
+    // clearing no other module claims.
+    int ModuleCount() { return 1 }
+
+    QuaxelTerrainModuleRules ModuleRules(int id)
+    {
+        QuaxelTerrainModuleRules rules
+        return rules
+    }
+
+    ModuleColumn(int id, QuaxelTerrainSite site, float x, float z, QuaxelTerrainColumn& column) {}
+
+    ModulePlace(int id, QuaxelTerrainSite site, QuaxelTerrainPlacer& placer) {}
+
+    // RGB in the low 24 bits. Top is false for the side of a column.
+    int SurfaceColor(int surface, int height, bool top, int hash)
+    {
+        int color = 0x193326
+        if surface == QuaxelTerrainSurface.Rock { color = height >= 84 ? 0xc8ccd6 | 0x3a322c }
+        else if surface == QuaxelTerrainSurface.Water { color = 0x123a66 }
+        else if surface == QuaxelTerrainSurface.Bridge { color = 0x4a2f14 }
+        else if surface == QuaxelTerrainSurface.Yard { color = 0x0f2416 }
+        else if !top { color = 0x2a2018 }
+        return Vary(color, hash)
+    }
+
+    -int Vary(int color, int hash)
+    {
+        int shift = (hash & 7) - 3
+        int red = Math.Clamp(((color >> 16) & 255) + shift, 0, 255)
+        int green = Math.Clamp(((color >> 8) & 255) + shift, 0, 255)
+        int blue = Math.Clamp((color & 255) + shift, 0, 255)
+        return (red << 16) | (green << 8) | blue
+    }
+
+    // Generates the layout and routes the modules. Returns false if no layout fits.
+    bool Configure(QuaxelTerrainConfig config)
+    {
+        Config = config
+        if !Layout.Build(config) { return false }
+        WarpSeedX = config.Seed * (uint)0x1B873593 + (uint)11
+        WarpSeedZ = config.Seed * (uint)0xCC9E2D51 + (uint)23
+        DetailSeedX = config.Seed * (uint)0xE6546B64 + (uint)37
+        DetailSeedZ = config.Seed * (uint)0x85EBCA6B + (uint)41
+        FloorSeed = config.Seed * (uint)0xC2B2AE35 + (uint)59
+        RidgeSeed = config.Seed * (uint)0x27D4EB2F + (uint)67
+        ChooseSpawn()
+        Route()
+        Allocate()
+        FindOrigin()
+        ResolvePlacements()
+        return true
+    }
+
+    -ChooseSpawn()
+    {
+        SpawnSite = 0
+        for i : 1; i < Layout.Sites.Len; i++ {
+            if Layout.Sites[i].Radius > Layout.Sites[SpawnSite].Radius { SpawnSite = i }
+        }
+    }
+
+    // Visits clearings in seeded order and gives each to the first module that
+    // still wants one and whose rules it meets. The spawn clearing stays module 0.
+    -Route()
+    {
+        QuaxelRandom random
+        random.Begin(Config.Seed ^ (uint)0x5851F42D)
+        int sites = (int)Layout.Sites.Len
+        int [] order
+        for i : 0; i < sites; i++ { order += i }
+        for i : sites - 1; i > 0; i-- {
+            int other = random.Below(i + 1)
+            int value = order[i]
+            order[i] = order[other]
+            order[other] = value
+        }
+        int count = ModuleCount()
+        int [] wanted
+        for id : 0; id < count; id++ {
+            QuaxelTerrainModuleRules rules = ModuleRules(id)
+            int share = rules.Share > 0.0 ? Math.Max(1, (int)(rules.Share * (float)sites)) | 0
+            wanted += id == 0 ? 0 | Math.Min(share, rules.MaxCount)
+        }
+        for i : 0; i < sites; i++ {
+            int index = order[i]
+            if index == SpawnSite { continue }
+            for id : 1; id < count; id++ {
+                if wanted[id] <= 0 { continue }
+                QuaxelTerrainModuleRules rules = ModuleRules(id)
+                if !Fits(index, rules) { continue }
+                Layout.Sites[index].Module = id
+                Layout.Sites[index].Radius = Math.Max(Layout.Sites[index].Radius, rules.MinRadius)
+                wanted[id]--
+                break
+            }
+        }
+    }
+
+    -bool Fits(int index, QuaxelTerrainModuleRules rules)
+    {
+        int ports = Layout.Sites[index].PortCount
+        if ports < rules.MinPorts || ports > rules.MaxPorts { return false }
+        if !rules.Isolated { return true }
+        float radius = Math.Max(Layout.Sites[index].Radius, rules.MinRadius)
+        for i : 0; i < Layout.Sites.Len; i++ {
+            if i == index { continue }
+            float x = Layout.Sites[i].X - Layout.Sites[index].X
+            float z = Layout.Sites[i].Z - Layout.Sites[index].Z
+            float gap = radius + Layout.Sites[i].Radius
+            if x * x + z * z < gap * gap { return false }
+        }
+        return true
+    }
+
+    -Allocate()
+    {
+        NodeWarpX.Clear()
+        NodeWarpZ.Clear()
+        NodeFloor.Clear()
+        for i : 0; i < NodeSpan * NodeSpan; i++ {
+            NodeWarpX += 0.0
+            NodeWarpZ += 0.0
+            NodeFloor += 0.0
+        }
+        Dist.Clear()
+        QueryX.Clear()
+        QueryZ.Clear()
+        FloorGrid.Clear()
+        Ceiling.Clear()
+        for i : 0; i < Span * Span; i++ {
+            Dist += 0.0
+            QueryX += 0.0
+            QueryZ += 0.0
+            FloorGrid += 0
+            Ceiling += 0
+        }
+        CoreHeight.Clear()
+        CoreKind.Clear()
+        CoreSurface.Clear()
+        for i : 0; i < Core * Core; i++ {
+            CoreHeight += 0
+            CoreKind += 0
+            CoreSurface += 0
+        }
+    }
+
+    -FindOrigin()
+    {
+        float x = 0.0
+        float z = 0.0
+        WorldFromLayout(Layout.Sites[SpawnSite].X, Layout.Sites[SpawnSite].Z, x, z)
+        OriginColumn = QuaxelNoise.FloorDiv((int)Math.Floor(x / Cell), NodeColumns) * NodeColumns
+        OriginRow = QuaxelNoise.FloorDiv((int)Math.Floor(z / Cell), NodeColumns) * NodeColumns
+        SpawnLevel = FloorAt((float)OriginColumn * Cell, (float)OriginRow * Cell)
+    }
+
+    // The warp at a node of the coarse grid, as an offset from the node.
+    -NodeWarp(int column, int row, float& warpX, float& warpZ)
+    {
+        float x = (float)column * Cell * (float)NodeColumns
+        float z = (float)row * Cell * (float)NodeColumns
+        warpX = QuaxelNoise.SignedFbm(WarpSeedX, x / 70.0, z / 70.0, 2) * Config.ShapeWarp + QuaxelNoise.SignedFbm(DetailSeedX, x / 11.0, z / 11.0, 3) * Config.DetailWarp
+        warpZ = QuaxelNoise.SignedFbm(WarpSeedZ, x / 70.0, z / 70.0, 2) * Config.ShapeWarp + QuaxelNoise.SignedFbm(DetailSeedZ, x / 11.0, z / 11.0, 3) * Config.DetailWarp
+    }
+
+    -float NodeFloorAt(int column, int row)
+    {
+        float x = (float)column * Cell * (float)NodeColumns
+        float z = (float)row * Cell * (float)NodeColumns
+        return 16.0 + (float)Config.PlainsAmplitude * QuaxelNoise.SignedFbm(FloorSeed, x / 28.0, z / 28.0, 2)
+    }
+
+    // X and Z are in layout-column metres, before the warp.
+    -int FloorAt(float x, float z)
+    {
+        float u = x / (Cell * (float)NodeColumns)
+        float v = z / (Cell * (float)NodeColumns)
+        int column = (int)Math.Floor(u)
+        int row = (int)Math.Floor(v)
+        float tu = u - (float)column
+        float tv = v - (float)row
+        float near = Math.Lerp(NodeFloorAt(column, row), NodeFloorAt(column + 1, row), tu)
+        float far = Math.Lerp(NodeFloorAt(column, row + 1), NodeFloorAt(column + 1, row + 1), tu)
+        return (int)Math.Round(Math.Lerp(near, far, tv))
+    }
+
+    -WarpAt(float x, float z, float& warpX, float& warpZ)
+    {
+        float u = x / (Cell * (float)NodeColumns)
+        float v = z / (Cell * (float)NodeColumns)
+        int column = (int)Math.Floor(u)
+        int row = (int)Math.Floor(v)
+        float tu = u - (float)column
+        float tv = v - (float)row
+        float ax = 0.0
+        float az = 0.0
+        float bx = 0.0
+        float bz = 0.0
+        float cx = 0.0
+        float cz = 0.0
+        float dx = 0.0
+        float dz = 0.0
+        NodeWarp(column, row, ax, az)
+        NodeWarp(column + 1, row, bx, bz)
+        NodeWarp(column, row + 1, cx, cz)
+        NodeWarp(column + 1, row + 1, dx, dz)
+        warpX = Math.Lerp(Math.Lerp(ax, bx, tu), Math.Lerp(cx, dx, tu), tv)
+        warpZ = Math.Lerp(Math.Lerp(az, bz, tu), Math.Lerp(cz, dz, tu), tv)
+    }
+
+    // Fixed-point inverse of the warp. The result is in layout-column metres.
+    -WorldFromLayout(float layoutX, float layoutZ, float& x, float& z)
+    {
+        x = layoutX
+        z = layoutZ
+        for i : 0; i < 16; i++ {
+            float warpX = 0.0
+            float warpZ = 0.0
+            WarpAt(x, z, warpX, warpZ)
+            x = layoutX - warpX
+            z = layoutZ - warpZ
+        }
+    }
+
+    // Keeps every primitive that can change the field inside a layout-space box.
+    -CollectNear(float minX, float minZ, float maxX, float maxZ)
+    {
+        float margin = FieldCap + Blend + 0.5
+        NearSites.Clear()
+        NearSiteX.Clear()
+        NearSiteZ.Clear()
+        NearSiteRadius.Clear()
+        for i : 0; i < Layout.Sites.Len; i++ {
+            float x = Layout.Sites[i].X
+            float z = Layout.Sites[i].Z
+            float reach = Layout.Sites[i].Radius + margin
+            if x + reach < minX || x - reach > maxX || z + reach < minZ || z - reach > maxZ { continue }
+            NearSites += i
+            NearSiteX += x
+            NearSiteZ += z
+            NearSiteRadius += Layout.Sites[i].Radius
+        }
+        NearPassAX.Clear()
+        NearPassAZ.Clear()
+        NearPassBX.Clear()
+        NearPassBZ.Clear()
+        NearPassRadius.Clear()
+        for i : 0; i < Layout.Passes.Len; i++ {
+            float reach = Layout.Passes[i].Radius + margin
+            float ax = Layout.Passes[i].AX
+            float az = Layout.Passes[i].AZ
+            float bx = Layout.Passes[i].BX
+            float bz = Layout.Passes[i].BZ
+            if Math.Max(ax, bx) + reach < minX || Math.Min(ax, bx) - reach > maxX { continue }
+            if Math.Max(az, bz) + reach < minZ || Math.Min(az, bz) - reach > maxZ { continue }
+            NearPassAX += ax
+            NearPassAZ += az
+            NearPassBX += bx
+            NearPassBZ += bz
+            NearPassRadius += Layout.Passes[i].Radius
+        }
+    }
+
+    -float SmoothMin(float a, float b)
+    {
+        float h = Math.Clamp(0.5 + 0.5 * (b - a) / Blend, 0.0, 1.0)
+        return Math.Lerp(b, a, h) - Blend * h * (1.0 - h)
+    }
+
+    -float PassDistance(int index, float x, float z)
+    {
+        float abx = NearPassBX[index] - NearPassAX[index]
+        float abz = NearPassBZ[index] - NearPassAZ[index]
+        float apx = x - NearPassAX[index]
+        float apz = z - NearPassAZ[index]
+        float t = Math.Clamp((apx * abx + apz * abz) / (abx * abx + abz * abz), 0.0, 1.0)
+        return Math.Hypot(apx - t * abx, apz - t * abz)
+    }
+
+    // Negative is open. Clamped at FieldCap, past which the height stops changing.
+    -float Field(float x, float z)
+    {
+        float d = FieldCap
+        for i : 0; i < NearSiteX.Len; i++ {
+            d = SmoothMin(d, Math.Hypot(x - NearSiteX[i], z - NearSiteZ[i]) - NearSiteRadius[i])
+        }
+        for i : 0; i < NearPassRadius.Len; i++ {
+            d = SmoothMin(d, PassDistance(i, x, z) - NearPassRadius[i])
+        }
+        return Math.Min(d, FieldCap)
+    }
+
+    -bool OnReservedPath(float x, float z, float extra)
+    {
+        float limit = Config.ReservedPath + extra
+        for i : 0; i < NearPassRadius.Len; i++ {
+            if PassDistance(i, x, z) < limit { return true }
+        }
+        return false
+    }
+
+    // The clearing that owns a layout-space point, or -1.
+    -int OwnerOf(float x, float z)
+    {
+        int owner = -1
+        float best = ModuleReach
+        for i : 0; i < NearSiteX.Len; i++ {
+            float edge = Math.Hypot(x - NearSiteX[i], z - NearSiteZ[i]) - NearSiteRadius[i]
+            if edge < best {
+                best = edge
+                owner = NearSites[i]
+            }
+        }
+        return owner
+    }
+
+    // Runs each module's placement requests through the generator's checks.
+    -ResolvePlacements()
+    {
+        Placements.Clear()
+        for i : 0; i < Layout.Sites.Len; i++ {
+            QuaxelTerrainSite site = Layout.Sites[i]
+            QuaxelTerrainPlacer placer()
+            ModulePlace(site.Module, site, placer)
+            if placer.Offers.Len == 0 { continue }
+            float reach = site.Radius + 16.0
+            CollectNear(site.X - reach, site.Z - reach, site.X + reach, site.Z + reach)
+            int [] filled
+            for o : 0; o < placer.Offers.Len; o++ {
+                QuaxelTerrainOffer offer = placer.Offers[o]
+                bool done = false
+                for f : 0; f < filled.Len; f++ {
+                    if filled[f] == offer.Group { done = true }
+                }
+                if done { continue }
+                if TryPlace(site, offer) { filled += offer.Group }
+            }
+        }
+    }
+
+    -bool TryPlace(QuaxelTerrainSite site, QuaxelTerrainOffer offer)
+    {
+        float x = 0.0
+        float z = 0.0
+        WorldFromLayout(site.X + offer.X, site.Z + offer.Z, x, z)
+        int column = (int)Math.Round(x / Cell)
+        int row = (int)Math.Round(z / Cell)
+        int reach = Math.Max(0, offer.Height - Config.Lip + 2)
+        // Footprint and sight strip, sampled every half unit.
+        for a : -offer.Half - reach; a <= offer.Half; a += 4 {
+            for b : -offer.Half - reach; b <= offer.Half; b += 4 {
+                int low = Math.Max(Math.Max(0, -(a + offer.Half)), -(b + offer.Half))
+                int high = Math.Min(Math.Min(reach, offer.Half - 1 - a), offer.Half - 1 - b)
+                if low > high { continue }
+                bool body = a >= -offer.Half && b >= -offer.Half && a < offer.Half && b < offer.Half
+                float warpX = 0.0
+                float warpZ = 0.0
+                float px = ((float)(column + a) + 0.5) * Cell
+                float pz = ((float)(row + b) + 0.5) * Cell
+                WarpAt(px, pz, warpX, warpZ)
+                px += warpX
+                pz += warpZ
+                float d = Field(px, pz)
+                if body && d > -0.5 { return false }
+                if d < 0.0 && OnReservedPath(px, pz, 1.0) { return false }
+            }
+        }
+        QuaxelTerrainPlacement placement
+        placement.Column = column
+        placement.Row = row
+        placement.Half = offer.Half
+        placement.Height = offer.Height
+        placement.Reach = reach
+        placement.Base = FloorAt(x, z)
+        placement.Volume = offer.Volume
+        placement.Site = site.Index
+        Placements += placement
+        return true
+    }
+
+    // Creates the render pool and synchronously builds the terrain around focus.
+    bool Start(QuaxelWorld& world, vec3 focus)
+    {
+        for i : 0; i < ResidentChunks; i++ {
+            Chunks++
+            int node = world.CreateNode()
+            int volume = world.CreateVolume(ChunkColumns, ChunkCells, ChunkColumns)
+            if volume < 0 || !world.AttachVoxels(node, volume) { return false }
+            world.AttachTransform(node, QuaxelTransform.Make(vec3(0.0, 0.0, 0.0), vec3(Cell, Cell, Cell)))
+            Chunks[i].Node = node
+            Chunks[i].Volume = volume
+            for c : 0; c < ChunkColumns * ChunkColumns; c++ {
+                Chunks[i].Heights += 0
+                Chunks[i].Kinds += QuaxelTerrainKind.Mountain
+            }
+        }
+        while !IsReady(focus) {
+            if !Stream(world, focus, 1000000) { return false }
+        }
+        return true
+    }
+
+    -int ChunkOf(float position) { return QuaxelNoise.FloorDiv((int)Math.Floor(position / Cell), ChunkColumns) }
+
+    // True when every chunk around focus is built and none is in progress.
+    bool IsReady(vec3 focus)
+    {
+        if BuildPhase != 0 { return false }
+        int centerX = ChunkOf(focus.X)
+        int centerZ = ChunkOf(focus.Z)
+        for z : centerZ - ResidentRadius; z <= centerZ + ResidentRadius; z++ {
+            for x : centerX - ResidentRadius; x <= centerX + ResidentRadius; x++ {
+                if FindChunk(x, z) < 0 { return false }
+            }
+        }
+        return true
+    }
+
+    // Advances generation by about budget columns. Returns false on a failed world call.
+    bool Stream(QuaxelWorld& world, vec3 focus, int budget)
+    {
+        CenterX = ChunkOf(focus.X)
+        CenterZ = ChunkOf(focus.Z)
+        if BuildPhase == 0 && !BeginNextChunk() { return true }
+        while budget > 0 && BuildPhase == 1 {
+            FieldRow(BuildRow)
+            BuildRow++
+            budget -= Span
+            if BuildRow == Span {
+                BuildRow = 0
+                BuildPhase = 2
+                NearPlacementsForChunk()
+            }
+        }
+        while budget > 0 && BuildPhase == 2 {
+            CoreRow(BuildRow)
+            BuildRow++
+            budget -= Core
+            if BuildRow == Core { BuildPhase = 3 }
+        }
+        if BuildPhase == 3 {
+            BuildPhase = 0
+            return FinishChunk(world)
+        }
+        return true
+    }
+
+    // Picks the closest missing chunk. Returns false when nothing is missing.
+    -bool BeginNextChunk()
+    {
+        int bestX = 0
+        int bestZ = 0
+        int best = 1000000
+        for z : CenterZ - ResidentRadius; z <= CenterZ + ResidentRadius; z++ {
+            for x : CenterX - ResidentRadius; x <= CenterX + ResidentRadius; x++ {
+                if FindChunk(x, z) >= 0 { continue }
+                int dx = x - CenterX
+                int dz = z - CenterZ
+                int score = dx * dx + dz * dz
+                if score < best {
+                    best = score
+                    bestX = x
+                    bestZ = z
+                }
+            }
+        }
+        if best == 1000000 { return false }
+        BuildChunkX = bestX
+        BuildChunkZ = bestZ
+        BuildStartColumn = bestX * ChunkColumns - Pad + OriginColumn
+        BuildStartRow = bestZ * ChunkColumns - Pad + OriginRow
+        BuildRow = 0
+        BuildPhase = 1
+        FillNodes()
+        float minX = (float)BuildStartColumn * Cell
+        float minZ = (float)BuildStartRow * Cell
+        float size = (float)Span * Cell
+        float warp = Config.ShapeWarp + Config.DetailWarp
+        CollectNear(minX - warp, minZ - warp, minX + size + warp, minZ + size + warp)
+        return true
+    }
+
+    -FillNodes()
+    {
+        int startColumn = QuaxelNoise.FloorDiv(BuildStartColumn, NodeColumns)
+        int startRow = QuaxelNoise.FloorDiv(BuildStartRow, NodeColumns)
+        for i : 0; i < NodeSpan; i++ {
+            for j : 0; j < NodeSpan; j++ {
+                int index = i * NodeSpan + j
+                float warpX = 0.0
+                float warpZ = 0.0
+                NodeWarp(startColumn + i, startRow + j, warpX, warpZ)
+                NodeWarpX[index] = warpX
+                NodeWarpZ[index] = warpZ
+                NodeFloor[index] = NodeFloorAt(startColumn + i, startRow + j)
+            }
+        }
+    }
+
+    // Warps one row of the padded grid and records its field and floor.
+    -FieldRow(int i)
+    {
+        int nodeI = i / NodeColumns
+        float tu = ((float)(i % NodeColumns) + 0.5) / (float)NodeColumns
+        float x = ((float)(BuildStartColumn + i) + 0.5) * Cell
+        for j : 0; j < Span; j++ {
+            int nodeJ = j / NodeColumns
+            float tv = ((float)(j % NodeColumns) + 0.5) / (float)NodeColumns
+            float z = ((float)(BuildStartRow + j) + 0.5) * Cell
+            int a = nodeI * NodeSpan + nodeJ
+            int b = a + NodeSpan
+            float qx = x + Math.Lerp(Math.Lerp(NodeWarpX[a], NodeWarpX[b], tu), Math.Lerp(NodeWarpX[a + 1], NodeWarpX[b + 1], tu), tv)
+            float qz = z + Math.Lerp(Math.Lerp(NodeWarpZ[a], NodeWarpZ[b], tu), Math.Lerp(NodeWarpZ[a + 1], NodeWarpZ[b + 1], tu), tv)
+            float floor = Math.Lerp(Math.Lerp(NodeFloor[a], NodeFloor[b], tu), Math.Lerp(NodeFloor[a + 1], NodeFloor[b + 1], tu), tv)
+            int index = i * Span + j
+            QueryX[index] = qx
+            QueryZ[index] = qz
+            Dist[index] = Field(qx, qz)
+            FloorGrid[index] = (int)Math.Round(floor)
+        }
+    }
+
+    -NearPlacementsForChunk()
+    {
+        NearPlacements.Clear()
+        for i : 0; i < Placements.Len; i++ {
+            int size = Placements[i].Half + Placements[i].Reach
+            int startColumn = BuildStartColumn + Pad
+            int startRow = BuildStartRow + Pad
+            if Placements[i].Column + size < startColumn || Placements[i].Column - size > startColumn + Core { continue }
+            if Placements[i].Row + size < startRow || Placements[i].Row - size > startRow + Core { continue }
+            NearPlacements += i
+        }
+    }
+
+    -CoreRow(int i)
+    {
+        for j : 0; j < Core; j++ {
+            int source = (i + Pad) * Span + j + Pad
+            int target = i * Core + j
+            int floor = FloorGrid[source]
+            if Dist[source] >= 0.0 {
+                float x = ((float)(BuildStartColumn + Pad + i) + 0.5) * Cell
+                float z = ((float)(BuildStartRow + Pad + j) + 0.5) * Cell
+                float t = Math.Clamp(Dist[source] / Config.RampWidth, 0.0, 1.0)
+                float ramp = t * t * (3.0 - 2.0 * t)
+                float ridge = Math.Clamp(1.0 - Math.Abs(QuaxelNoise.SignedFbm(RidgeSeed, x / 9.0, z / 9.0, 4)) * 2.0, 0.0, 1.0)
+                CoreHeight[target] = floor + Config.Lip + (int)(ramp * (float)Config.Peak + ridge * t * (float)Config.Ridge)
+                CoreKind[target] = QuaxelTerrainKind.Mountain
+                CoreSurface[target] = QuaxelTerrainSurface.Rock
+                continue
+            }
+            QuaxelTerrainColumn column
+            column.Floor = floor
+            column.Height = floor
+            column.Surface = QuaxelTerrainSurface.Grass
+            column.Kind = QuaxelTerrainKind.Open
+            float qx = QueryX[source]
+            float qz = QueryZ[source]
+            int owner = OwnerOf(qx, qz)
+            if owner >= 0 {
+                QuaxelTerrainSite site = Layout.Sites[owner]
+                ModuleColumn(site.Module, site, qx - site.X, qz - site.Z, column)
+            }
+            ApplyPlacements(BuildStartColumn + Pad + i, BuildStartRow + Pad + j, column)
+            if column.Kind != QuaxelTerrainKind.Open && OnReservedPath(qx, qz, 0.0) {
+                if column.Kind == QuaxelTerrainKind.Water { column.Surface = QuaxelTerrainSurface.Bridge }
+                else { column.Surface = QuaxelTerrainSurface.Grass }
+                column.Height = column.Floor
+                column.Kind = QuaxelTerrainKind.Open
+            }
+            CoreHeight[target] = column.Height
+            CoreKind[target] = column.Kind
+            CoreSurface[target] = column.Surface
+        }
+    }
+
+    // Footprints block and flatten. Sight strips block and show as a low yard.
+    -ApplyPlacements(int columnIndex, int rowIndex, QuaxelTerrainColumn& column)
+    {
+        for n : 0; n < NearPlacements.Len; n++ {
+            int i = NearPlacements[n]
+            int half = Placements[i].Half
+            int dx = columnIndex - (Placements[i].Column - half)
+            int dz = rowIndex - (Placements[i].Row - half)
+            int size = half * 2
+            if dx >= 0 && dz >= 0 && dx < size && dz < size {
+                column.Height = Placements[i].Base
+                column.Floor = Placements[i].Base
+                column.Surface = QuaxelTerrainSurface.Yard
+                column.Kind = QuaxelTerrainKind.Structure
+                return
+            }
+            int low = Math.Max(Math.Max(0, -dx), -dz)
+            int high = Math.Min(Math.Min(Placements[i].Reach, size - 1 - dx), size - 1 - dz)
+            if low <= high {
+                column.Height = Placements[i].Base + 4
+                column.Floor = Placements[i].Base
+                column.Surface = QuaxelTerrainSurface.Yard
+                column.Kind = QuaxelTerrainKind.Structure
+                return
+            }
+        }
+    }
+
+    // A column can hide (x - k, z - k) only while its height exceeds that floor
+    // by more than k, because a view ray moves one cell per axis.
+    -SweepCeiling()
+    {
+        for i : 0; i < Span; i++ {
+            for j : 0; j < Span; j++ {
+                int index = i * Span + j
+                if Dist[index] < 0.0 { Ceiling[index] = FloorGrid[index] + Config.Lip }
+                else if i > 0 && j > 0 { Ceiling[index] = Ceiling[index - Span - 1] + 1 }
+                else { Ceiling[index] = Unlimited }
+            }
+        }
+        for i : 0; i < Core; i++ {
+            for j : 0; j < Core; j++ {
+                int target = i * Core + j
+                if CoreKind[target] == QuaxelTerrainKind.Mountain {
+                    CoreHeight[target] = Math.Min(CoreHeight[target], Ceiling[(i + Pad) * Span + j + Pad])
+                }
+            }
+        }
+    }
+
+    -int FreeSlot()
+    {
+        for i : 0; i < Chunks.Len; i++ {
+            if !Chunks[i].Valid { return i }
+            int dx = Math.Abs(Chunks[i].X - CenterX)
+            int dz = Math.Abs(Chunks[i].Z - CenterZ)
+            if dx > ResidentRadius || dz > ResidentRadius { return i }
+        }
+        return -1
+    }
+
+    -bool FinishChunk(QuaxelWorld& world)
+    {
+        // The player may have turned back while this chunk was being built.
+        int dx = Math.Abs(BuildChunkX - CenterX)
+        int dz = Math.Abs(BuildChunkZ - CenterZ)
+        if dx > ResidentRadius || dz > ResidentRadius { return true }
+        int slot = FreeSlot()
+        if slot < 0 { return true }
+        SweepCeiling()
+        for n : 0; n < Chunks[slot].PlacementNodes.Len; n++ { world.DestroyNode(Chunks[slot].PlacementNodes[n]) }
+        Chunks[slot].PlacementNodes.Clear()
+        Chunks[slot].Valid = true
+        Chunks[slot].X = BuildChunkX
+        Chunks[slot].Z = BuildChunkZ
+        LastChunk = slot
+        for x : 0; x < ChunkColumns; x++ {
+            for z : 0; z < ChunkColumns; z++ {
+                int source = x * Core + z
+                int target = x * ChunkColumns + z
+                Chunks[slot].Heights[target] = CoreHeight[source]
+                Chunks[slot].Kinds[target] = CoreKind[source]
+            }
+        }
+        if !WriteVoxels(world, slot) { return false }
+        QuaxelTransform transform = world.GetTransform(Chunks[slot].Node)
+        transform.Position = vec3(
+            ((float)BuildChunkX + 0.5) * (float)ChunkColumns * Cell,
+            ((float)ChunkCells * 0.5 - (float)SpawnLevel) * Cell,
+            ((float)BuildChunkZ + 0.5) * (float)ChunkColumns * Cell)
+        world.SetTransform(Chunks[slot].Node, transform)
+        return SpawnPlacements(world, slot)
+    }
+
+    // Writes only cells a ray from the camera can reach: those with an empty
+    // top, +X or +Z neighbor.
+    -bool WriteVoxels(QuaxelWorld& world, int slot)
+    {
+        int volume = Chunks[slot].Volume
+        if !world.ResetVolume(volume) { return false }
+        int worldX = BuildChunkX * ChunkColumns
+        int worldZ = BuildChunkZ * ChunkColumns
+        for x : 0; x < ChunkColumns; x++ {
+            for z : 0; z < ChunkColumns; z++ {
+                int index = x * Core + z
+                int height = Math.Min(CoreHeight[index], ChunkCells)
+                int low = Math.Max(0, Math.Min(Math.Min(CoreHeight[index + Core], CoreHeight[index + 1]), height - 1))
+                int surface = CoreSurface[index]
+                for y : low; y < height; y++ {
+                    int hash = (worldX + x) * 73856093 ^ y * 19349663 ^ (worldZ + z) * 83492791
+                    hash = hash ^ (hash >> 13)
+                    if !world.SetVoxel(volume, x, y, z, SurfaceColor(surface, y, y == height - 1, hash)) { return false }
+                }
+            }
+        }
+        return true
+    }
+
+    -bool SpawnPlacements(QuaxelWorld& world, int slot)
+    {
+        for i : 0; i < Placements.Len; i++ {
+            int column = Placements[i].Column - OriginColumn
+            int row = Placements[i].Row - OriginRow
+            if QuaxelNoise.FloorDiv(column, ChunkColumns) != BuildChunkX { continue }
+            if QuaxelNoise.FloorDiv(row, ChunkColumns) != BuildChunkZ { continue }
+            int node = world.CreateNode()
+            world.AttachTransform(node, QuaxelTransform.Make(vec3(
+                (float)column * Cell,
+                (float)(Placements[i].Base - SpawnLevel) * Cell + (float)Placements[i].Height * 0.5 * Cell,
+                (float)row * Cell), vec3(Cell, Cell, Cell)))
+            if !world.AttachVoxels(node, Placements[i].Volume) { return false }
+            Chunks[slot].PlacementNodes += node
+        }
+        return true
+    }
+
+    -int FindChunk(int x, int z)
+    {
+        if LastChunk < Chunks.Len && Chunks[LastChunk].Valid && Chunks[LastChunk].X == x && Chunks[LastChunk].Z == z { return LastChunk }
+        for i : 0; i < Chunks.Len; i++ {
+            if Chunks[i].Valid && Chunks[i].X == x && Chunks[i].Z == z {
+                LastChunk = i
+                return i
+            }
+        }
+        return -1
+    }
+
+    // The solid cell count of a world column, or -1 when it is not resident.
+    int ColumnHeight(int column, int row)
+    {
+        int chunk = FindChunk(QuaxelNoise.FloorDiv(column, ChunkColumns), QuaxelNoise.FloorDiv(row, ChunkColumns))
+        if chunk < 0 { return -1 }
+        int x = column - Chunks[chunk].X * ChunkColumns
+        int z = row - Chunks[chunk].Z * ChunkColumns
+        return Chunks[chunk].Heights[x * ChunkColumns + z]
+    }
+
+    // The QuaxelTerrainKind of a world column, or -1 when it is not resident.
+    int ColumnKind(int column, int row)
+    {
+        int chunk = FindChunk(QuaxelNoise.FloorDiv(column, ChunkColumns), QuaxelNoise.FloorDiv(row, ChunkColumns))
+        if chunk < 0 { return -1 }
+        int x = column - Chunks[chunk].X * ChunkColumns
+        int z = row - Chunks[chunk].Z * ChunkColumns
+        return Chunks[chunk].Kinds[x * ChunkColumns + z]
+    }
+
+    // A column is blocked if it is not open ground or has not been generated.
+    bool IsBlockedColumn(int column, int row) { return ColumnKind(column, row) != QuaxelTerrainKind.Open }
+
+    int ColumnAt(float position) { return (int)Math.Floor(position / Cell) }
+
+    bool IsBlocked(float x, float z) { return IsBlockedColumn(ColumnAt(x), ColumnAt(z)) }
+
+    // World height of a column's top surface.
+    float SurfaceY(int height) { return (float)(height - SpawnLevel) * Cell }
+
+    // True when a circle at this position touches any blocked column.
+    bool CircleBlocked(float x, float z, float radius)
+    {
+        int firstColumn = ColumnAt(x - radius)
+        int lastColumn = ColumnAt(x + radius)
+        int firstRow = ColumnAt(z - radius)
+        int lastRow = ColumnAt(z + radius)
+        float limit = radius * radius
+        for column : firstColumn; column <= lastColumn; column++ {
+            float dx = ((float)column + 0.5) * Cell - x
+            for row : firstRow; row <= lastRow; row++ {
+                float dz = ((float)row + 0.5) * Cell - z
+                if dx * dx + dz * dz <= limit && IsBlockedColumn(column, row) { return true }
+            }
+        }
+        return false
+    }
+
+    // Moves each horizontal axis separately, so a walker slides along walls.
+    vec3 MoveCircle(vec3 position, vec3 delta, float radius)
+    {
+        float x = position.X
+        float z = position.Z
+        if !CircleBlocked(x + delta.X, z, radius) { x += delta.X }
+        if !CircleBlocked(x, z + delta.Z, radius) { z += delta.Z }
+        return vec3(x, position.Y, z)
+    }
+
+    // The walkable surface height under a point, blending neighboring open columns.
+    float GroundY(float x, float z)
+    {
+        float u = x / Cell - 0.5
+        float v = z / Cell - 0.5
+        int column = (int)Math.Floor(u)
+        int row = (int)Math.Floor(v)
+        float tu = u - (float)column
+        float tv = v - (float)row
+        float sum = 0.0
+        float weight = 0.0
+        for a : 0; a < 2; a++ {
+            for b : 0; b < 2; b++ {
+                if IsBlockedColumn(column + a, row + b) { continue }
+                float w = (a == 0 ? 1.0 - tu | tu) * (b == 0 ? 1.0 - tv | tv)
+                sum += SurfaceY(ColumnHeight(column + a, row + b)) * w
+                weight += w
+            }
+        }
+        return weight > 0.0 ? sum / weight | 0.0
+    }
+
+    // The center of a placement's footprint, at the height of its base.
+    vec3 PlacementPosition(int index)
+    {
+        return vec3(
+            (float)(Placements[index].Column - OriginColumn) * Cell,
+            SurfaceY(Placements[index].Base),
+            (float)(Placements[index].Row - OriginRow) * Cell)
+    }
+
+    // Converts a layout-space point to a world position on the ground plane.
+    vec3 WorldPoint(float layoutX, float layoutZ)
+    {
+        float x = 0.0
+        float z = 0.0
+        WorldFromLayout(layoutX, layoutZ, x, z)
+        return vec3(x - (float)OriginColumn * Cell, 0.0, z - (float)OriginRow * Cell)
+    }
+}
+@{
+    SpawnSiteIndex: SpawnSite
+    ChunkCount: (int)Chunks.Len
+}
+#{
+    #float Cell = 0.125
+    #int ChunkColumns = 128
+    #int ChunkCells = 128
+    // Columns toward -X -Z whose openness can limit a column's height.
+    #int Pad = 80
+    #int Span = 209
+    #int Core = 129
+    #int ResidentRadius = 2
+    #int ResidentChunks = 25
+    // Columns the camera-side sweep treats as unbounded.
+    #int Unlimited = 536870912
+    #float FieldCap = 8.0
+    #float Blend = 4.0
+    // How far past its circle a module still owns open ground, such as a pass mouth.
+    #float ModuleReach = 3.0
+    // Layout columns between warp and floor samples. A chunk's origin is always a multiple.
+    #int NodeColumns = 4
+    #int NodeSpan = 55
+}

@@ -1,0 +1,134 @@
+// Seeded value noise. Results depend only on the seed and position, so a chunk
+// can be generated alone and in any order.
+QuaxelNoise
+#{
+    -float Lattice(uint seed, int x, int z)
+    {
+        uint hash = seed ^ ((uint)x * (uint)0x9E3779B1) ^ ((uint)z * (uint)0x85EBCA77)
+        hash = (hash ^ (hash >> 15)) * (uint)0x2C1B3C6D
+        hash = (hash ^ (hash >> 12)) * (uint)0x297A2D39
+        hash = hash ^ (hash >> 15)
+        return (float)(hash & (uint)0xFFFFFF) / 16777215.0
+    }
+
+    // In 0..1. Continuous, with zero slope at lattice points.
+    float Value(uint seed, float x, float z)
+    {
+        float baseX = Math.Floor(x)
+        float baseZ = Math.Floor(z)
+        int cellX = (int)baseX
+        int cellZ = (int)baseZ
+        float tx = x - baseX
+        float tz = z - baseZ
+        tx = tx * tx * (3.0 - 2.0 * tx)
+        tz = tz * tz * (3.0 - 2.0 * tz)
+        float near = Math.Lerp(Lattice(seed, cellX, cellZ), Lattice(seed, cellX + 1, cellZ), tx)
+        float far = Math.Lerp(Lattice(seed, cellX, cellZ + 1), Lattice(seed, cellX + 1, cellZ + 1), tx)
+        return Math.Lerp(near, far, tz)
+    }
+
+    // In 0..1. Each octave doubles the frequency and halves the amplitude.
+    float Fbm(uint seed, float x, float z, int octaves)
+    {
+        float amplitude = 1.0
+        float total = 0.0
+        float sum = 0.0
+        for octave : 0; octave < octaves; octave++ {
+            sum += Value(seed + (uint)octave, x, z) * amplitude
+            total += amplitude
+            amplitude *= 0.5
+            x *= 2.03
+            z *= 2.03
+        }
+        return sum / total
+    }
+
+    // Maps Fbm to -1..1.
+    float SignedFbm(uint seed, float x, float z, int octaves)
+    {
+        return Fbm(seed, x, z, octaves) * 2.0 - 1.0
+    }
+
+    // Division that rounds toward negative infinity, for positions left of zero.
+    int FloorDiv(int value, int divisor)
+    {
+        return value >= 0 ? value / divisor | (value - divisor + 1) / divisor
+    }
+}
+T{
+    SameSeedAndPositionGiveTheSameValue()
+    {
+        T.AreEqual(QuaxelNoise.Fbm((uint)7, 3.25, -9.5, 3), QuaxelNoise.Fbm((uint)7, 3.25, -9.5, 3))
+        T.IsTrue(QuaxelNoise.Value((uint)7, 3.25, 9.5) != QuaxelNoise.Value((uint)8, 3.25, 9.5))
+    }
+
+    ValueStaysInRangeAndIsContinuousAcrossLatticeLines()
+    {
+        for i : -40; i < 40; i++ {
+            float x = (float)i * 0.37
+            float value = QuaxelNoise.Value((uint)3, x, -x)
+            T.IsTrue(value >= 0.0 && value <= 1.0)
+        }
+        float below = QuaxelNoise.Value((uint)3, -1.0001, 2.5)
+        float above = QuaxelNoise.Value((uint)3, -0.9999, 2.5)
+        T.IsTrue(Math.Abs(below - above) < 0.001)
+    }
+
+    FloorDivRoundsDown()
+    {
+        T.AreEqual(QuaxelNoise.FloorDiv(7, 4), 1)
+        T.AreEqual(QuaxelNoise.FloorDiv(-1, 4), -1)
+        T.AreEqual(QuaxelNoise.FloorDiv(-4, 4), -1)
+        T.AreEqual(QuaxelNoise.FloorDiv(-5, 4), -2)
+    }
+}
+
+// A small deterministic generator for layout decisions.
+QuaxelRandom
+{
+    -uint State
+
+    Begin(uint seed)
+    {
+        State = (seed ^ (uint)0x6C8E9CF5) * (uint)0x9E3779B1 | (uint)1
+        Next()
+        Next()
+    }
+
+    uint Next()
+    {
+        State = State ^ (State << 13)
+        State = State ^ (State >> 17)
+        State = State ^ (State << 5)
+        return State
+    }
+
+    // In 0..1, excluding 1.
+    float Unit() { return (float)(Next() & (uint)0xFFFFFF) / 16777216.0 }
+
+    float Range(float low, float high) { return low + (high - low) * Unit() }
+
+    int Below(int count) { return (int)((Next() >> (uint)8) % (uint)count) }
+}
+T{
+    SameSeedRepeats()
+    {
+        QuaxelRandom first
+        QuaxelRandom second
+        first.Begin((uint)42)
+        second.Begin((uint)42)
+        for i : 0; i < 20; i++ { T.IsTrue(first.Next() == second.Next()) }
+    }
+
+    RangesStayInBounds()
+    {
+        QuaxelRandom random
+        random.Begin((uint)9)
+        for i : 0; i < 200; i++ {
+            float value = random.Range(-2.0, 3.0)
+            T.IsTrue(value >= -2.0 && value < 3.0)
+            int pick = random.Below(6)
+            T.IsTrue(pick >= 0 && pick < 6)
+        }
+    }
+}
