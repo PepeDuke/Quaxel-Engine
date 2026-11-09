@@ -71,6 +71,9 @@ instance, and worlds composed of nodes and components.
 Games build their interface with Duck markup. The engine lays it out and draws
 it over the world. [User interface](Docs/Ui.md)
 
+Models are 3D color grids stored as editable text files.
+[Voxel models](Docs/VoxelModels.md)
+
 ## Dependency boundary
 
 Dependency direction is `Hellfeather -> Quaxel`; Quaxel must not import game code.

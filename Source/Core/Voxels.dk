@@ -74,6 +74,17 @@ QuaxelVoxelVolume
         return true
     }
 
+    // RGB in the low 24 bits, or -1 for an empty or outside cell.
+    int GetVoxel(int x, int y, int z)
+    {
+        if Words.Len == 0 || x < 0 || y < 0 || z < 0 || x >= Words[0] || y >= Words[1] || z >= Words[2] { return -1 }
+        int columns = (Words[0] + 7) / 8
+        int rows = (Words[1] + 7) / 8
+        int offset = Words[3 + x / 8 + columns * (y / 8 + rows * (z / 8))]
+        if offset == 0 { return -1 }
+        return Words[offset + (Spread(x) | (Spread(y) << 1) | (Spread(z) << 2))] - 1
+    }
+
     CopyTo(void* destination)
     {
         QuaxelVoxelUpload* upload = (QuaxelVoxelUpload*)destination

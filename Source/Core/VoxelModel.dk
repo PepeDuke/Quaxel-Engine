@@ -1,0 +1,398 @@
+// Reads the .qvox text format described in Docs/VoxelModels.md. Bytes can arrive
+// in any chunk size. The volume is created in the world as soon as its size is known.
+QuaxelVoxelModelParser
+{
+    int Volume = -1
+    bool Failed
+    int ErrorLine
+    string Error
+    -uint8 [8400] Line
+    -int LineLength
+    -int LineNumber
+    -int [] Palette // RGB + 1 for each symbol, or 0 when unused.
+    -int SymbolWidth // 1 or 2 once a color is defined.
+    -int Stage // 0 expects the version line, 1 the size, 2 colors and rows.
+    -int Width
+    -int Height
+    -int Depth
+    -int Y
+    -int Z
+    -bool RowsStarted
+
+    Feed(QuaxelWorld& world, int value)
+    {
+        if Failed { return }
+        if value == 10 {
+            ProcessLine(world)
+            return
+        }
+        if LineLength >= 8400 {
+            LineNumber++
+            Fail("line is too long")
+            return
+        }
+        Line[LineLength] = (uint8)value
+        LineLength++
+    }
+
+    FeedText(QuaxelWorld& world, string text)
+    {
+        long count = Length(text)
+        for i : (long)0; i < count; i++ { Feed(world, (int)CodeUnitAt(text, i)) }
+    }
+
+    // Call after the last byte. Returns true if a complete model was read.
+    bool Finish(QuaxelWorld& world)
+    {
+        if !Failed && LineLength > 0 { ProcessLine(world) }
+        if !Failed && Stage < 2 { Fail("the file ended before its size") }
+        if !Failed && Y < Height { Fail("the file ended before the last row") }
+        return !Failed
+    }
+
+    -Fail(string message)
+    {
+        Failed = true
+        ErrorLine = LineNumber
+        Error = message
+    }
+
+    -bool IsSpace(int value) { return value == 32 || value == 9 || value == 13 }
+
+    -int SkipSpaces(int at, int end)
+    {
+        int position = at
+        while position < end && IsSpace((int)Line[position]) { position++ }
+        return position
+    }
+
+    // Consumes a whole word and the spaces after it.
+    -bool TakeWord(int& at, int end, string word)
+    {
+        int count = (int)Length(word)
+        if end - at < count { return false }
+        for i : 0; i < count; i++ {
+            if CodeUnitAt(word, (long)i) != (uint)Line[at + i] { return false }
+        }
+        if at + count < end && !IsSpace((int)Line[at + count]) { return false }
+        at = SkipSpaces(at + count, end)
+        return true
+    }
+
+    // Consumes a decimal number and the spaces after it, or returns -1.
+    -int TakeNumber(int& at, int end)
+    {
+        int value = 0
+        int digits = 0
+        while at < end && Line[at] >= 48 && Line[at] <= 57 {
+            if digits == 9 { return -1 }
+            value = value * 10 + (int)Line[at] - 48
+            digits++
+            at++
+        }
+        if digits == 0 || (at < end && !IsSpace((int)Line[at])) { return -1 }
+        at = SkipSpaces(at, end)
+        return value
+    }
+
+    -int HexDigit(int value)
+    {
+        if value >= 48 && value <= 57 { return value - 48 }
+        if value >= 65 && value <= 70 { return value - 55 }
+        if value >= 97 && value <= 102 { return value - 87 }
+        return -1
+    }
+
+    -ProcessLine(QuaxelWorld& world)
+    {
+        LineNumber++
+        int end = LineLength
+        LineLength = 0
+        while end > 0 && IsSpace((int)Line[end - 1]) { end-- }
+        int at = SkipSpaces(0, end)
+        if at == end || Line[at] == 35 { return } // Blank, or a # comment.
+        if Stage == 0 {
+            ProcessVersion(at, end)
+        } else {
+            if Stage == 1 {
+                ProcessSize(world, at, end)
+            } else {
+                int cursor = at
+                if TakeWord(cursor, end, "color") {
+                    ProcessColor(cursor, end)
+                } else {
+                    ProcessRow(world, at, end)
+                }
+            }
+        }
+    }
+
+    -ProcessVersion(int at, int end)
+    {
+        int cursor = at
+        if !TakeWord(cursor, end, "qvox") {
+            Fail("expected 'qvox 1' on the first line")
+            return
+        }
+        if TakeNumber(cursor, end) != 1 || cursor != end {
+            Fail("unsupported version")
+            return
+        }
+        Stage = 1
+    }
+
+    -ProcessSize(QuaxelWorld& world, int at, int end)
+    {
+        int cursor = at
+        if !TakeWord(cursor, end, "size") {
+            Fail("expected 'size <width> <height> <depth>'")
+            return
+        }
+        Width = TakeNumber(cursor, end)
+        Height = TakeNumber(cursor, end)
+        Depth = TakeNumber(cursor, end)
+        if Width < 0 || Height < 0 || Depth < 0 || cursor != end {
+            Fail("expected 'size <width> <height> <depth>'")
+            return
+        }
+        Volume = world.CreateVolume(Width, Height, Depth)
+        if Volume < 0 {
+            Fail("size is out of range")
+            return
+        }
+        for i : 0; i < 16384; i++ { Palette += 0 }
+        Stage = 2
+    }
+
+    -bool IsSymbol(int value) { return value > 32 && value < 127 && value != 46 && value != 35 }
+
+    -int SymbolIndex(int at, int width)
+    {
+        return (int)Line[at] * 128 + (width == 2 ? (int)Line[at + 1] | 0)
+    }
+
+    -ProcessColor(int at, int end)
+    {
+        if RowsStarted {
+            Fail("colors must come before the first row")
+            return
+        }
+        int length = 0
+        while at + length < end && !IsSpace((int)Line[at + length]) { length++ }
+        if length < 1 || length > 2 {
+            Fail("color symbols are one or two characters")
+            return
+        }
+        if SymbolWidth != 0 && length != SymbolWidth {
+            Fail("all color symbols must be the same length")
+            return
+        }
+        for i : 0; i < length; i++ {
+            if !IsSymbol((int)Line[at + i]) {
+                Fail("colors need printable symbols other than '.' and '#'")
+                return
+            }
+        }
+        SymbolWidth = length
+        int index = SymbolIndex(at, length)
+        if Palette[index] != 0 {
+            Fail("color symbol is defined twice")
+            return
+        }
+        int cursor = SkipSpaces(at + length, end)
+        if cursor == at + length || end - cursor != 6 {
+            Fail("expected 'color <symbol> <RRGGBB>'")
+            return
+        }
+        int rgb = 0
+        for i : 0; i < 6; i++ {
+            int digit = HexDigit((int)Line[cursor + i])
+            if digit < 0 {
+                Fail("expected 'color <symbol> <RRGGBB>'")
+                return
+            }
+            rgb = rgb * 16 + digit
+        }
+        Palette[index] = rgb + 1
+    }
+
+    -bool IsEmptyCell(int at, int width)
+    {
+        return Line[at] == 46 && (width == 1 || Line[at + 1] == 46)
+    }
+
+    -ProcessRow(QuaxelWorld& world, int at, int end)
+    {
+        RowsStarted = true
+        if Y >= Height {
+            Fail("more rows than the size allows")
+            return
+        }
+        int cellWidth = SymbolWidth == 0 ? 1 | SymbolWidth
+        if end - at != Width * cellWidth {
+            Fail("row length does not match the width")
+            return
+        }
+        for x : 0; x < Width; x++ {
+            int cell = at + x * cellWidth
+            if !IsEmptyCell(cell, cellWidth) {
+                bool ascii = Line[cell] < 128 && (cellWidth == 1 || Line[cell + 1] < 128)
+                int color = ascii ? Palette[SymbolIndex(cell, cellWidth)] | 0
+                if color == 0 {
+                    Fail("row uses an undefined color symbol")
+                    return
+                }
+                if !world.SetVoxel(Volume, x, Y, Z, color - 1) {
+                    Fail("the model is too large to store")
+                    return
+                }
+            }
+        }
+        Z++
+        if Z == Depth {
+            Z = 0
+            Y++
+        }
+    }
+}
+T{
+    ReadsLayersRowsColorsAndEmptyCells()
+    {
+        QuaxelWorld world()
+        QuaxelVoxelModelParser parser()
+        parser.FeedText(world, "qvox 1\nsize 2 2 3\n# comment\ncolor r FF0000\ncolor g 00ff00\n\n# y = 0\nr.\n..\n.g\n\n# y = 1\n..\ngg\n..\n")
+        T.IsTrue(parser.Finish(world))
+        T.AreEqual(world.GetVoxel(parser.Volume, 0, 0, 0), 0xFF0000)
+        T.AreEqual(world.GetVoxel(parser.Volume, 1, 0, 0), -1)
+        T.AreEqual(world.GetVoxel(parser.Volume, 1, 0, 2), 0x00FF00)
+        T.AreEqual(world.GetVoxel(parser.Volume, 0, 1, 1), 0x00FF00)
+        T.AreEqual(world.GetVoxel(parser.Volume, 0, 1, 0), -1)
+    }
+
+    TwoCharacterSymbolsAllowLargePalettes()
+    {
+        QuaxelWorld world()
+        QuaxelVoxelModelParser parser()
+        parser.FeedText(world, "qvox 1\nsize 3 1 1\ncolor a1 112233\ncolor a2 445566\na1..a2\n")
+        T.IsTrue(parser.Finish(world))
+        T.AreEqual(world.GetVoxel(parser.Volume, 0, 0, 0), 0x112233)
+        T.AreEqual(world.GetVoxel(parser.Volume, 1, 0, 0), -1)
+        T.AreEqual(world.GetVoxel(parser.Volume, 2, 0, 0), 0x445566)
+    }
+
+    SymbolsMustShareOneLength()
+    {
+        QuaxelWorld world()
+        QuaxelVoxelModelParser parser()
+        parser.FeedText(world, "qvox 1\nsize 1 1 1\ncolor a 112233\ncolor bb 445566\n")
+        T.IsFalse(parser.Finish(world))
+        T.AreEqual(parser.Error, "all color symbols must be the same length")
+        QuaxelVoxelModelParser tooLong()
+        tooLong.FeedText(world, "qvox 1\nsize 1 1 1\ncolor abc 112233\n")
+        T.IsFalse(tooLong.Finish(world))
+    }
+
+    ToleratesWindowsLineEndingsAndNoFinalNewline()
+    {
+        QuaxelWorld world()
+        QuaxelVoxelModelParser parser()
+        parser.FeedText(world, "qvox 1\r\nsize 1 1 1\r\ncolor a 123456\r\na")
+        T.IsTrue(parser.Finish(world))
+        T.AreEqual(world.GetVoxel(parser.Volume, 0, 0, 0), 0x123456)
+    }
+
+    AnEmptyModelIsValid()
+    {
+        QuaxelWorld world()
+        QuaxelVoxelModelParser parser()
+        parser.FeedText(world, "qvox 1\nsize 2 1 1\n..\n")
+        T.IsTrue(parser.Finish(world))
+        T.AreEqual(world.GetVoxel(parser.Volume, 0, 0, 0), -1)
+    }
+
+    RejectsWrongHeader()
+    {
+        QuaxelWorld world()
+        QuaxelVoxelModelParser parser()
+        parser.FeedText(world, "voxels\n")
+        T.IsFalse(parser.Finish(world))
+        T.AreEqual(parser.ErrorLine, 1)
+    }
+
+    RejectsUnsupportedVersion()
+    {
+        QuaxelWorld world()
+        QuaxelVoxelModelParser parser()
+        parser.FeedText(world, "qvox 2\nsize 1 1 1\n.\n")
+        T.IsFalse(parser.Finish(world))
+        T.AreEqual(parser.Error, "unsupported version")
+    }
+
+    RejectsSizeOutOfRange()
+    {
+        QuaxelWorld world()
+        QuaxelVoxelModelParser parser()
+        parser.FeedText(world, "qvox 1\nsize 0 1 1\n")
+        T.IsFalse(parser.Finish(world))
+        T.AreEqual(parser.ErrorLine, 2)
+        QuaxelVoxelModelParser large()
+        large.FeedText(world, "qvox 1\nsize 4097 1 1\n")
+        T.IsFalse(large.Finish(world))
+    }
+
+    RejectsWrongRowLength()
+    {
+        QuaxelWorld world()
+        QuaxelVoxelModelParser parser()
+        parser.FeedText(world, "qvox 1\nsize 2 1 1\n...\n")
+        T.IsFalse(parser.Finish(world))
+        T.AreEqual(parser.ErrorLine, 3)
+    }
+
+    RejectsUndefinedSymbol()
+    {
+        QuaxelWorld world()
+        QuaxelVoxelModelParser parser()
+        parser.FeedText(world, "qvox 1\nsize 1 1 1\nz\n")
+        T.IsFalse(parser.Finish(world))
+        T.AreEqual(parser.Error, "row uses an undefined color symbol")
+    }
+
+    RejectsBadColors()
+    {
+        QuaxelWorld world()
+        QuaxelVoxelModelParser reserved()
+        reserved.FeedText(world, "qvox 1\nsize 1 1 1\ncolor . FF0000\n")
+        T.IsFalse(reserved.Finish(world))
+        QuaxelVoxelModelParser twice()
+        twice.FeedText(world, "qvox 1\nsize 1 1 1\ncolor a FF0000\ncolor a 00FF00\n")
+        T.IsFalse(twice.Finish(world))
+        QuaxelVoxelModelParser hex()
+        hex.FeedText(world, "qvox 1\nsize 1 1 1\ncolor a GG0000\n")
+        T.IsFalse(hex.Finish(world))
+        QuaxelVoxelModelParser late()
+        late.FeedText(world, "qvox 1\nsize 1 2 1\n.\ncolor a FF0000\n.\n")
+        T.IsFalse(late.Finish(world))
+    }
+
+    RejectsTooManyAndTooFewRows()
+    {
+        QuaxelWorld world()
+        QuaxelVoxelModelParser many()
+        many.FeedText(world, "qvox 1\nsize 1 1 1\n.\n.\n")
+        T.IsFalse(many.Finish(world))
+        T.AreEqual(many.Error, "more rows than the size allows")
+        QuaxelVoxelModelParser few()
+        few.FeedText(world, "qvox 1\nsize 1 2 1\n.\n")
+        T.IsFalse(few.Finish(world))
+        T.AreEqual(few.Error, "the file ended before the last row")
+    }
+
+    RejectsEndingBeforeSize()
+    {
+        QuaxelWorld world()
+        QuaxelVoxelModelParser parser()
+        parser.FeedText(world, "qvox 1\n")
+        T.IsFalse(parser.Finish(world))
+    }
+}

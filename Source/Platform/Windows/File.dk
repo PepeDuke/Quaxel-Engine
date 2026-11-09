@@ -1,0 +1,18 @@
+QuaxelWindowsNative
+#{
+    extern "C" void* _wfopen(string path, string mode)
+    extern "C" long fread(void* buffer, long itemSize, long itemCount, void* file)
+    extern "C" int fclose(void* file)
+}
+
+QuaxelPlatformBackend
+#{
+    void* OpenFile(string path) { return QuaxelWindowsNative._wfopen(path, "rb") }
+
+    int ReadFile(void* file, void* buffer, int byteCount)
+    {
+        return (int)QuaxelWindowsNative.fread(buffer, 1, (long)byteCount, file)
+    }
+
+    CloseFile(void* file) { QuaxelWindowsNative.fclose(file) }
+}

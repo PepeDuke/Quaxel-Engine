@@ -1,6 +1,18 @@
 QuaxelPlatform
 #{}
 T{
+    FilesReadThroughTheCRuntime()
+    {
+        uint8 [4] bytes
+        void* file = QuaxelPlatform.OpenFile("Tests/Fixtures/Small.qvox")
+        T.IsTrue(file != null)
+        T.AreEqual(QuaxelPlatform.ReadFile(file, &bytes[0], 4), 4)
+        T.AreEqual((int)bytes[0], 113) // q
+        T.AreEqual((int)bytes[3], 120) // x
+        QuaxelPlatform.CloseFile(file)
+        T.IsTrue(QuaxelPlatform.OpenFile("Tests/Fixtures/Missing.qvox") == null)
+    }
+
     HeadlessServicesAreUnavailable()
     {
         T.IsFalse(QuaxelPlatform.SupportsWindowing())

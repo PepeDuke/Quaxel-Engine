@@ -61,6 +61,22 @@ T{
         T.IsTrue(game.WasStopped)
     }
 
+    LoadsAVoxelModelFromDisk()
+    {
+        QuaxelWorld world()
+        int volume = QuaxelAssets.LoadVoxelModel(world, "Tests/Fixtures/Small.qvox")
+        T.IsTrue(volume >= 0)
+        T.AreEqual(world.GetVoxel(volume, 0, 0, 0), 0xFF0000)
+        T.AreEqual(world.GetVoxel(volume, 1, 0, 0), -1)
+        T.AreEqual(world.GetVoxel(volume, 1, 1, 0), 0x0000FF)
+    }
+
+    MissingAssetReportsFailure()
+    {
+        QuaxelWorld world()
+        T.AreEqual(QuaxelAssets.LoadVoxelModel(world, "Tests/Fixtures/DoesNotExist.qvox"), -1)
+    }
+
     FailedPrepareSkipsSimulationButStillStops()
     {
         QuaxelEngineTestGame game()

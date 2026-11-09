@@ -1,0 +1,11 @@
+qvox 1
+size 2 2 1
+
+color r FF0000
+color b 0000FF
+
+# y = 0
+r.
+
+# y = 1
+.b

@@ -1,0 +1,39 @@
+QuaxelAssets
+#{
+    // Paths are relative to the working directory or any of its nearest parents,
+    // so a game finds its assets when run from its build output directory.
+    -void* OpenNearby(string path)
+    {
+        string prefix = ""
+        for level : 0; level <= 6; level++ {
+            void* file = QuaxelPlatform.OpenFile(prefix + path)
+            if file != null { return file }
+            prefix += "../"
+        }
+        return null
+    }
+
+    // Loads a .qvox model into a new volume. Returns its index, or -1 after
+    // printing what went wrong.
+    int LoadVoxelModel(QuaxelWorld& world, string path)
+    {
+        void* file = OpenNearby(path)
+        if file == null {
+            Print("Asset not found: " + path)
+            return -1
+        }
+        QuaxelVoxelModelParser parser()
+        uint8 [4096] chunk
+        int count = QuaxelPlatform.ReadFile(file, &chunk[0], 4096)
+        while count > 0 && !parser.Failed {
+            for i : 0; i < count; i++ { parser.Feed(world, (int)chunk[i]) }
+            count = QuaxelPlatform.ReadFile(file, &chunk[0], 4096)
+        }
+        QuaxelPlatform.CloseFile(file)
+        if !parser.Finish(world) {
+            Print(path + " line " + QuaxelUi.FormatInt(parser.ErrorLine) + ": " + parser.Error)
+            return -1
+        }
+        return parser.Volume
+    }
+}

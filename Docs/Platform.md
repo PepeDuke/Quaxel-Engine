@@ -86,6 +86,13 @@ no held keys.
 mouse while the button is held and releases it on focus loss or a modal drag.
 Headless builds report no pointer.
 
+## Files
+
+`OpenFile(path)` opens a file for reading and returns null on failure. `ReadFile`
+and `CloseFile` then work on that handle. Paths are UTF-16 `string` values. Both
+backends use the C runtime, so headless builds can read assets too. There is no
+write API yet.
+
 ## Vulkan renderer
 
 The engine starts Vulkan on the window-owning thread. It uploads new and

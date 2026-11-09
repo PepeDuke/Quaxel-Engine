@@ -317,6 +317,12 @@ QuaxelWorld
         return true
     }
 
+    int GetVoxel(int index, int x, int y, int z)
+    {
+        if index < 0 || index >= Volumes.Len { return -1 }
+        return Volumes[index].GetVoxel(x, y, z)
+    }
+
     bool NeedsVolumeUpload(int index) { return VolumeDirty[index] }
 
     bool AttachVoxels(int id, int volume)
