@@ -148,6 +148,10 @@ QuaxelTerrain
     -ChooseSpawn()
     {
         SpawnSite = 0
+        if Layout.EntrySite >= 0 {
+            SpawnSite = Layout.EntrySite
+            return
+        }
         for i : 1; i < Layout.Sites.Len; i++ {
             if Layout.Sites[i].Radius > Layout.Sites[SpawnSite].Radius { SpawnSite = i }
         }
@@ -259,15 +263,27 @@ QuaxelTerrain
     {
         float x = (float)column * Cell * (float)NodeColumns
         float z = (float)row * Cell * (float)NodeColumns
-        warpX = QuaxelNoise.SignedFbm(WarpSeedX, x / 70.0, z / 70.0, 2) * Config.ShapeWarp + QuaxelNoise.SignedFbm(DetailSeedX, x / 11.0, z / 11.0, 3) * Config.DetailWarp
-        warpZ = QuaxelNoise.SignedFbm(WarpSeedZ, x / 70.0, z / 70.0, 2) * Config.ShapeWarp + QuaxelNoise.SignedFbm(DetailSeedZ, x / 11.0, z / 11.0, 3) * Config.DetailWarp
+        float calm = Calm(x, z)
+        warpX = calm * (QuaxelNoise.SignedFbm(WarpSeedX, x / 70.0, z / 70.0, 2) * Config.ShapeWarp + QuaxelNoise.SignedFbm(DetailSeedX, x / 11.0, z / 11.0, 3) * Config.DetailWarp)
+        warpZ = calm * (QuaxelNoise.SignedFbm(WarpSeedZ, x / 70.0, z / 70.0, 2) * Config.ShapeWarp + QuaxelNoise.SignedFbm(DetailSeedZ, x / 11.0, z / 11.0, 3) * Config.DetailWarp)
+    }
+
+    // 0 across the entry clearing, which stays straight and level so that it can
+    // be laid out by hand, easing up to 1 in the rest of the level.
+    -float Calm(float x, float z)
+    {
+        int entry = Layout.EntrySite
+        if entry < 0 { return 1.0 }
+        float edge = Math.Hypot(x - Layout.Sites[entry].X, z - Layout.Sites[entry].Z) - Layout.Sites[entry].Radius
+        float t = Math.Clamp((edge - 2.0) / CalmFade, 0.0, 1.0)
+        return t * t * (3.0 - 2.0 * t)
     }
 
     -float NodeFloorAt(int column, int row)
     {
         float x = (float)column * Cell * (float)NodeColumns
         float z = (float)row * Cell * (float)NodeColumns
-        return 16.0 + (float)Config.PlainsAmplitude * QuaxelNoise.SignedFbm(FloorSeed, x / 28.0, z / 28.0, 2)
+        return 16.0 + Calm(x, z) * (float)Config.PlainsAmplitude * QuaxelNoise.SignedFbm(FloorSeed, x / 28.0, z / 28.0, 2)
     }
 
     // X and Z are in layout-column metres, before the warp.
@@ -688,7 +704,7 @@ QuaxelTerrain
                 column.Height = column.Floor
                 column.Kind = QuaxelTerrainKind.Open
             }
-            if column.Kind == QuaxelTerrainKind.Open && column.Surface == QuaxelTerrainSurface.Grass {
+            if column.Surface == QuaxelTerrainSurface.Grass {
                 DressGround(BuildStartColumn + Pad + i, BuildStartRow + Pad + j, qx, qz, column)
             }
             CoreHeight[target] = column.Height
@@ -717,7 +733,8 @@ QuaxelTerrain
         }
     }
 
-    // Footprints block and flatten. Sight strips block and show as a low yard.
+    // Placement is soft: the ground keeps its surface. Footprints block and level
+    // it for the model to stand on. Sight strips only block.
     -ApplyPlacements(int columnIndex, int rowIndex, QuaxelTerrainColumn& column)
     {
         for n : 0; n < NearPlacements.Len; n++ {
@@ -733,7 +750,6 @@ QuaxelTerrain
                 }
                 column.Height = Placements[i].Base
                 column.Floor = Placements[i].Base
-                column.Surface = QuaxelTerrainSurface.Yard
                 column.Kind = QuaxelTerrainKind.Structure
                 return
             }
@@ -741,9 +757,6 @@ QuaxelTerrain
             int high = Math.Min(Math.Min(Placements[i].Reach, size - 1 - dx), size - 1 - dz)
             if Placements[i].Prop { continue }
             if low <= high {
-                column.Height = Placements[i].Base + 4
-                column.Floor = Placements[i].Base
-                column.Surface = QuaxelTerrainSurface.Yard
                 column.Kind = QuaxelTerrainKind.Structure
                 return
             }
@@ -1022,6 +1035,8 @@ QuaxelTerrain
     #float Blend = 4.0
     // How far past its circle a module still owns open ground, such as a pass mouth.
     #float ModuleReach = 3.0
+    // World units over which the entry clearing's calm eases into the warped level.
+    #float CalmFade = 30.0
     // Layout columns between warp and floor samples. A chunk's origin is always a multiple.
     #int NodeColumns = 4
     #int NodeSpan = 55

@@ -28,6 +28,9 @@ QuaxelTerrainConfig
     int GroundRoughness
     // Mountain heights snap to multiples of this, forming cliff tiers. 0 is smooth.
     int TerraceStep
+    // Radius of an extra clearing beyond the level's -Z edge, joined to it by one
+    // pass. The player starts there. 0 adds none.
+    float EntryRadius
 }
 
 // One clearing. X, Z and Radius are in layout space, before the warp is applied.
@@ -91,6 +94,8 @@ QuaxelTerrainLayout
 {
     QuaxelTerrainSite [] Sites
     QuaxelTerrainPass [] Passes
+    // The entry clearing, or -1 when the config asks for none.
+    int EntrySite = -1
     -int [] Parent
 
     // Retries with a derived seed when too few lattice sites survive.
@@ -116,6 +121,7 @@ QuaxelTerrainLayout
         Sites.Clear()
         Passes.Clear()
         Parent.Clear()
+        EntrySite = -1
         QuaxelRandom random
         random.Begin(seed)
         int grid = config.SiteGrid
@@ -194,6 +200,8 @@ QuaxelTerrainLayout
             }
         }
 
+        int gateway = config.EntryRadius > 0.0 ? AddEntry(config, seed) | -1
+
         int spare = 0
         for i : 0; i < edges; i++ {
             if !inTree[i] && siteOf[edgeA[i]] >= 0 { spare++ }
@@ -207,7 +215,31 @@ QuaxelTerrainLayout
             }
             Connect(siteOf[edgeA[i]], siteOf[edgeB[i]], random.Range(config.MinPassRadius, config.MaxPassRadius))
         }
+        if gateway >= 0 { Connect(EntrySite, gateway, config.MaxPassRadius) }
         return true
+    }
+
+    // Adds the entry clearing beyond the northernmost site and returns that site,
+    // which the entry joins. Both get a whole X so the pass between them runs
+    // exactly along Z on the terrain's column grid.
+    -int AddEntry(QuaxelTerrainConfig config, uint seed)
+    {
+        int neighbor = 0
+        float edge = Sites[0].Z - Sites[0].Radius
+        for i : 1; i < Sites.Len; i++ {
+            if Sites[i].Z < Sites[neighbor].Z { neighbor = i }
+            edge = Math.Min(edge, Sites[i].Z - Sites[i].Radius)
+        }
+        Sites[neighbor].X = Math.Floor(Sites[neighbor].X)
+        QuaxelTerrainSite site
+        site.Index = (int)Sites.Len
+        site.Seed = seed + (uint)0x3C6EF372
+        site.X = Sites[neighbor].X
+        site.Z = Math.Floor(edge - config.EntryRadius - EntryGap)
+        site.Radius = config.EntryRadius
+        EntrySite = site.Index
+        Sites += site
+        return neighbor
     }
 
     -Connect(int first, int second, float radius)
@@ -258,6 +290,10 @@ QuaxelTerrainLayout
         return 0
     }
 }
+#{
+    // Rock left between the entry clearing and the rest of the level.
+    #float EntryGap = 8.0
+}
 T{
     EverySeedBuildsAConnectedMapWithEnoughClearings()
     {
@@ -268,6 +304,26 @@ T{
             T.IsTrue(layout.Build(config))
             T.IsTrue(layout.IsConnected())
             T.IsTrue(layout.Sites.Len >= 22)
+        }
+    }
+
+    AnEntryClearingJoinsTheLevelByOnePass()
+    {
+        for seed : 1; seed <= 12; seed++ {
+            QuaxelTerrainConfig config
+            config.Seed = (uint)seed
+            config.EntryRadius = 38.0
+            QuaxelTerrainLayout layout()
+            T.IsTrue(layout.Build(config))
+            T.IsTrue(layout.IsConnected())
+            int entry = layout.EntrySite
+            T.AreEqual(entry, (int)layout.Sites.Len - 1)
+            T.AreEqual(layout.Sites[entry].PortCount, 1)
+            T.IsTrue(layout.Sites[entry].PortZ[0] > 0.99)
+            for i : 0; i < entry; i++ {
+                float gap = Math.Hypot(layout.Sites[i].X - layout.Sites[entry].X, layout.Sites[i].Z - layout.Sites[entry].Z)
+                T.IsTrue(gap > layout.Sites[i].Radius + 38.0)
+            }
         }
     }
 
