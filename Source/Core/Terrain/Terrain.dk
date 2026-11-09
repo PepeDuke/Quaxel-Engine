@@ -10,6 +10,11 @@ QuaxelTerrainPlacement
     int Base
     int Volume
     int Site
+    float VoxelSize
+    bool Prop
+    int LightColumn
+    int LightRow
+    int LightRadius
 }
 
 // One resident slot of terrain data and its render node.
@@ -86,6 +91,9 @@ QuaxelTerrain
     // clearing no other module claims.
     int ModuleCount() { return 1 }
 
+    // The module for the clearing the player starts in.
+    int SpawnModule() { return 0 }
+
     QuaxelTerrainModuleRules ModuleRules(int id)
     {
         QuaxelTerrainModuleRules rules
@@ -96,16 +104,17 @@ QuaxelTerrain
 
     ModulePlace(int id, QuaxelTerrainSite site, QuaxelTerrainPlacer& placer) {}
 
-    // RGB in the low 24 bits. Top is false for the side of a column.
-    int SurfaceColor(int surface, int height, bool top, int hash)
+    // RGB in the low 24 bits. The renderer treats colors as linear.
+    int SurfaceColor(QuaxelTerrainCell cell)
     {
         int color = 0x193326
-        if surface == QuaxelTerrainSurface.Rock { color = height >= 84 ? 0xc8ccd6 | 0x3a322c }
-        else if surface == QuaxelTerrainSurface.Water { color = 0x123a66 }
-        else if surface == QuaxelTerrainSurface.Bridge { color = 0x4a2f14 }
-        else if surface == QuaxelTerrainSurface.Yard { color = 0x0f2416 }
-        else if !top { color = 0x2a2018 }
-        return Vary(color, hash)
+        if cell.Surface == QuaxelTerrainSurface.Rock { color = cell.Y >= 84 ? 0xc8ccd6 | 0x3a322c }
+        else if cell.Surface == QuaxelTerrainSurface.Water { color = 0x123a66 }
+        else if cell.Surface == QuaxelTerrainSurface.Bridge { color = 0x4a2f14 }
+        else if cell.Surface == QuaxelTerrainSurface.Yard { color = 0x0f2416 }
+        else if cell.Surface == QuaxelTerrainSurface.Path { color = 0x2a2018 }
+        else if !cell.Top { color = 0x2a2018 }
+        return Vary(color, cell.Hash)
     }
 
     -int Vary(int color, int hash)
@@ -168,7 +177,13 @@ QuaxelTerrain
         }
         for i : 0; i < sites; i++ {
             int index = order[i]
-            if index == SpawnSite { continue }
+            if index == SpawnSite {
+                int spawnModule = SpawnModule()
+                QuaxelTerrainModuleRules rules = ModuleRules(spawnModule)
+                Layout.Sites[index].Module = spawnModule
+                Layout.Sites[index].Radius = Math.Max(Layout.Sites[index].Radius, rules.MinRadius)
+                continue
+            }
             for id : 1; id < count; id++ {
                 if wanted[id] <= 0 { continue }
                 QuaxelTerrainModuleRules rules = ModuleRules(id)
@@ -430,7 +445,13 @@ QuaxelTerrain
         WorldFromLayout(site.X + offer.X, site.Z + offer.Z, x, z)
         int column = (int)Math.Round(x / Cell)
         int row = (int)Math.Round(z / Cell)
-        int reach = Math.Max(0, offer.Height - Config.Lip + 2)
+        int reach = offer.Prop ? 0 | Math.Max(0, offer.Sight - Config.Lip + 2)
+        // Models in one clearing keep clear of each other and of any sight strip.
+        for i : 0; i < Placements.Len; i++ {
+            if Placements[i].Site != site.Index { continue }
+            int gap = offer.Half + Placements[i].Half + 2
+            if column - reach < Placements[i].Column + gap && column + gap > Placements[i].Column - Placements[i].Reach && row - reach < Placements[i].Row + gap && row + gap > Placements[i].Row - Placements[i].Reach { return false }
+        }
         // Footprint and sight strip, sampled every half unit.
         for a : -offer.Half - reach; a <= offer.Half; a += 4 {
             for b : -offer.Half - reach; b <= offer.Half; b += 4 {
@@ -447,7 +468,9 @@ QuaxelTerrain
                 pz += warpZ
                 float d = Field(px, pz)
                 if body && d > -0.5 { return false }
-                if d < 0.0 && OnReservedPath(px, pz, 1.0) { return false }
+                // Walkers need a margin beside a building, but a sight strip only
+                // has to stay off the path itself.
+                if d < 0.0 && OnReservedPath(px, pz, body ? 1.0 | 0.0) { return false }
             }
         }
         QuaxelTerrainPlacement placement
@@ -459,6 +482,11 @@ QuaxelTerrain
         placement.Base = FloorAt(x, z)
         placement.Volume = offer.Volume
         placement.Site = site.Index
+        placement.VoxelSize = offer.VoxelSize
+        placement.Prop = offer.Prop
+        placement.LightColumn = column + offer.LightX
+        placement.LightRow = row + offer.LightZ
+        placement.LightRadius = offer.LightRadius
         Placements += placement
         return true
     }
@@ -609,7 +637,7 @@ QuaxelTerrain
     {
         NearPlacements.Clear()
         for i : 0; i < Placements.Len; i++ {
-            int size = Placements[i].Half + Placements[i].Reach
+            int size = Math.Max(Placements[i].Half + Placements[i].Reach, Placements[i].LightRadius + Math.Max(Math.Abs(Placements[i].LightColumn - Placements[i].Column), Math.Abs(Placements[i].LightRow - Placements[i].Row)))
             int startColumn = BuildStartColumn + Pad
             int startRow = BuildStartRow + Pad
             if Placements[i].Column + size < startColumn || Placements[i].Column - size > startColumn + Core { continue }
@@ -630,7 +658,13 @@ QuaxelTerrain
                 float t = Math.Clamp(Dist[source] / Config.RampWidth, 0.0, 1.0)
                 float ramp = t * t * (3.0 - 2.0 * t)
                 float ridge = Math.Clamp(1.0 - Math.Abs(QuaxelNoise.SignedFbm(RidgeSeed, x / 9.0, z / 9.0, 4)) * 2.0, 0.0, 1.0)
-                CoreHeight[target] = floor + Config.Lip + (int)(ramp * (float)Config.Peak + ridge * t * (float)Config.Ridge)
+                int rise = (int)(ramp * (float)Config.Peak + ridge * t * (float)Config.Ridge)
+                if Config.TerraceStep > 0 {
+                    // The noise shifts each tier so cliff lines wander.
+                    int shift = (int)(QuaxelNoise.Value(RidgeSeed + (uint)99, x / 6.0, z / 6.0) * (float)Config.TerraceStep)
+                    rise = (rise + shift) / Config.TerraceStep * Config.TerraceStep
+                }
+                CoreHeight[target] = floor + Config.Lip + rise
                 CoreKind[target] = QuaxelTerrainKind.Mountain
                 CoreSurface[target] = QuaxelTerrainSurface.Rock
                 continue
@@ -654,9 +688,32 @@ QuaxelTerrain
                 column.Height = column.Floor
                 column.Kind = QuaxelTerrainKind.Open
             }
+            if column.Kind == QuaxelTerrainKind.Open && column.Surface == QuaxelTerrainSurface.Grass {
+                DressGround(BuildStartColumn + Pad + i, BuildStartRow + Pad + j, qx, qz, column)
+            }
             CoreHeight[target] = column.Height
             CoreKind[target] = column.Kind
             CoreSurface[target] = column.Surface
+        }
+    }
+
+    // Lays roads along the passes and roughens the ground beside them.
+    -DressGround(int columnIndex, int rowIndex, float qx, float qz, QuaxelTerrainColumn& column)
+    {
+        float x = (float)columnIndex * Cell
+        float z = (float)rowIndex * Cell
+        if Config.RoadWidth > 0.0 {
+            float edge = (QuaxelNoise.Fbm(FloorSeed + (uint)7, x * 0.8, z * 0.8, 2) - 0.5) * 1.2
+            float limit = Config.RoadWidth + edge
+            for i : 0; i < NearPassRadius.Len; i++ {
+                if PassDistance(i, qx, qz) < limit {
+                    column.Surface = QuaxelTerrainSurface.Path
+                    return
+                }
+            }
+        }
+        if Config.GroundRoughness > 0 {
+            column.Height += (int)(QuaxelNoise.Fbm(FloorSeed + (uint)13, x * 1.3, z * 1.3, 2) * (float)(Config.GroundRoughness + 1) * 0.999)
         }
     }
 
@@ -670,6 +727,10 @@ QuaxelTerrain
             int dz = rowIndex - (Placements[i].Row - half)
             int size = half * 2
             if dx >= 0 && dz >= 0 && dx < size && dz < size {
+                if Placements[i].Prop {
+                    column.Kind = QuaxelTerrainKind.Structure
+                    return
+                }
                 column.Height = Placements[i].Base
                 column.Floor = Placements[i].Base
                 column.Surface = QuaxelTerrainSurface.Yard
@@ -678,6 +739,7 @@ QuaxelTerrain
             }
             int low = Math.Max(Math.Max(0, -dx), -dz)
             int high = Math.Min(Math.Min(Placements[i].Reach, size - 1 - dx), size - 1 - dz)
+            if Placements[i].Prop { continue }
             if low <= high {
                 column.Height = Placements[i].Base + 4
                 column.Floor = Placements[i].Base
@@ -767,15 +829,49 @@ QuaxelTerrain
                 int index = x * Core + z
                 int height = Math.Min(CoreHeight[index], ChunkCells)
                 int low = Math.Max(0, Math.Min(Math.Min(CoreHeight[index + Core], CoreHeight[index + 1]), height - 1))
-                int surface = CoreSurface[index]
+                float glow = GlowAt(BuildStartColumn + Pad + x, BuildStartRow + Pad + z)
+                QuaxelTerrainCell cell
+                cell.Surface = CoreSurface[index]
+                cell.Column = worldX + x
+                cell.Row = worldZ + z
+                cell.Height = height
+                cell.Wall = Math.Clamp(1.0 + Dist[(x + Pad) * Span + z + Pad] / 2.0, 0.0, 1.0)
                 for y : low; y < height; y++ {
                     int hash = (worldX + x) * 73856093 ^ y * 19349663 ^ (worldZ + z) * 83492791
-                    hash = hash ^ (hash >> 13)
-                    if !world.SetVoxel(volume, x, y, z, SurfaceColor(surface, y, y == height - 1, hash)) { return false }
+                    cell.Hash = (hash ^ (hash >> 13)) & 2147483647
+                    cell.Y = y
+                    cell.Top = y == height - 1
+                    if !world.SetVoxel(volume, x, y, z, Lit(SurfaceColor(cell), glow)) { return false }
                 }
             }
         }
         return true
+    }
+
+    // Summed light from nearby fires, from 0 to 1.
+    -float GlowAt(int columnIndex, int rowIndex)
+    {
+        float glow = 0.0
+        for n : 0; n < NearPlacements.Len; n++ {
+            int i = NearPlacements[n]
+            int radius = Placements[i].LightRadius
+            if radius == 0 { continue }
+            float dx = (float)(columnIndex - Placements[i].LightColumn)
+            float dz = (float)(rowIndex - Placements[i].LightRow)
+            float fade = Math.Max(0.0, 1.0 - Math.Hypot(dx, dz) / (float)radius)
+            glow += fade * fade
+        }
+        return Math.Min(glow, 1.0)
+    }
+
+    // Brightens a linear color and tints it toward firelight.
+    -int Lit(int color, float glow)
+    {
+        if glow <= 0.0 { return color }
+        int red = Math.Min(255, (int)((float)((color >> 16) & 255) * (1.0 + glow * 2.6) + glow * 62.0))
+        int green = Math.Min(255, (int)((float)((color >> 8) & 255) * (1.0 + glow * 1.5) + glow * 18.0))
+        int blue = Math.Min(255, (int)((float)(color & 255) * (1.0 + glow * 0.5) + glow * 3.0))
+        return (red << 16) | (green << 8) | blue
     }
 
     -bool SpawnPlacements(QuaxelWorld& world, int slot)
@@ -789,7 +885,7 @@ QuaxelTerrain
             world.AttachTransform(node, QuaxelTransform.Make(vec3(
                 (float)column * Cell,
                 (float)(Placements[i].Base - SpawnLevel) * Cell + (float)Placements[i].Height * 0.5 * Cell,
-                (float)row * Cell), vec3(Cell, Cell, Cell)))
+                (float)row * Cell), vec3(Placements[i].VoxelSize, Placements[i].VoxelSize, Placements[i].VoxelSize)))
             if !world.AttachVoxels(node, Placements[i].Volume) { return false }
             Chunks[slot].PlacementNodes += node
         }

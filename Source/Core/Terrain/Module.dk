@@ -14,7 +14,22 @@ QuaxelTerrainSurface
     #int Water = 2
     #int Bridge = 3
     #int Yard = 4
+    #int Path = 5
     #int Custom = 16
+}
+
+// Everything SurfaceColor needs to color one voxel.
+QuaxelTerrainCell
+{
+    int Surface
+    int Column
+    int Row
+    int Y
+    int Height
+    bool Top
+    int Hash
+    // 0 in the open, rising to 1 against the foot of a mountain.
+    float Wall
 }
 
 // One column being generated. Height is the number of solid cells.
@@ -63,6 +78,17 @@ QuaxelTerrainOffer
     float Z
     int Half
     int Height
+    // How tall a model counts when working out what it hides.
+    int Sight
+    // World size of one model voxel.
+    float VoxelSize = 0.125
+    // A prop blocks only its footprint, leaves the ground as it is and may hide
+    // what is behind it, as a thin dead tree barely does.
+    bool Prop
+    // Baked firelight. The offset is in columns from the model's center.
+    int LightX
+    int LightZ
+    int LightRadius
 }
 
 // Collects a module's placement requests. The generator accepts at most one
@@ -72,8 +98,34 @@ QuaxelTerrainPlacer
     QuaxelTerrainOffer [] Offers
 
     // X and Z are layout-space offsets from the clearing center. Half and Height
-    // are in cells; the model's footprint is Half * 2 square.
+    // are in columns; the model's footprint is Half * 2 square.
     Offer(int group, int volume, float x, float z, int half, int height)
+    {
+        OfferModel(group, volume, x, z, half, height, height, 0.125, false)
+    }
+
+    // A building whose voxels are finer than a terrain column. Sight may be lower
+    // than Height when only a slim part, such as a bell tower, rises above the rest.
+    OfferBuilding(int group, int volume, float x, float z, int half, int height, int sight, float voxelSize)
+    {
+        OfferModel(group, volume, x, z, half, height, sight, voxelSize, false)
+    }
+
+    OfferProp(int group, int volume, float x, float z, int half, int height, float voxelSize)
+    {
+        OfferModel(group, volume, x, z, half, height, 0, voxelSize, true)
+    }
+
+    // Gives the most recent offer a warm light baked into the ground around it.
+    AddLight(int offsetX, int offsetZ, int radius)
+    {
+        int last = (int)Offers.Len - 1
+        Offers[last].LightX = offsetX
+        Offers[last].LightZ = offsetZ
+        Offers[last].LightRadius = radius
+    }
+
+    -OfferModel(int group, int volume, float x, float z, int half, int height, int sight, float voxelSize, bool prop)
     {
         QuaxelTerrainOffer offer
         offer.Group = group
@@ -82,6 +134,9 @@ QuaxelTerrainPlacer
         offer.Z = z
         offer.Half = half
         offer.Height = height
+        offer.Sight = sight
+        offer.VoxelSize = voxelSize
+        offer.Prop = prop
         Offers += offer
     }
 }

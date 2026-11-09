@@ -78,9 +78,12 @@ and requests placements. The generator then re-opens the reserved paths. See
 **6. View ceiling.** See below. This is the step that makes tall terrain work
 with the isometric camera.
 
-**7. Color.** Each column has a surface ID, and the game's palette maps it to a
-color with a per-cell hash: grass on open ground, rock on blocked ground, snow at
-the highest cells. The renderer already shades top, X and Z faces separately.
+**7. Color.** Each column has a surface ID, and the game overrides `SurfaceColor`
+to choose a color from a `QuaxelTerrainCell`: surface, world position, height, a
+per-cell hash, and how close the column is to a mountain's foot. The renderer
+treats colors as linear and shades top, X and Z faces separately. Three config
+values shape the ground: `RoadWidth` lays a road along each pass,
+`GroundRoughness` adds small bumps, and `TerraceStep` snaps cliffs into tiers.
 
 **8. Voxel shell.** Rays only arrive from +X +Y +Z, so a cell is visible only if
 its top, +X or +Z neighbor is empty. Fill each column from
@@ -171,8 +174,8 @@ HellfeatherTerrain : QuaxelTerrain
 
 Routing visits clearings in seeded order and gives each to the first module that
 still wants one and whose rules it meets. A clearing nothing claims stays module
-0, and so does the spawn clearing, which is the largest. Swapping green valleys
-for another default means changing that one field.
+0. The spawn clearing, which is the largest, uses `SpawnModule()`, which defaults
+to 0. Changing the default clearing means changing that one field.
 
 The ID dispatch is deliberate. Duck rejects converting `Cat*` to `Animal*`, and
 rejects passing a field by reference ("cannot expose tracked heap storage by
@@ -199,16 +202,27 @@ produces the crossing wherever the two meet. The river must separate the two
 ports farthest apart, otherwise one bank is unreachable.
 
 **Placements** are for things a height column cannot represent, such as a house
-with a door or overhang. A module calls
-`placer.Offer(group, volume, x, z, half, height)` for each position it would
-accept, in order of preference. For each group, the generator takes the first
-offer that passes these steps:
+with a door or overhang. A module calls one of these for each position it would
+accept, in order of preference:
+
+- `placer.Offer(group, volume, x, z, half, height)` for a building made of
+  terrain-sized voxels.
+- `placer.OfferBuilding(group, volume, x, z, half, height, sight, voxelSize)` for
+  a building with finer voxels. `sight` is the height used for its sight strip,
+  so one slim tower does not clear a huge area behind the building.
+- `placer.OfferProp(group, volume, x, z, half, height, voxelSize)` for a tree,
+  rock or banner. A prop blocks only its footprint and has no sight strip.
+
+`placer.AddLight(offsetX, offsetZ, radius)` bakes warm firelight into the ground
+around the latest offer. For each group, the generator takes the first offer
+that passes these steps. Props skip steps 4 and 5, and models in one clearing
+keep clear of each other:
 
 1. Convert the layout point to a world position with a fixed-point inverse of
    the warp, 16 iterations.
 2. Keep the footprint rigid in world space so it matches the model.
-3. Refuse if the footprint is not open ground, or if the footprint or sight strip
-   comes within 1 unit of a reserved path.
+3. Refuse if the footprint is not open ground, if the footprint comes within 1
+   unit of a reserved path, or if the sight strip touches one.
 4. Block the footprint and flatten it to the anchor's floor height.
 5. Block the **sight strip**, the columns toward -X -Z the model would hide, and
    give it a low yard surface. Height `H` needs `H - lip + 2` diagonal cells.

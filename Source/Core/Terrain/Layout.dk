@@ -22,6 +22,12 @@ QuaxelTerrainConfig
     float RampWidth = 5.0
     // Half width of the path that stays open along every pass centerline.
     float ReservedPath = 2.0
+    // Half width of the road surface along each pass centerline. 0 shows no road.
+    float RoadWidth
+    // Cells of random bump added to open ground outside the road.
+    int GroundRoughness
+    // Mountain heights snap to multiples of this, forming cliff tiers. 0 is smooth.
+    int TerraceStep
 }
 
 // One clearing. X, Z and Radius are in layout space, before the warp is applied.
