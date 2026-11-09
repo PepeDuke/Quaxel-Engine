@@ -10,6 +10,8 @@ QuaxelPlatformBackend
     }
 
     bool DrawUi(int x, int y, int width, int height, uint color, uint glyphFirst, uint glyphLast, int cell) { return false }
+    bool MapUiAtlas(int words, void*& mapped) { return false }
+    UnmapUiAtlas() {  }
 
     int CreateMesh(void* vertices, int vertexCount, void* indices, int indexCount) { return -1 }
     bool BeginFrame(void* viewProjection) { return false }

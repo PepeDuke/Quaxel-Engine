@@ -950,6 +950,9 @@ QuaxelGameInstance
         return none
     }
 
+    // Runs once after BuildUi, to set options such as ui.FitPixels.
+    ConfigureUi(QuaxelUi& ui) {}
+
     // Runs once per frame, after fixed steps and before the UI is drawn.
     UpdateUi(QuaxelUi& ui, QuaxelWorld& world) {}
 

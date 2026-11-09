@@ -50,6 +50,7 @@ QuaxelVulkan
     -long UiLayout
     -long UiPipeline
     -bool UiBound
+    -VkStorage UiAtlas
 
     -bool CreateComputePipeline()
     {
@@ -84,9 +85,14 @@ QuaxelVulkan
         VkPushConstantRange params
         params.stageFlags = 32
         params.vkSize = 44
+        // One empty texel keeps the atlas set valid until a game uploads its own.
+        VkStorage placeholder
+        if !CreateStorage(4, 0, 6, placeholder) { return false }
+        UiAtlas = placeholder
+        long [2] sets = {StorageLayout, StorageLayout}
         VkPipelineLayoutCreateInfo layout
-        layout.setLayoutCount = 1
-        layout.pSetLayouts = &StorageLayout
+        layout.setLayoutCount = 2
+        layout.pSetLayouts = &sets[0]
         layout.pushConstantRangeCount = 1
         layout.pPushConstantRanges = &params
         if Vk.CreatePipelineLayout(Device, &layout, null, &UiLayout) != 0 { return false }
@@ -118,6 +124,9 @@ QuaxelVulkan
             ReleaseStorage(storage)
         }
         Volumes.Count = 0
+        VkStorage atlas = UiAtlas
+        ReleaseStorage(atlas)
+        UiAtlas = atlas
         Vk.DestroyPipeline(Device, UiPipeline, null)
         Vk.DestroyPipelineLayout(Device, UiLayout, null)
         UiPipeline = 0
@@ -188,6 +197,25 @@ QuaxelVulkan
 
     UnmapVolume(int handle) { Vk.UnmapMemory(Device, Volumes.Items[handle].Memory) }
 
+    // Called before recording a frame. Replaces the atlas once the previous
+    // frame has finished reading it.
+    bool MapUiAtlas(int words, void*& mapped)
+    {
+        if Device == 0 || Vk.WaitForFences(Device, 1, &FrameFence, 1, -1) != 0 { return false }
+        VkStorage storage
+        long bytes = (long)words * 4
+        if !CreateStorage(bytes, 0, 6, storage) || Vk.MapMemory(Device, storage.Memory, 0, bytes, 0, &mapped) != 0 {
+            ReleaseStorage(storage)
+            return false
+        }
+        VkStorage old = UiAtlas
+        ReleaseStorage(old)
+        UiAtlas = storage
+        return true
+    }
+
+    UnmapUiAtlas() { Vk.UnmapMemory(Device, UiAtlas.Memory) }
+
     -MemoryBarrier(int srcStage, int srcAccess, int dstStage, int dstAccess)
     {
         VkMemoryBarrier barrier
@@ -247,6 +275,7 @@ QuaxelVulkan
             UiBound = true
             Vk.CmdBindPipeline(Command, 1, UiPipeline)
             Vk.CmdBindDescriptorSets(Command, 1, UiLayout, 0, 1, &Output.Descriptor, 0, null)
+            Vk.CmdBindDescriptorSets(Command, 1, UiLayout, 1, 1, &UiAtlas.Descriptor, 0, null)
         }
         VkUiParams params
         params.Width = Extent.width

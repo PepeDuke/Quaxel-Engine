@@ -173,15 +173,14 @@ QuaxelUiText : QuaxelUiElement
 {
     string Text
     uint Color = 0xFFFFFFFF
-    int Size = 2
 
-    int NaturalWidth() { return QuaxelUiFont.TextWidth((int)Length(Text), Size) }
+    int NaturalWidth() { return QuaxelUiFont.TextWidth((int)Length(Text)) }
 
-    int NaturalHeight() { return QuaxelUiFont.TextHeight(Size) }
+    int NaturalHeight() { return QuaxelUiFont.TextHeight() }
 
     Paint(QuaxelUiCanvas& canvas, int left, int top, int width, int height)
     {
-        canvas.Text(left, top, Text, Color, Size)
+        canvas.Text(left, top, Text, Color)
     }
 
     Receive(QuaxelUiChange& change)
@@ -221,13 +220,12 @@ QuaxelUiButton : QuaxelUiElement
     uint HoverColor = 0xFF4E5564
     uint PressColor = 0xFF2A2E37
     uint TextColor = 0xFFFFFFFF
-    int Size = 2
     -bool Armed
     -bool ClickWaiting
 
-    int NaturalWidth() { return QuaxelUiFont.TextWidth((int)Length(Text), Size) + 12 * Size }
+    int NaturalWidth() { return QuaxelUiFont.TextWidth((int)Length(Text)) + 12 }
 
-    int NaturalHeight() { return QuaxelUiFont.TextHeight(Size) + 8 * Size }
+    int NaturalHeight() { return QuaxelUiFont.TextHeight() + 8 }
 
     Paint(QuaxelUiCanvas& canvas, int left, int top, int width, int height)
     {
@@ -239,8 +237,8 @@ QuaxelUiButton : QuaxelUiElement
             Armed = false
         }
         canvas.Rect(left, top, width, height, fill)
-        int textWidth = QuaxelUiFont.TextWidth((int)Length(Text), Size)
-        canvas.Text(left + (width - textWidth) / 2, top + (height - QuaxelUiFont.TextHeight(Size)) / 2, Text, TextColor, Size)
+        int textWidth = QuaxelUiFont.TextWidth((int)Length(Text))
+        canvas.Text(left + (width - textWidth) / 2, top + (height - QuaxelUiFont.TextHeight()) / 2, Text, TextColor)
     }
 
     Receive(QuaxelUiChange& change)

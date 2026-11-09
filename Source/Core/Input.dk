@@ -3,6 +3,7 @@ QuaxelKey : int
 #@{
     A: 65,
     D: 68,
+    I: 73,
     S: 83,
     W: 87
 }

@@ -7,10 +7,12 @@ layout(push_constant) uniform Params {
     uint color; // 0xAARRGGBB, display-encoded
     uint glyphFirst;
     uint glyphLast;
-    int cell; // Pixels per glyph cell, or 0 for a solid rectangle.
+    int cell; // Pixels per glyph cell, 0 for a solid rectangle, or -scale for a sprite.
     int bgra;
 } pc;
 layout(set=0,binding=0,std430) buffer Output { uint frame[]; };
+// 0xAARRGGBB texels. A sprite's glyphFirst is its first texel and glyphLast the atlas width.
+layout(set=1,binding=0,std430) readonly buffer Atlas { uint atlas[]; };
 
 void main() {
     ivec2 local = ivec2(gl_GlobalInvocationID.xy);
@@ -23,7 +25,13 @@ void main() {
         if (((column >> glyph.y) & 1u) == 0u) return;
     }
     int index = pixel.x + pc.extent.x * pixel.y;
-    vec4 source = vec4((pc.color >> 16) & 255u, (pc.color >> 8) & 255u, pc.color & 255u, pc.color >> 24) / 255.0;
+    uint value = pc.color;
+    if (pc.cell < 0) {
+        ivec2 texel = local / -pc.cell;
+        value = atlas[pc.glyphFirst + uint(texel.y) * pc.glyphLast + uint(texel.x)];
+        if ((value >> 24) == 0u) return;
+    }
+    vec4 source = vec4((value >> 16) & 255u, (value >> 8) & 255u, value & 255u, value >> 24) / 255.0;
     vec4 target = unpackUnorm4x8(frame[index]);
     vec3 under = pc.bgra != 0 ? target.bgr : target.rgb;
     vec3 blended = mix(under, source.rgb, source.a);

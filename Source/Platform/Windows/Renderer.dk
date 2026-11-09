@@ -15,6 +15,9 @@ QuaxelPlatformBackend
         return QuaxelVulkan.DrawUi(x, y, width, height, color, glyphFirst, glyphLast, cell)
     }
 
+    bool MapUiAtlas(int words, void*& mapped) { return QuaxelVulkan.MapUiAtlas(words, mapped) }
+    UnmapUiAtlas() { QuaxelVulkan.UnmapUiAtlas() }
+
     int CreateMesh(void* vertices, int vertexCount, void* indices, int indexCount)
     {
         return QuaxelVulkan.CreateMesh(vertices, vertexCount, indices, indexCount)

@@ -36,19 +36,31 @@ Colors are `0xAARRGGBB` display values. A color with zero alpha draws nothing.
 | --- | --- |
 | Every tag | `Id`, `X`, `Y`, `Width`, `Height`, `AnchorX`, `AnchorY`, `Visible` |
 | `QuaxelUiPanel` | `Color`, `Padding`, `Spacing`, `Flow` |
-| `QuaxelUiText` | `Text`, `Color`, `Size` |
+| `QuaxelUiText` | `Text`, `Color` |
 | `QuaxelUiBar` | `Value`, `Color`, `BackColor` |
-| `QuaxelUiButton` | `Text`, `Color`, `HoverColor`, `PressColor`, `TextColor`, `Size` |
+| `QuaxelUiButton` | `Text`, `Color`, `HoverColor`, `PressColor`, `TextColor` |
 
 `QuaxelUiPanel` is the only tag that holds children. Duck lets a tag from
 another module hold children only when that exact container has a `this{ }`
 block, and an inherited block does not count.
 
+## One pixel size
+
+The whole interface shares one pixel size, the size of a font pixel. All
+positions and sizes, in markup and in the overlay, are in these UI pixels. There
+is no per-element scale, so text, rectangles and sprites cannot disagree.
+
+A game calls `ui.FitPixels(width, height)` in `ConfigureUi` to name how many UI
+pixels must fit the window. The engine picks the largest whole-number scale that
+fits and multiplies the finished draw list by it. Without `FitPixels`, one UI
+pixel is one screen pixel. `ui.ScaleFor(width, height)` returns the scale, for
+converting mouse positions in `UpdateUi`.
+
 ## Layout
 
 `AnchorX` and `AnchorY` pick the same point in the parent and in the element:
 0 is the left or top edge, 0.5 the center, and 1 the right or bottom edge. `X`
-and `Y` then offset the element in pixels.
+and `Y` then offset the element in UI pixels.
 
 A `Width` or `Height` of 0 means automatic. Text, buttons, and panels with a
 `Flow` fit their content. Bars and panels with `QuaxelUiFlow.None` take the
@@ -71,11 +83,30 @@ Elements are found by `Id`. Each call returns false if no element matches.
 A click needs the left button pressed and released inside the button. Duck has
 no number formatting yet, so `QuaxelUi.FormatInt` converts integers for display.
 
+## Sprites and the overlay
+
+For interfaces that change shape with game state, such as an inventory, a game
+draws directly each frame in `UpdateUi`. The overlay is drawn over the markup
+tree and uses UI pixels. One atlas texel is one UI pixel.
+
+| Call | Effect |
+| --- | --- |
+| `ui.ConfigureAtlas(width, height)` | Sizes the sprite atlas and clears it to transparent |
+| `ui.SetAtlasTexel(x, y, color)` | Writes one `0xAARRGGBB` display color |
+| `ui.ClearOverlay()` | Empties the overlay, usually first thing each frame |
+| `ui.OverlayRect(x, y, width, height, color)` | Adds a rectangle |
+| `ui.OverlayText(x, y, text, color)` | Adds text |
+| `ui.OverlaySprite(x, y, atlasX, atlasY, width, height)` | Adds an atlas region |
+
+A texel with zero alpha is transparent. A sprite costs one draw whatever its
+size, so paint large textured panels into the atlas instead of building them
+from rectangles. The engine uploads the atlas when it changes.
+
 ## Rendering
 
-Text uses a built-in 5 x 7 bitmap font. `Size` is its pixel scale. Characters
+Text uses a built-in 5 x 7 bitmap font, one UI pixel per font pixel. Characters
 outside ASCII draw as `?`.
 
-The tree produces a list of rectangles and glyphs, which `quaxel_engine` submits
+The tree and overlay produce a list of rectangles, glyphs and sprites, which `quaxel_engine` submits
 with `QuaxelRenderer.DrawUi` after the voxel volumes. The Windows backend blends
 each one into the frame with the `Shaders/Ui.comp` compute shader.

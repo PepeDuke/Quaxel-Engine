@@ -19,6 +19,7 @@ QuaxelEngine
         if !success { Print("Failed to prepare the initial world") }
         if success {
             ui.Content = game.BuildUi()
+            game.ConfigureUi(ui)
             if QuaxelPlatform.SupportsWindowing() {
                 success = RunWindowed(game, world, ui)
             } else {
@@ -167,6 +168,13 @@ QuaxelEngine
                 QuaxelRenderer.UnmapVolume(handle)
                 world.SetVolumeHandle(volume, handle)
             }
+        }
+        if ui.AtlasDirty {
+            void* mappedAtlas = null
+            if !QuaxelRenderer.MapUiAtlas(ui.AtlasWords, mappedAtlas) { return false }
+            ui.CopyAtlas(mappedAtlas)
+            QuaxelRenderer.UnmapUiAtlas()
+            ui.MarkAtlasUploaded()
         }
         if !QuaxelRenderer.BeginVoxelFrame() { return false }
         for id : world.NextWith(0, mask); id != 0; id = world.NextWith(id, mask) {

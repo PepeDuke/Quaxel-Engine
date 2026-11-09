@@ -6,19 +6,92 @@ QuaxelUi
     -int PointerX
     -int PointerY
     -bool PointerDown
+    -QuaxelUiCanvas Overlay
+    -int [] AtlasTexels
+    -int AtlasWidth
+    -int AtlasHeight
+    -bool AtlasChanged
+    -int FitWidth
+    -int FitHeight
+
+    // Scales the whole UI so at least this many UI pixels fit the window, using
+    // the largest whole-number scale. Every font pixel, sprite texel and rectangle
+    // then lands on one grid. With no fit set, one UI pixel is one screen pixel.
+    FitPixels(int width, int height)
+    {
+        FitWidth = width
+        FitHeight = height
+    }
+
+    // Screen pixels per UI pixel for a window size.
+    int ScaleFor(int width, int height)
+    {
+        if FitWidth <= 0 || FitHeight <= 0 { return 1 }
+        return Math.Max(1, Math.Min(width / FitWidth, height / FitHeight))
+    }
+
+    // Sizes the sprite atlas and clears it to transparent.
+    ConfigureAtlas(int width, int height)
+    {
+        AtlasTexels.Clear()
+        AtlasWidth = width
+        AtlasHeight = height
+        for i : 0; i < width * height; i++ { AtlasTexels += 0 }
+        AtlasChanged = true
+    }
+
+    // Color is 0xAARRGGBB in display values. Zero alpha stays transparent.
+    SetAtlasTexel(int x, int y, uint color)
+    {
+        if x < 0 || y < 0 || x >= AtlasWidth || y >= AtlasHeight { return }
+        AtlasTexels[y * AtlasWidth + x] = (int)color
+        AtlasChanged = true
+    }
+
+    uint AtlasTexel(int x, int y) { return (uint)AtlasTexels[y * AtlasWidth + x] }
+
+    CopyAtlas(void* destination)
+    {
+        QuaxelVoxelUpload* upload = (QuaxelVoxelUpload*)destination
+        for i : 0; i < AtlasTexels.Len; i++ { upload.Words[i] = AtlasTexels[i] }
+    }
+
+    MarkAtlasUploaded() { AtlasChanged = false }
+
+    // The overlay is drawn over the markup tree. A game rebuilds it each frame
+    // in UpdateUi, for interfaces whose contents change with its state.
+    ClearOverlay() { Overlay.Commands.Clear() }
+
+    OverlayRect(int x, int y, int width, int height, uint color) { Overlay.Rect(x, y, width, height, color) }
+
+    OverlayText(int x, int y, string text, uint color) { Overlay.Text(x, y, text, color) }
+
+    OverlaySprite(int x, int y, int atlasX, int atlasY, int width, int height)
+    {
+        Overlay.Sprite(x, y, atlasX, atlasY, width, height, AtlasWidth)
+    }
 
     // Lays out the tree for a window size and new mouse state.
     Layout(int width, int height, int pointerX, int pointerY, bool pointerDown)
     {
+        int scale = ScaleFor(width, height)
         QuaxelUiPointer pointer
-        pointer.X = pointerX
-        pointer.Y = pointerY
+        pointer.X = pointerX / scale
+        pointer.Y = pointerY / scale
         pointer.Pressed = pointerDown && !PointerDown
         pointer.Released = !pointerDown && PointerDown
         PointerX = pointerX
         PointerY = pointerY
         PointerDown = pointerDown
-        Canvas = PlaceContent(pointer, width, height)
+        Canvas = PlaceContent(pointer, width / scale, height / scale)
+        for i : 0; i < Overlay.Commands.Len; i++ { Canvas.Commands += Overlay.Commands[i] }
+        for i : 0; i < Canvas.Commands.Len; i++ {
+            Canvas.Commands[i].X *= scale
+            Canvas.Commands[i].Y *= scale
+            Canvas.Commands[i].Width *= scale
+            Canvas.Commands[i].Height *= scale
+            Canvas.Commands[i].Cell *= scale
+        }
     }
 
     -QuaxelUiCanvas PlaceContent(QuaxelUiPointer pointer, int width, int height)
@@ -83,6 +156,8 @@ QuaxelUi
 }
 @{
     CommandCount: (int)Canvas.Commands.Len
+    AtlasDirty: AtlasChanged
+    AtlasWords: (int)AtlasTexels.Len
 }
 #{
     string FormatInt(int value)
@@ -232,6 +307,104 @@ T{
         ui.Relayout(700, 500)
         ui.Relayout(700, 500)
         T.IsFalse(ui.TakeClick("go"))
+    }
+
+    OverlayDrawsOverTheTreeAndClears()
+    {
+        QuaxelUi ui()
+        ui.Content = {
+            <QuaxelUiPanel Width=10 Height=10 Color=0xFF000000/>
+        }
+        ui.ConfigureAtlas(8, 4)
+        ui.OverlayRect(1, 2, 3, 4, 0xFFFFFFFF)
+        ui.OverlaySprite(20, 30, 2, 1, 4, 3)
+        ui.Layout(100, 100, 0, 0, false)
+        T.AreEqual(ui.CommandCount, 3)
+        QuaxelUiCommand sprite = ui.GetCommand(2)
+        T.AreEqual(sprite.Width, 4)
+        T.AreEqual(sprite.Height, 3)
+        T.AreEqual(sprite.Cell, -1)
+        T.IsTrue(sprite.GlyphFirst == (uint)10)
+        T.IsTrue(sprite.GlyphLast == (uint)8)
+        ui.Relayout(50, 50)
+        T.AreEqual(ui.CommandCount, 3)
+        ui.ClearOverlay()
+        ui.Layout(100, 100, 0, 0, false)
+        T.AreEqual(ui.CommandCount, 1)
+    }
+
+    EverythingLandsOnOnePixelGrid()
+    {
+        QuaxelUi ui()
+        ui.Content = {
+            <QuaxelUiPanel X=5 Y=3 Flow=QuaxelUiFlow.Column Padding=3 Spacing=1 Color=0xFF000000>
+                <QuaxelUiText Text="AB"/>
+                <QuaxelUiBar Width=7 Height=2 BackColor=0xFF111111/>
+                <QuaxelUiButton Text="C"/>
+            </QuaxelUiPanel>
+        }
+        ui.FitPixels(200, 100)
+        ui.ConfigureAtlas(8, 8)
+        ui.OverlayRect(1, 1, 3, 3, 0xFFFFFFFF)
+        ui.OverlayText(9, 9, "D", 0xFFFFFFFF)
+        ui.OverlaySprite(11, 13, 0, 0, 2, 2)
+        ui.Layout(1000, 300, 0, 0, false)
+        T.IsTrue(ui.CommandCount > 6)
+        for i : 0; i < ui.CommandCount; i++ {
+            QuaxelUiCommand command = ui.GetCommand(i)
+            T.AreEqual(command.X % 3, 0)
+            T.AreEqual(command.Y % 3, 0)
+            T.AreEqual(command.Width % 3, 0)
+            T.AreEqual(command.Height % 3, 0)
+            T.IsTrue(command.Cell == 0 || command.Cell == 3 || command.Cell == -3)
+        }
+    }
+
+    ScaleIsTheLargestWholeNumberThatFits()
+    {
+        QuaxelUi ui()
+        T.AreEqual(ui.ScaleFor(4000, 4000), 1)
+        ui.FitPixels(200, 270)
+        T.AreEqual(ui.ScaleFor(960, 540), 2)
+        T.AreEqual(ui.ScaleFor(1920, 1080), 4)
+        T.AreEqual(ui.ScaleFor(399, 1080), 1)
+        T.AreEqual(ui.ScaleFor(100, 100), 1)
+    }
+
+    ClicksAreReadOnTheScaledGrid()
+    {
+        QuaxelUi ui()
+        ui.Content = {
+            <QuaxelUiButton Id="go" X=10 Y=10 Width=20 Height=10 Text="GO"/>
+        }
+        ui.FitPixels(100, 100)
+        // Scale 4: the button covers screen pixels 40..119 across.
+        ui.Layout(400, 400, 44, 44, false)
+        ui.Layout(400, 400, 44, 44, true)
+        ui.Layout(400, 400, 44, 44, false)
+        T.IsTrue(ui.TakeClick("go"))
+        ui.Layout(400, 400, 20, 20, true)
+        ui.Layout(400, 400, 20, 20, false)
+        T.IsFalse(ui.TakeClick("go"))
+    }
+
+    AtlasTracksChangesAndIgnoresOutsideTexels()
+    {
+        QuaxelUi ui()
+        T.IsFalse(ui.AtlasDirty)
+        ui.ConfigureAtlas(4, 2)
+        T.IsTrue(ui.AtlasDirty)
+        T.AreEqual(ui.AtlasWords, 8)
+        ui.MarkAtlasUploaded()
+        T.IsFalse(ui.AtlasDirty)
+        ui.SetAtlasTexel(9, 9, 0xFF112233)
+        T.IsFalse(ui.AtlasDirty)
+        ui.SetAtlasTexel(3, 1, 0xFF112233)
+        T.IsTrue(ui.AtlasDirty)
+        T.IsTrue(ui.AtlasTexel(3, 1) == 0xFF112233)
+        int [8] copied
+        ui.CopyAtlas(&copied[0])
+        T.AreEqual(copied[7], (int)0xFF112233)
     }
 
     EmptyUiDrawsNothing()

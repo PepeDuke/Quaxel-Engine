@@ -60,9 +60,9 @@ QuaxelUiFont
         lastColumn = (uint)Table.Columns[at + 4]
     }
 
-    int TextWidth(int characters, int size) { return characters <= 0 ? 0 | (6 * characters - 1) * size }
+    int TextWidth(int characters) { return characters <= 0 ? 0 | 6 * characters - 1 }
 
-    int TextHeight(int size) { return 7 * size }
+    int TextHeight() { return 7 }
 }
 T{
     GlyphPacksColumnsInOrder()
@@ -88,8 +88,8 @@ T{
 
     TextSizeLeavesNoTrailingGap()
     {
-        T.AreEqual(QuaxelUiFont.TextWidth(3, 2), 34)
-        T.AreEqual(QuaxelUiFont.TextWidth(0, 2), 0)
-        T.AreEqual(QuaxelUiFont.TextHeight(3), 21)
+        T.AreEqual(QuaxelUiFont.TextWidth(3), 17)
+        T.AreEqual(QuaxelUiFont.TextWidth(0), 0)
+        T.AreEqual(QuaxelUiFont.TextHeight(), 7)
     }
 }
