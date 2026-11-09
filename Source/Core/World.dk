@@ -10,46 +10,35 @@ QuaxelComponents
 
 QuaxelTransform
 {
-    QuaxelVec3 Position
-    QuaxelVec3 Scale
+    vec3 Position
+    vec3 Scale
     // Horizontal unit vector that local +Z faces. The default is identity.
     float FacingX
     float FacingZ = 1.0
     // Applied before the facing turn. The default is no rotation.
-    QuaxelQuat Rotation
+    quat Rotation
 
-    -QuaxelVec3 Turn(QuaxelVec3 value)
+    -vec3 Turn(vec3 value)
     {
-        QuaxelVec3 rotated = Rotation.Rotate(value)
-        return QuaxelVec3.Make(
+        vec3 rotated = Rotation.Rotate(value)
+        return vec3(
             FacingZ * rotated.X + FacingX * rotated.Z,
             rotated.Y,
             FacingZ * rotated.Z - FacingX * rotated.X)
     }
 
-    QuaxelMat4 LocalMatrix()
+    mat4 LocalMatrix()
     {
-        QuaxelMat4 local = QuaxelMat4.Identity()
-        QuaxelVec3 x = QuaxelVec3.Scale(Turn(QuaxelVec3.Make(1.0, 0.0, 0.0)), Scale.X)
-        QuaxelVec3 y = QuaxelVec3.Scale(Turn(QuaxelVec3.Make(0.0, 1.0, 0.0)), Scale.Y)
-        QuaxelVec3 z = QuaxelVec3.Scale(Turn(QuaxelVec3.Make(0.0, 0.0, 1.0)), Scale.Z)
-        local.M[0] = x.X
-        local.M[1] = x.Y
-        local.M[2] = x.Z
-        local.M[4] = y.X
-        local.M[5] = y.Y
-        local.M[6] = y.Z
-        local.M[8] = z.X
-        local.M[9] = z.Y
-        local.M[10] = z.Z
-        local.M[12] = Position.X
-        local.M[13] = Position.Y
-        local.M[14] = Position.Z
+        mat4 local = mat4.Identity()
+        local[0] = vec4(Turn(vec3(1.0, 0.0, 0.0)) * Scale.X, 0.0)
+        local[1] = vec4(Turn(vec3(0.0, 1.0, 0.0)) * Scale.Y, 0.0)
+        local[2] = vec4(Turn(vec3(0.0, 0.0, 1.0)) * Scale.Z, 0.0)
+        local[3] = vec4(Position, 1.0)
         return local
     }
 }
 #{
-    QuaxelTransform Make(QuaxelVec3 position, QuaxelVec3 scale)
+    QuaxelTransform Make(vec3 position, vec3 scale)
     {
         QuaxelTransform result
         result.Position = position
@@ -67,8 +56,8 @@ QuaxelMeshRenderer
 // camera attached to a parent node moves with it.
 QuaxelCamera
 {
-    QuaxelVec3 Direction
-    QuaxelVec3 Up
+    vec3 Direction
+    vec3 Up
     float FrameHalfWidth
     float FrameHalfHeight
     float Near
@@ -90,15 +79,13 @@ QuaxelCamera
         }
     }
 
-    QuaxelVec3 Forward() { return QuaxelVec3.Normalize(Direction) }
+    vec3 Forward() { return Math.Normalize(Direction) }
 
-    QuaxelVec3 Right() { return QuaxelVec3.Normalize(QuaxelVec3.Cross(Forward(), Up)) }
+    vec3 Right() { return Math.Normalize(Math.Cross(Forward(), Up)) }
 
-    QuaxelMat4 ViewProjection(QuaxelVec3 eye)
+    mat4 ViewProjection(vec3 eye)
     {
-        return QuaxelMat4.Multiply(
-            QuaxelMat4.Orthographic(-HalfWidth, HalfWidth, -HalfHeight, HalfHeight, Near, Far),
-            QuaxelMat4.LookAt(eye, QuaxelVec3.Add(eye, Direction), Up))
+        return QuaxelMat4.Orthographic(-HalfWidth, HalfWidth, -HalfHeight, HalfHeight, Near, Far) * QuaxelMat4.LookAt(eye, eye + Direction, Up)
     }
 }
 @{
@@ -287,7 +274,7 @@ QuaxelWorld
 
     QuaxelTransform GetTransform(int id) { return Nodes[id - 1].Transform }
 
-    QuaxelVec3 GetPosition(int id) { return Nodes[id - 1].Transform.Position }
+    vec3 GetPosition(int id) { return Nodes[id - 1].Transform.Position }
 
     SetTransform(int id, QuaxelTransform transform) { Nodes[id - 1].Transform = transform }
 
@@ -305,24 +292,24 @@ QuaxelWorld
     }
 
     // Combines this node's transform with those of its ancestors.
-    QuaxelMat4 ModelMatrix(int id)
+    mat4 ModelMatrix(int id)
     {
-        QuaxelMat4 model = QuaxelMat4.Identity()
+        mat4 model = mat4.Identity()
         int current = id
         while current != 0 {
             if Has(current, QuaxelComponents.Transform) {
                 QuaxelTransform local = Nodes[current - 1].Transform
-                model = QuaxelMat4.Multiply(local.LocalMatrix(), model)
+                model = local.LocalMatrix() * model
             }
             current = Nodes[current - 1].Parent
         }
         return model
     }
 
-    QuaxelVec3 WorldPosition(int id)
+    vec3 WorldPosition(int id)
     {
-        QuaxelMat4 model = ModelMatrix(id)
-        return model.TransformPoint(QuaxelVec3.Make(0.0, 0.0, 0.0))
+        mat4 model = ModelMatrix(id)
+        return vec3(model * vec4(vec3(0.0, 0.0, 0.0), 1.0))
     }
 
     int CreateVolume(int width, int height, int depth)
@@ -371,11 +358,10 @@ QuaxelWorld
     CopyVolume(int index, void* destination) { Volumes[index].CopyTo(destination) }
     int VolumeWords(int index) { return Volumes[index].WordCount }
 
-    QuaxelMat4 VolumeModel(int id)
+    mat4 VolumeModel(int id)
     {
         int index = VolumeOf(id)
-        return QuaxelMat4.Multiply(ModelMatrix(id), QuaxelMat4.Multiply(
-            QuaxelMat4.Translation(Volumes[index].Center), QuaxelMat4.Scaling(Volumes[index].Size)))
+        return ModelMatrix(id) * QuaxelMat4.Translation(Volumes[index].Center) * QuaxelMat4.Scaling(Volumes[index].Size)
     }
 
     int CreateAnimation()
@@ -470,7 +456,7 @@ QuaxelWorld
         UpdateSockets()
     }
 
-    bool AddSocket(int volume, string socketName, float x, float y, float z, QuaxelQuat rotation)
+    bool AddSocket(int volume, string socketName, float x, float y, float z, quat rotation)
     {
         if volume < 0 || volume >= Volumes.Len { return false }
         return Volumes[volume].AddSocket(socketName, x, y, z, rotation)
@@ -484,7 +470,7 @@ QuaxelWorld
         if !Has(parent, QuaxelComponents.Voxels) || !OffersSocket(parent, socket) { return false }
         if !SetParent(id, parent) { return false }
         if !Has(id, QuaxelComponents.Transform) {
-            AttachTransform(id, QuaxelTransform.Make(QuaxelVec3.Make(0.0, 0.0, 0.0), QuaxelVec3.Make(1.0, 1.0, 1.0)))
+            AttachTransform(id, QuaxelTransform.Make(vec3(0.0, 0.0, 0.0), vec3(1.0, 1.0, 1.0)))
         }
         Nodes[id - 1].Socket = socket
         Nodes[id - 1].Mask |= QuaxelComponents.SocketFollower
@@ -513,14 +499,14 @@ QuaxelWorld
         if index < 0 { return }
         QuaxelVoxelSocket socket = Volumes[parentVolume].SocketAt(index)
         QuaxelTransform transform = Nodes[id - 1].Transform
-        QuaxelVec3 gripOffset = QuaxelVec3.Make(0.0, 0.0, 0.0)
-        QuaxelQuat rotation = socket.Rotation
+        vec3 gripOffset = vec3(0.0, 0.0, 0.0)
+        quat rotation = socket.Rotation
         if Has(id, QuaxelComponents.Voxels) {
             int grip = Volumes[Nodes[id - 1].Volume].FindSocket("grip")
             if grip >= 0 {
                 QuaxelVoxelSocket held = Volumes[Nodes[id - 1].Volume].SocketAt(grip)
-                rotation = QuaxelQuat.Multiply(socket.Rotation, held.Rotation.Inverse())
-                gripOffset = QuaxelVec3.Make(
+                rotation = socket.Rotation * held.Rotation.Inverse()
+                gripOffset = vec3(
                     held.Position.X * transform.Scale.X,
                     held.Position.Y * transform.Scale.Y,
                     held.Position.Z * transform.Scale.Z)
@@ -529,7 +515,7 @@ QuaxelWorld
         transform.Rotation = rotation
         transform.FacingX = 0.0
         transform.FacingZ = 1.0
-        transform.Position = QuaxelVec3.Subtract(socket.Position, rotation.Rotate(gripOffset))
+        transform.Position = socket.Position - rotation.Rotate(gripOffset)
         Nodes[id - 1].Transform = transform
     }
 
@@ -556,36 +542,36 @@ QuaxelWorld
 
     // The socket's pose in world space, from the node's current volume. Returns
     // false if that volume has no such socket.
-    bool GetSocketMatrix(int id, string socket, QuaxelMat4& matrix)
+    bool GetSocketMatrix(int id, string socket, mat4& matrix)
     {
         if !Has(id, QuaxelComponents.Voxels) { return false }
         int index = Volumes[Nodes[id - 1].Volume].FindSocket(socket)
         if index < 0 { return false }
         QuaxelVoxelSocket found = Volumes[Nodes[id - 1].Volume].SocketAt(index)
-        QuaxelTransform local = QuaxelTransform.Make(found.Position, QuaxelVec3.Make(1.0, 1.0, 1.0))
+        QuaxelTransform local = QuaxelTransform.Make(found.Position, vec3(1.0, 1.0, 1.0))
         local.Rotation = found.Rotation
-        matrix = QuaxelMat4.Multiply(ModelMatrix(id), local.LocalMatrix())
+        matrix = ModelMatrix(id) * local.LocalMatrix()
         return true
     }
 
     // Brightness of the faces whose normals are the volume's X, Y and Z axes.
     // Rotation tilts the faces. Facing does not, so a character keeps its
     // shading as it turns.
-    QuaxelVec3 FaceLights(int id)
+    vec3 FaceLights(int id)
     {
-        QuaxelQuat rotation
+        quat rotation
         int current = id
         while current != 0 {
-            rotation = QuaxelQuat.Multiply(Nodes[current - 1].Transform.Rotation, rotation)
+            rotation = Nodes[current - 1].Transform.Rotation * rotation
             current = Nodes[current - 1].Parent
         }
-        return QuaxelVec3.Make(
-            AxisLight(rotation.Rotate(QuaxelVec3.Make(1.0, 0.0, 0.0))),
-            AxisLight(rotation.Rotate(QuaxelVec3.Make(0.0, 1.0, 0.0))),
-            AxisLight(rotation.Rotate(QuaxelVec3.Make(0.0, 0.0, 1.0))))
+        return vec3(
+            AxisLight(rotation.Rotate(vec3(1.0, 0.0, 0.0))),
+            AxisLight(rotation.Rotate(vec3(0.0, 1.0, 0.0))),
+            AxisLight(rotation.Rotate(vec3(0.0, 0.0, 1.0))))
     }
 
-    -float AxisLight(QuaxelVec3 normal)
+    -float AxisLight(vec3 normal)
     {
         return normal.Y * normal.Y + 0.68 * normal.X * normal.X + 0.42 * normal.Z * normal.Z
     }
@@ -652,18 +638,18 @@ T{
         QuaxelWorld world()
         int bare = world.CreateNode()
         int drawn = world.CreateNode()
-        QuaxelTransform transform = QuaxelTransform.Make(QuaxelVec3.Make(1.0, 2.0, 3.0), QuaxelVec3.Make(1.0, 1.0, 1.0))
+        QuaxelTransform transform = QuaxelTransform.Make(vec3(1.0, 2.0, 3.0), vec3(1.0, 1.0, 1.0))
         T.IsTrue(world.AttachTransform(bare, transform))
         T.IsTrue(world.AttachTransform(drawn, transform))
         QuaxelMeshRenderer renderer
-        renderer.Mesh = world.AddMesh(QuaxelMeshData.Cube(QuaxelVec3.Make(0.5, 0.5, 0.5)))
+        renderer.Mesh = world.AddMesh(QuaxelMeshData.Cube(vec3(0.5, 0.5, 0.5)))
         T.IsTrue(world.AttachMeshRenderer(drawn, renderer))
         int mask = QuaxelComponents.Transform | QuaxelComponents.MeshRenderer
         T.AreEqual(world.NextWith(0, mask), drawn)
         T.AreEqual(world.NextWith(drawn, mask), 0)
         T.AreEqual(world.MeshOf(drawn), renderer.Mesh)
         T.IsTrue(world.Has(drawn, QuaxelComponents.Voxels))
-        QuaxelVec3 position = world.GetPosition(bare)
+        vec3 position = world.GetPosition(bare)
         T.AreEqual(position.Y, 2.0)
     }
 
@@ -713,10 +699,10 @@ T{
         QuaxelWorld world()
         int parent = world.CreateNode()
         int child = world.CreateChild(parent)
-        world.AttachTransform(parent, QuaxelTransform.Make(QuaxelVec3.Make(10.0, 0.0, 0.0), QuaxelVec3.Make(2.0, 2.0, 2.0)))
-        world.AttachTransform(child, QuaxelTransform.Make(QuaxelVec3.Make(1.0, 0.0, 0.0), QuaxelVec3.Make(1.0, 1.0, 1.0)))
-        QuaxelMat4 model = world.ModelMatrix(child)
-        QuaxelVec3 origin = model.TransformPoint(QuaxelVec3.Make(0.0, 0.0, 0.0))
+        world.AttachTransform(parent, QuaxelTransform.Make(vec3(10.0, 0.0, 0.0), vec3(2.0, 2.0, 2.0)))
+        world.AttachTransform(child, QuaxelTransform.Make(vec3(1.0, 0.0, 0.0), vec3(1.0, 1.0, 1.0)))
+        mat4 model = world.ModelMatrix(child)
+        vec3 origin = vec3(model * vec4(vec3(0.0, 0.0, 0.0), 1.0))
         T.AreEqual(origin.X, 12.0)
     }
 
@@ -725,13 +711,13 @@ T{
         QuaxelWorld world()
         int parent = world.CreateNode()
         int child = world.CreateChild(parent)
-        world.AttachTransform(parent, QuaxelTransform.Make(QuaxelVec3.Make(3.0, 0.0, 0.0), QuaxelVec3.Make(1.0, 1.0, 1.0)))
-        world.AttachTransform(child, QuaxelTransform.Make(QuaxelVec3.Make(0.0, 2.0, 0.0), QuaxelVec3.Make(1.0, 1.0, 1.0)))
-        QuaxelVec3 first = world.WorldPosition(child)
+        world.AttachTransform(parent, QuaxelTransform.Make(vec3(3.0, 0.0, 0.0), vec3(1.0, 1.0, 1.0)))
+        world.AttachTransform(child, QuaxelTransform.Make(vec3(0.0, 2.0, 0.0), vec3(1.0, 1.0, 1.0)))
+        vec3 first = world.WorldPosition(child)
         T.AreEqual(first.X, 3.0)
         T.AreEqual(first.Y, 2.0)
-        world.SetTransform(parent, QuaxelTransform.Make(QuaxelVec3.Make(-1.0, 0.0, 0.0), QuaxelVec3.Make(1.0, 1.0, 1.0)))
-        QuaxelVec3 second = world.WorldPosition(child)
+        world.SetTransform(parent, QuaxelTransform.Make(vec3(-1.0, 0.0, 0.0), vec3(1.0, 1.0, 1.0)))
+        vec3 second = world.WorldPosition(child)
         T.AreEqual(second.X, -1.0)
     }
 
@@ -750,19 +736,19 @@ T{
 
     RotationAppliesBeforeFacingAndLeavesIdentityExact()
     {
-        QuaxelTransform plain = QuaxelTransform.Make(QuaxelVec3.Make(1.0, 2.0, 3.0), QuaxelVec3.Make(2.0, 3.0, 4.0))
-        QuaxelMat4 matrix = plain.LocalMatrix()
-        T.AreEqual(matrix.M[0], 2.0)
-        T.AreEqual(matrix.M[5], 3.0)
-        T.AreEqual(matrix.M[10], 4.0)
-        T.AreEqual(matrix.M[12], 1.0)
-        QuaxelTransform turned = QuaxelTransform.Make(QuaxelVec3.Make(0.0, 0.0, 0.0), QuaxelVec3.Make(1.0, 1.0, 1.0))
+        QuaxelTransform plain = QuaxelTransform.Make(vec3(1.0, 2.0, 3.0), vec3(2.0, 3.0, 4.0))
+        mat4 matrix = plain.LocalMatrix()
+        T.AreEqual(matrix[0][0], 2.0)
+        T.AreEqual(matrix[1][1], 3.0)
+        T.AreEqual(matrix[2][2], 4.0)
+        T.AreEqual(matrix[3][0], 1.0)
+        QuaxelTransform turned = QuaxelTransform.Make(vec3(0.0, 0.0, 0.0), vec3(1.0, 1.0, 1.0))
         // Pitch sends +Y to +Z, then facing +X sends +Z to +X.
-        turned.Rotation = QuaxelQuat.FromEuler(0.0, 90.0, 0.0)
+        turned.Rotation = QuaxelRotation.FromDegrees(0.0, 90.0, 0.0)
         turned.FacingX = 1.0
         turned.FacingZ = 0.0
-        QuaxelMat4 model = turned.LocalMatrix()
-        QuaxelVec3 up = model.TransformPoint(QuaxelVec3.Make(0.0, 1.0, 0.0))
+        mat4 model = turned.LocalMatrix()
+        vec3 up = vec3(model * vec4(vec3(0.0, 1.0, 0.0), 1.0))
         T.IsTrue(Math.Abs(up.X - 1.0) < 0.0001)
     }
 
@@ -771,19 +757,19 @@ T{
         QuaxelWorld world()
         int bodyVolume = world.CreateVolume(4, 4, 4)
         // Cell (3, 1, 1) has its center at (1.5, -0.5, -0.5) in a 4^3 grid.
-        T.IsTrue(world.AddSocket(bodyVolume, "hand", 3.0, 1.0, 1.0, QuaxelQuat.FromEuler(0.0, 90.0, 0.0)))
-        T.IsFalse(world.AddSocket(bodyVolume, "hand", 0.0, 0.0, 0.0, QuaxelQuat.FromEuler(0.0, 0.0, 0.0)))
+        T.IsTrue(world.AddSocket(bodyVolume, "hand", 3.0, 1.0, 1.0, QuaxelRotation.FromDegrees(0.0, 90.0, 0.0)))
+        T.IsFalse(world.AddSocket(bodyVolume, "hand", 0.0, 0.0, 0.0, QuaxelRotation.FromDegrees(0.0, 0.0, 0.0)))
         int body = world.CreateNode()
-        world.AttachTransform(body, QuaxelTransform.Make(QuaxelVec3.Make(10.0, 0.0, 0.0), QuaxelVec3.Make(1.0, 1.0, 1.0)))
+        world.AttachTransform(body, QuaxelTransform.Make(vec3(10.0, 0.0, 0.0), vec3(1.0, 1.0, 1.0)))
         world.AttachVoxels(body, bodyVolume)
         int itemVolume = world.CreateVolume(1, 5, 1)
         // The grip is the bottom cell, 2 units below the item's center.
-        world.AddSocket(itemVolume, "grip", 0.0, 0.0, 0.0, QuaxelQuat.FromEuler(0.0, 0.0, 0.0))
+        world.AddSocket(itemVolume, "grip", 0.0, 0.0, 0.0, QuaxelRotation.FromDegrees(0.0, 0.0, 0.0))
         int item = world.CreateNode()
         world.AttachVoxels(item, itemVolume)
         T.IsTrue(world.AttachToSocket(item, body, "hand"))
         T.AreEqual(world.ParentOf(item), body)
-        QuaxelVec3 center = world.WorldPosition(item)
+        vec3 center = world.WorldPosition(item)
         // Pitch points the item's +Y along +Z, so its center lies 2 past the hand.
         T.IsTrue(Math.Abs(center.X - 11.5) < 0.0001)
         T.IsTrue(Math.Abs(center.Y + 0.5) < 0.0001)
@@ -794,17 +780,17 @@ T{
     {
         QuaxelWorld world()
         int bodyVolume = world.CreateVolume(1, 1, 1)
-        world.AddSocket(bodyVolume, "hand", 0.0, 0.0, 0.0, QuaxelQuat.FromEuler(90.0, 0.0, 0.0))
+        world.AddSocket(bodyVolume, "hand", 0.0, 0.0, 0.0, QuaxelRotation.FromDegrees(90.0, 0.0, 0.0))
         int body = world.CreateNode()
         world.AttachVoxels(body, bodyVolume)
         int itemVolume = world.CreateVolume(1, 5, 1)
-        world.AddSocket(itemVolume, "grip", 0.0, 0.0, 0.0, QuaxelQuat.FromEuler(90.0, 0.0, 0.0))
+        world.AddSocket(itemVolume, "grip", 0.0, 0.0, 0.0, QuaxelRotation.FromDegrees(90.0, 0.0, 0.0))
         int item = world.CreateNode()
-        world.AttachTransform(item, QuaxelTransform.Make(QuaxelVec3.Make(0.0, 0.0, 0.0), QuaxelVec3.Make(2.0, 2.0, 2.0)))
+        world.AttachTransform(item, QuaxelTransform.Make(vec3(0.0, 0.0, 0.0), vec3(2.0, 2.0, 2.0)))
         world.AttachVoxels(item, itemVolume)
         T.IsTrue(world.AttachToSocket(item, body, "hand"))
         // Socket and grip rotations cancel. The grip is 2 cells of 2 units below center.
-        QuaxelVec3 center = world.WorldPosition(item)
+        vec3 center = world.WorldPosition(item)
         T.IsTrue(Math.Abs(center.Y - 4.0) < 0.0001)
         T.IsTrue(Math.Abs(center.X) < 0.0001)
     }
@@ -818,8 +804,8 @@ T{
         int second = world.CreateVolume(5, 1, 1)
         world.AddAnimationFrame(animation, first, 250)
         world.AddAnimationFrame(animation, second, 250)
-        world.AddSocket(first, "hand", 0.0, 0.0, 0.0, QuaxelQuat.FromEuler(0.0, 0.0, 0.0))
-        world.AddSocket(second, "hand", 4.0, 0.0, 0.0, QuaxelQuat.FromEuler(90.0, 0.0, 0.0))
+        world.AddSocket(first, "hand", 0.0, 0.0, 0.0, QuaxelRotation.FromDegrees(0.0, 0.0, 0.0))
+        world.AddSocket(second, "hand", 4.0, 0.0, 0.0, QuaxelRotation.FromDegrees(90.0, 0.0, 0.0))
         int body = world.CreateNode()
         world.AttachAnimator(body, animation)
         int item = world.CreateNode()
@@ -842,7 +828,7 @@ T{
         int second = world.CreateVolume(1, 1, 1)
         world.AddAnimationFrame(animation, first, 250)
         world.AddAnimationFrame(animation, second, 250)
-        world.AddSocket(second, "hand", 0.0, 0.0, 0.0, QuaxelQuat.FromEuler(0.0, 0.0, 0.0))
+        world.AddSocket(second, "hand", 0.0, 0.0, 0.0, QuaxelRotation.FromDegrees(0.0, 0.0, 0.0))
         int body = world.CreateNode()
         world.AttachAnimator(body, animation)
         int item = world.CreateNode()
@@ -873,7 +859,7 @@ T{
     {
         QuaxelWorld world()
         int volume = world.CreateVolume(1, 1, 1)
-        world.AddSocket(volume, "hand", 0.0, 0.0, 0.0, QuaxelQuat.FromEuler(0.0, 0.0, 0.0))
+        world.AddSocket(volume, "hand", 0.0, 0.0, 0.0, QuaxelRotation.FromDegrees(0.0, 0.0, 0.0))
         int body = world.CreateNode()
         world.AttachVoxels(body, volume)
         int item = world.CreateNode()
@@ -888,13 +874,13 @@ T{
     {
         QuaxelWorld world()
         int volume = world.CreateVolume(2, 2, 2)
-        world.AddSocket(volume, "tip", 1.0, 1.0, 1.0, QuaxelQuat.FromEuler(0.0, 90.0, 0.0))
+        world.AddSocket(volume, "tip", 1.0, 1.0, 1.0, QuaxelRotation.FromDegrees(0.0, 90.0, 0.0))
         int node = world.CreateNode()
-        world.AttachTransform(node, QuaxelTransform.Make(QuaxelVec3.Make(5.0, 0.0, 0.0), QuaxelVec3.Make(2.0, 2.0, 2.0)))
+        world.AttachTransform(node, QuaxelTransform.Make(vec3(5.0, 0.0, 0.0), vec3(2.0, 2.0, 2.0)))
         world.AttachVoxels(node, volume)
-        QuaxelMat4 matrix = QuaxelMat4.Identity()
+        mat4 matrix = mat4.Identity()
         T.IsTrue(world.GetSocketMatrix(node, "tip", matrix))
-        QuaxelVec3 origin = matrix.TransformPoint(QuaxelVec3.Make(0.0, 0.0, 0.0))
+        vec3 origin = vec3(matrix * vec4(vec3(0.0, 0.0, 0.0), 1.0))
         T.AreEqual(origin.X, 6.0)
         T.IsFalse(world.GetSocketMatrix(node, "none", matrix))
     }
@@ -903,16 +889,16 @@ T{
     {
         QuaxelWorld world()
         int node = world.CreateNode()
-        QuaxelTransform pose = QuaxelTransform.Make(QuaxelVec3.Make(0.0, 0.0, 0.0), QuaxelVec3.Make(1.0, 1.0, 1.0))
+        QuaxelTransform pose = QuaxelTransform.Make(vec3(0.0, 0.0, 0.0), vec3(1.0, 1.0, 1.0))
         pose.FacingX = 0.70710678
         pose.FacingZ = 0.70710678
         world.AttachTransform(node, pose)
-        QuaxelVec3 lights = world.FaceLights(node)
+        vec3 lights = world.FaceLights(node)
         T.AreEqual(lights.X, 0.68)
         T.AreEqual(lights.Y, 1.0)
         T.AreEqual(lights.Z, 0.42)
         // Rolling 90 degrees swaps which local axes face up and sideways.
-        pose.Rotation = QuaxelQuat.FromEuler(0.0, 0.0, 90.0)
+        pose.Rotation = QuaxelRotation.FromDegrees(0.0, 0.0, 90.0)
         world.SetTransform(node, pose)
         lights = world.FaceLights(node)
         T.IsTrue(Math.Abs(lights.X - 1.0) < 0.0001)

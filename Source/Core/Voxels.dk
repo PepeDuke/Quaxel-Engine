@@ -9,8 +9,8 @@ QuaxelVoxelUpload
 QuaxelVoxelSocket
 {
     string Name
-    QuaxelVec3 Position
-    QuaxelQuat Rotation
+    vec3 Position
+    quat Rotation
 }
 
 // Words starts with the grid dimensions, then one offset per 8^3 brick.
@@ -22,8 +22,8 @@ QuaxelVoxelVolume
     -int [] FreeOffsets
     -QuaxelVoxelSocket [] Sockets
     -int PayloadStart
-    QuaxelVec3 Center
-    QuaxelVec3 Size
+    vec3 Center
+    vec3 Size
 
     // Spread the three bits of a brick-local coordinate into positions 0, 3, 6.
     -int Spread(int v) { return (v & 1) | ((v & 2) << 2) | ((v & 4) << 4) }
@@ -38,12 +38,12 @@ QuaxelVoxelVolume
         FreeOffsets.Clear()
         Sockets.Clear()
         PayloadStart = 3 + bricks
-        Center = QuaxelVec3.Make(0.0, 0.0, 0.0)
+        Center = vec3(0.0, 0.0, 0.0)
         Words += width
         Words += height
         Words += depth
         for i : 0; i < bricks; i++ { Words += 0 }
-        Size = QuaxelVec3.Make((float)width, (float)height, (float)depth)
+        Size = vec3((float)width, (float)height, (float)depth)
         return true
     }
 
@@ -94,12 +94,12 @@ QuaxelVoxelVolume
     }
 
     // Whole coordinates name the center of a cell. Names are unique per volume.
-    bool AddSocket(string socketName, float x, float y, float z, QuaxelQuat rotation)
+    bool AddSocket(string socketName, float x, float y, float z, quat rotation)
     {
         if Words.Len == 0 || FindSocket(socketName) >= 0 { return false }
         QuaxelVoxelSocket socket
         socket.Name = socketName
-        socket.Position = QuaxelVec3.Make(
+        socket.Position = vec3(
             x + 0.5 - (float)Words[0] * 0.5,
             y + 0.5 - (float)Words[1] * 0.5,
             z + 0.5 - (float)Words[2] * 0.5)

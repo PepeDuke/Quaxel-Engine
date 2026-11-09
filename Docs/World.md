@@ -57,7 +57,7 @@ int terrain = world.CreateVolume(128, 128, 128)
 world.SetVoxel(terrain, 64, 64, 64, 0x549840)
 int node = world.CreateNode()
 world.AttachTransform(node, QuaxelTransform.Make(
-    QuaxelVec3.Make(0.0, 0.0, 0.0), QuaxelVec3.Make(1.0, 1.0, 1.0)))
+    vec3(0.0, 0.0, 0.0), vec3(1.0, 1.0, 1.0)))
 world.AttachVoxels(node, terrain)
 ```
 

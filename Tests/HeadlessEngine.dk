@@ -263,7 +263,7 @@ QuaxelSocketTestGame : QuaxelGameInstance
 
     UpdateUi(QuaxelUi& ui, QuaxelWorld& world)
     {
-        QuaxelVec3 position = world.GetPosition(Item)
+        vec3 position = world.GetPosition(Item)
         ItemXAfterStep = position.X
     }
 }

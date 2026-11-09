@@ -148,7 +148,7 @@ QuaxelEngine
 
     -bool Render(QuaxelWorld& world, QuaxelUi& ui, int width, int height)
     {
-        QuaxelMat4 viewProjection = QuaxelMat4.Identity()
+        mat4 viewProjection = mat4.Identity()
         int cameraNode = world.ActiveCamera
         if cameraNode != 0 && world.Has(cameraNode, QuaxelComponents.Transform) {
             QuaxelCamera camera = world.GetCamera(cameraNode)
@@ -171,19 +171,19 @@ QuaxelEngine
         if !QuaxelRenderer.BeginVoxelFrame() { return false }
         for id : world.NextWith(0, mask); id != 0; id = world.NextWith(id, mask) {
             if world.IsHidden(id) { continue }
-            QuaxelMat4 model = world.VolumeModel(id)
-            QuaxelMat4 clip = QuaxelMat4.Multiply(viewProjection, model)
-            float rx = (Math.Abs(clip.M[0]) + Math.Abs(clip.M[4]) + Math.Abs(clip.M[8])) * 0.5
-            float ry = (Math.Abs(clip.M[1]) + Math.Abs(clip.M[5]) + Math.Abs(clip.M[9])) * 0.5
-            float left = Math.Clamp((clip.M[12] - rx + 1.0) * 0.5, 0.0, 1.0)
-            float right = Math.Clamp((clip.M[12] + rx + 1.0) * 0.5, 0.0, 1.0)
-            float top = Math.Clamp((clip.M[13] - ry + 1.0) * 0.5, 0.0, 1.0)
-            float bottom = Math.Clamp((clip.M[13] + ry + 1.0) * 0.5, 0.0, 1.0)
+            mat4 model = world.VolumeModel(id)
+            mat4 clip = viewProjection * model
+            float rx = (Math.Abs(clip[0][0]) + Math.Abs(clip[1][0]) + Math.Abs(clip[2][0])) * 0.5
+            float ry = (Math.Abs(clip[0][1]) + Math.Abs(clip[1][1]) + Math.Abs(clip[2][1])) * 0.5
+            float left = Math.Clamp((clip[3][0] - rx + 1.0) * 0.5, 0.0, 1.0)
+            float right = Math.Clamp((clip[3][0] + rx + 1.0) * 0.5, 0.0, 1.0)
+            float top = Math.Clamp((clip[3][1] - ry + 1.0) * 0.5, 0.0, 1.0)
+            float bottom = Math.Clamp((clip[3][1] + ry + 1.0) * 0.5, 0.0, 1.0)
             if left >= right || top >= bottom { continue }
-            QuaxelMat4 boxFromClip
-            if !clip.InvertAffine(boxFromClip) { continue }
-            QuaxelVec3 lights = world.FaceLights(id)
-            if !QuaxelRenderer.TraceVolume(world.VolumeHandle(world.VolumeOf(id)), &boxFromClip.M[0], left, top, right, bottom, lights.X, lights.Y, lights.Z) { return false }
+            if clip.Determinant() == 0.0 { continue }
+            mat4 boxFromClip = clip.Inverse()
+            vec3 lights = world.FaceLights(id)
+            if !QuaxelRenderer.TraceVolume(world.VolumeHandle(world.VolumeOf(id)), &boxFromClip, left, top, right, bottom, lights.X, lights.Y, lights.Z) { return false }
         }
         for i : 0; i < ui.CommandCount; i++ {
             QuaxelUiCommand command = ui.GetCommand(i)

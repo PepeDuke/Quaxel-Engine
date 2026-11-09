@@ -1,115 +1,32 @@
 // Right-handed world space: Y is height and XZ is the ground plane.
-QuaxelVec3
-{
-    float X
-    float Y
-    float Z
-
-    float Dot(QuaxelVec3 other) { return Math.Dot(this, other) }
-
-    float Length() { return Math.Length(this) }
-}
+QuaxelRotation
 #{
-    QuaxelVec3 Make(float x, float y, float z)
+    // Degrees, by the right-hand rule. Roll about Z applies first, then pitch
+    // about X, then yaw about Y.
+    quat FromDegrees(float yaw, float pitch, float roll)
     {
-        QuaxelVec3 result
-        result.X = x
-        result.Y = y
-        result.Z = z
-        return result
-    }
-
-    QuaxelVec3 Add(QuaxelVec3 a, QuaxelVec3 b) { return Make(a.X + b.X, a.Y + b.Y, a.Z + b.Z) }
-
-    QuaxelVec3 Subtract(QuaxelVec3 a, QuaxelVec3 b) { return Make(a.X - b.X, a.Y - b.Y, a.Z - b.Z) }
-
-    QuaxelVec3 Scale(QuaxelVec3 value, float factor)
-    {
-        return Make(value.X * factor, value.Y * factor, value.Z * factor)
-    }
-
-    QuaxelVec3 Cross(QuaxelVec3 a, QuaxelVec3 b) { return Math.Cross(a, b) }
-
-    // A zero-length input stays zero so callers can treat it as "no direction".
-    QuaxelVec3 Normalize(QuaxelVec3 value)
-    {
-        float length = value.Length()
-        if length <= 0.000001 { return Make(0.0, 0.0, 0.0) }
-        return Scale(value, 1.0 / length)
+        float toRadians = 0.0174532925
+        return quat.FromEuler(pitch * toRadians, yaw * toRadians, roll * toRadians)
     }
 }
 T{
     CrossFollowsRightHandRule()
     {
-        QuaxelVec3 result = QuaxelVec3.Cross(QuaxelVec3.Make(1.0, 0.0, 0.0), QuaxelVec3.Make(0.0, 1.0, 0.0))
+        vec3 result = Math.Cross(vec3(1.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0))
         T.AreEqual(result.Z, 1.0)
     }
 
     NormalizeHandlesZero()
     {
-        T.AreEqual(QuaxelVec3.Normalize(QuaxelVec3.Make(0.0, 0.0, 0.0)).Length(), 0.0)
-        QuaxelVec3 normalized = QuaxelVec3.Normalize(QuaxelVec3.Make(3.0, 0.0, 4.0))
+        T.AreEqual(Math.Normalize(vec3(0.0, 0.0, 0.0)).Length(), 0.0)
+        vec3 normalized = Math.Normalize(vec3(3.0, 0.0, 4.0))
         T.AreEqual(normalized.X, 0.6)
     }
-}
 
-// A unit quaternion. The default is no rotation.
-QuaxelQuat
-{
-    float X
-    float Y
-    float Z
-    float W = 1.0
-
-    QuaxelVec3 Rotate(QuaxelVec3 value)
-    {
-        QuaxelVec3 axis = QuaxelVec3.Make(X, Y, Z)
-        QuaxelVec3 twice = QuaxelVec3.Scale(QuaxelVec3.Cross(axis, value), 2.0)
-        return QuaxelVec3.Add(QuaxelVec3.Add(value, QuaxelVec3.Scale(twice, W)), QuaxelVec3.Cross(axis, twice))
-    }
-
-    QuaxelQuat Inverse() { return QuaxelQuat.Make(-X, -Y, -Z, W) }
-}
-#{
-    QuaxelQuat Make(float x, float y, float z, float w)
-    {
-        QuaxelQuat result
-        result.X = x
-        result.Y = y
-        result.Z = z
-        result.W = w
-        return result
-    }
-
-    // Applies b first, then a.
-    QuaxelQuat Multiply(QuaxelQuat a, QuaxelQuat b)
-    {
-        return Make(
-            a.W * b.X + a.X * b.W + a.Y * b.Z - a.Z * b.Y,
-            a.W * b.Y - a.X * b.Z + a.Y * b.W + a.Z * b.X,
-            a.W * b.Z + a.X * b.Y - a.Y * b.X + a.Z * b.W,
-            a.W * b.W - a.X * b.X - a.Y * b.Y - a.Z * b.Z)
-    }
-
-    // Degrees, by the right-hand rule. Roll about Z applies first, then pitch
-    // about X, then yaw about Y.
-    QuaxelQuat FromEuler(float yaw, float pitch, float roll)
-    {
-        float toHalfRadians = 0.00872664626
-        float y = yaw * toHalfRadians
-        float x = pitch * toHalfRadians
-        float z = roll * toHalfRadians
-        QuaxelQuat yawTurn = Make(0.0, Math.Sin(y), 0.0, Math.Cos(y))
-        QuaxelQuat pitchTurn = Make(Math.Sin(x), 0.0, 0.0, Math.Cos(x))
-        QuaxelQuat rollTurn = Make(0.0, 0.0, Math.Sin(z), Math.Cos(z))
-        return Multiply(yawTurn, Multiply(pitchTurn, rollTurn))
-    }
-}
-T{
     DefaultQuatLeavesVectorsExactlyAlone()
     {
-        QuaxelQuat none
-        QuaxelVec3 result = none.Rotate(QuaxelVec3.Make(1.0, 2.0, 3.0))
+        quat none
+        vec3 result = none.Rotate(vec3(1.0, 2.0, 3.0))
         T.AreEqual(result.X, 1.0)
         T.AreEqual(result.Y, 2.0)
         T.AreEqual(result.Z, 3.0)
@@ -117,164 +34,92 @@ T{
 
     EulerAnglesFollowTheRightHandRule()
     {
-        QuaxelVec3 forward = QuaxelVec3.Make(0.0, 0.0, 1.0)
-        QuaxelVec3 up = QuaxelVec3.Make(0.0, 1.0, 0.0)
+        vec3 forward = vec3(0.0, 0.0, 1.0)
+        vec3 up = vec3(0.0, 1.0, 0.0)
         // Yaw turns +Z toward +X, pitch turns +Y toward +Z.
-        QuaxelVec3 yawed = QuaxelQuat.FromEuler(90.0, 0.0, 0.0).Rotate(forward)
+        vec3 yawed = QuaxelRotation.FromDegrees(90.0, 0.0, 0.0).Rotate(forward)
         T.IsTrue(Math.Abs(yawed.X - 1.0) < 0.0001)
-        QuaxelVec3 pitched = QuaxelQuat.FromEuler(0.0, 90.0, 0.0).Rotate(up)
+        vec3 pitched = QuaxelRotation.FromDegrees(0.0, 90.0, 0.0).Rotate(up)
         T.IsTrue(Math.Abs(pitched.Z - 1.0) < 0.0001)
-        QuaxelVec3 rolled = QuaxelQuat.FromEuler(0.0, 0.0, 90.0).Rotate(up)
+        vec3 rolled = QuaxelRotation.FromDegrees(0.0, 0.0, 90.0).Rotate(up)
         T.IsTrue(Math.Abs(rolled.X + 1.0) < 0.0001)
     }
 
     EulerAppliesRollThenPitchThenYaw()
     {
         // Roll takes +Y to -X. Pitch leaves -X alone. Yaw takes -X to +Z.
-        QuaxelVec3 result = QuaxelQuat.FromEuler(90.0, 90.0, 90.0).Rotate(QuaxelVec3.Make(0.0, 1.0, 0.0))
+        vec3 result = QuaxelRotation.FromDegrees(90.0, 90.0, 90.0).Rotate(vec3(0.0, 1.0, 0.0))
         T.IsTrue(Math.Abs(result.Z - 1.0) < 0.0001)
     }
 
     InverseUndoesARotation()
     {
-        QuaxelQuat turn = QuaxelQuat.FromEuler(30.0, 40.0, 50.0)
-        QuaxelVec3 back = QuaxelQuat.Multiply(turn.Inverse(), turn).Rotate(QuaxelVec3.Make(1.0, 0.0, 0.0))
+        quat turn = QuaxelRotation.FromDegrees(30.0, 40.0, 50.0)
+        vec3 back = (turn.Inverse() * turn).Rotate(vec3(1.0, 0.0, 0.0))
         T.IsTrue(Math.Abs(back.X - 1.0) < 0.0001)
     }
 }
 
-// Column-major, matching the GLSL mat4 layout the renderer pushes to shaders.
+// Builders for the transforms the renderer pushes to shaders. mat4 itself is
+// column-major, matching GLSL.
 QuaxelMat4
-{
-    float [16] M
-
-    // Invert the affine transform once per dispatch for all orthographic rays.
-    bool InvertAffine(QuaxelMat4& result)
-    {
-        QuaxelVec3 x = QuaxelVec3.Make(M[0], M[1], M[2])
-        QuaxelVec3 y = QuaxelVec3.Make(M[4], M[5], M[6])
-        QuaxelVec3 z = QuaxelVec3.Make(M[8], M[9], M[10])
-        QuaxelVec3 rowX = QuaxelVec3.Cross(y, z)
-        float det = x.Dot(rowX)
-        if det == 0.0 { return false }
-        rowX = QuaxelVec3.Scale(rowX, 1.0 / det)
-        QuaxelVec3 rowY = QuaxelVec3.Scale(QuaxelVec3.Cross(z, x), 1.0 / det)
-        QuaxelVec3 rowZ = QuaxelVec3.Scale(QuaxelVec3.Cross(x, y), 1.0 / det)
-        QuaxelVec3 translation = QuaxelVec3.Make(M[12], M[13], M[14])
-        result.M[0] = rowX.X
-        result.M[4] = rowX.Y
-        result.M[8] = rowX.Z
-        result.M[12] = -rowX.Dot(translation)
-        result.M[1] = rowY.X
-        result.M[5] = rowY.Y
-        result.M[9] = rowY.Z
-        result.M[13] = -rowY.Dot(translation)
-        result.M[2] = rowZ.X
-        result.M[6] = rowZ.Y
-        result.M[10] = rowZ.Z
-        result.M[14] = -rowZ.Dot(translation)
-        result.M[3] = 0.0
-        result.M[7] = 0.0
-        result.M[11] = 0.0
-        result.M[15] = 1.0
-        return true
-    }
-
-    QuaxelVec3 TransformPoint(QuaxelVec3 point)
-    {
-        return QuaxelVec3.Make(
-            M[0] * point.X + M[4] * point.Y + M[8] * point.Z + M[12],
-            M[1] * point.X + M[5] * point.Y + M[9] * point.Z + M[13],
-            M[2] * point.X + M[6] * point.Y + M[10] * point.Z + M[14])
-    }
-}
 #{
-    QuaxelMat4 Identity()
+    mat4 Translation(vec3 offset)
     {
-        QuaxelMat4 result
-        result.M[0] = 1.0
-        result.M[5] = 1.0
-        result.M[10] = 1.0
-        result.M[15] = 1.0
+        mat4 result = mat4.Identity()
+        result[3] = vec4(offset, 1.0)
         return result
     }
 
-    QuaxelMat4 Translation(QuaxelVec3 offset)
+    mat4 Scaling(vec3 factors)
     {
-        QuaxelMat4 result = Identity()
-        result.M[12] = offset.X
-        result.M[13] = offset.Y
-        result.M[14] = offset.Z
+        mat4 result = mat4.Identity()
+        result[0][0] = factors.X
+        result[1][1] = factors.Y
+        result[2][2] = factors.Z
         return result
     }
 
-    QuaxelMat4 Scaling(QuaxelVec3 factors)
+    mat4 LookAt(vec3 eye, vec3 target, vec3 up)
     {
-        QuaxelMat4 result = Identity()
-        result.M[0] = factors.X
-        result.M[5] = factors.Y
-        result.M[10] = factors.Z
-        return result
-    }
-
-    // Applies b first, then a.
-    QuaxelMat4 Multiply(QuaxelMat4 a, QuaxelMat4 b)
-    {
-        QuaxelMat4 result
-        for column : 0; column < 4; column++ {
-            for row : 0; row < 4; row++ {
-                float sum = 0.0
-                for k : 0; k < 4; k++ {
-                    sum += a.M[k * 4 + row] * b.M[column * 4 + k]
-                }
-                result.M[column * 4 + row] = sum
-            }
-        }
-        return result
-    }
-
-    QuaxelMat4 LookAt(QuaxelVec3 eye, QuaxelVec3 target, QuaxelVec3 up)
-    {
-        QuaxelVec3 forward = QuaxelVec3.Normalize(QuaxelVec3.Subtract(target, eye))
-        QuaxelVec3 right = QuaxelVec3.Normalize(QuaxelVec3.Cross(forward, up))
-        QuaxelVec3 trueUp = QuaxelVec3.Cross(right, forward)
-        QuaxelMat4 result = Identity()
-        result.M[0] = right.X
-        result.M[4] = right.Y
-        result.M[8] = right.Z
-        result.M[12] = -right.Dot(eye)
-        result.M[1] = trueUp.X
-        result.M[5] = trueUp.Y
-        result.M[9] = trueUp.Z
-        result.M[13] = -trueUp.Dot(eye)
-        result.M[2] = -forward.X
-        result.M[6] = -forward.Y
-        result.M[10] = -forward.Z
-        result.M[14] = forward.Dot(eye)
+        vec3 forward = Math.Normalize(target - eye)
+        vec3 right = Math.Normalize(forward.Cross(up))
+        vec3 trueUp = right.Cross(forward)
+        mat4 result = mat4.Identity()
+        result[0][0] = right.X
+        result[1][0] = right.Y
+        result[2][0] = right.Z
+        result[3][0] = -right.Dot(eye)
+        result[0][1] = trueUp.X
+        result[1][1] = trueUp.Y
+        result[2][1] = trueUp.Z
+        result[3][1] = -trueUp.Dot(eye)
+        result[0][2] = -forward.X
+        result[1][2] = -forward.Y
+        result[2][2] = -forward.Z
+        result[3][2] = forward.Dot(eye)
         return result
     }
 
     // Vulkan clip space: X right, Y down, depth 0 at the near plane and 1 at the far plane.
-    QuaxelMat4 Orthographic(float left, float right, float bottom, float top, float near, float far)
+    mat4 Orthographic(float left, float right, float bottom, float top, float near, float far)
     {
-        QuaxelMat4 result
-        result.M[0] = 2.0 / (right - left)
-        result.M[5] = -2.0 / (top - bottom)
-        result.M[10] = -1.0 / (far - near)
-        result.M[12] = -(right + left) / (right - left)
-        result.M[13] = (top + bottom) / (top - bottom)
-        result.M[14] = -near / (far - near)
-        result.M[15] = 1.0
+        mat4 result
+        result[0][0] = 2.0 / (right - left)
+        result[1][1] = -2.0 / (top - bottom)
+        result[2][2] = -1.0 / (far - near)
+        result[3][0] = -(right + left) / (right - left)
+        result[3][1] = (top + bottom) / (top - bottom)
+        result[3][2] = -near / (far - near)
+        result[3][3] = 1.0
         return result
     }
 }
 T{
     MultiplyAppliesRightOperandFirst()
     {
-        QuaxelMat4 model = QuaxelMat4.Multiply(
-            QuaxelMat4.Translation(QuaxelVec3.Make(1.0, 2.0, 3.0)),
-            QuaxelMat4.Scaling(QuaxelVec3.Make(2.0, 2.0, 2.0)))
-        QuaxelVec3 point = model.TransformPoint(QuaxelVec3.Make(1.0, 1.0, 1.0))
+        mat4 model = QuaxelMat4.Translation(vec3(1.0, 2.0, 3.0)) * QuaxelMat4.Scaling(vec3(2.0, 2.0, 2.0))
+        vec4 point = model * vec4(1.0, 1.0, 1.0, 1.0)
         T.AreEqual(point.X, 3.0)
         T.AreEqual(point.Y, 4.0)
         T.AreEqual(point.Z, 5.0)
@@ -282,8 +127,8 @@ T{
 
     LookAtPlacesTargetDownNegativeZ()
     {
-        QuaxelMat4 view = QuaxelMat4.LookAt(QuaxelVec3.Make(0.0, 0.0, 5.0), QuaxelVec3.Make(0.0, 0.0, 0.0), QuaxelVec3.Make(0.0, 1.0, 0.0))
-        QuaxelVec3 target = view.TransformPoint(QuaxelVec3.Make(0.0, 0.0, 0.0))
+        mat4 view = QuaxelMat4.LookAt(vec3(0.0, 0.0, 5.0), vec3(0.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0))
+        vec4 target = view * vec4(0.0, 0.0, 0.0, 1.0)
         T.AreEqual(target.X, 0.0)
         T.AreEqual(target.Y, 0.0)
         T.AreEqual(target.Z, -5.0)
@@ -291,12 +136,12 @@ T{
 
     OrthographicUsesVulkanClipSpace()
     {
-        QuaxelMat4 projection = QuaxelMat4.Orthographic(-2.0, 2.0, -1.0, 1.0, 1.0, 11.0)
-        QuaxelVec3 nearTopRight = projection.TransformPoint(QuaxelVec3.Make(2.0, 1.0, -1.0))
+        mat4 projection = QuaxelMat4.Orthographic(-2.0, 2.0, -1.0, 1.0, 1.0, 11.0)
+        vec4 nearTopRight = projection * vec4(2.0, 1.0, -1.0, 1.0)
         T.AreEqual(nearTopRight.X, 1.0)
         T.AreEqual(nearTopRight.Y, -1.0)
         T.AreEqual(nearTopRight.Z, 0.0)
-        QuaxelVec3 farBottomLeft = projection.TransformPoint(QuaxelVec3.Make(-2.0, -1.0, -11.0))
+        vec4 farBottomLeft = projection * vec4(-2.0, -1.0, -11.0, 1.0)
         T.AreEqual(farBottomLeft.X, -1.0)
         T.AreEqual(farBottomLeft.Y, 1.0)
         T.AreEqual(farBottomLeft.Z, 1.0)

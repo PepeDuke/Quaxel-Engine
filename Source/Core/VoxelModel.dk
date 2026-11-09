@@ -286,7 +286,7 @@ QuaxelVoxelModelParser
             Fail("expected 'socket <name> <x> <y> <z> [<yaw> <pitch> <roll>]'")
             return
         }
-        if !world.AddSocket(Target, socketName, x, y, z, QuaxelQuat.FromEuler(yaw, pitch, roll)) {
+        if !world.AddSocket(Target, socketName, x, y, z, QuaxelRotation.FromDegrees(yaw, pitch, roll)) {
             Fail("socket name is used twice in one grid")
             return
         }
@@ -687,7 +687,7 @@ T{
         T.IsTrue(parser.Finish(world))
         int node = world.CreateNode()
         world.AttachVoxels(node, parser.Volume)
-        QuaxelMat4 matrix = QuaxelMat4.Identity()
+        mat4 matrix = mat4.Identity()
         T.IsTrue(world.GetSocketMatrix(node, "grip", matrix))
     }
 
