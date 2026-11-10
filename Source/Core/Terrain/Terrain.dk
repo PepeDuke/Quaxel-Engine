@@ -26,7 +26,7 @@ QuaxelTerrainChunk
     int Node
     int Volume
     int [] Heights
-    int [] Kinds
+    QuaxelTerrainKind [] Kinds
     int [] PlacementNodes
 }
 
@@ -84,7 +84,7 @@ QuaxelTerrain
     -int [] FloorGrid
     -int [] Ceiling
     -int [] CoreHeight
-    -int [] CoreKind
+    -QuaxelTerrainKind [] CoreKind
     -int [] CoreSurface
 
     // Router. Override these to add modules. ID 0 is the fallback for any
@@ -243,7 +243,7 @@ QuaxelTerrain
         CoreSurface.Clear()
         for i : 0; i < Core * Core; i++ {
             CoreHeight += 0
-            CoreKind += 0
+            CoreKind += QuaxelTerrainKind.Open
             CoreSurface += 0
         }
     }
@@ -927,11 +927,11 @@ QuaxelTerrain
         return Chunks[chunk].Heights[x * ChunkColumns + z]
     }
 
-    // The QuaxelTerrainKind of a world column, or -1 when it is not resident.
-    int ColumnKind(int column, int row)
+    // The kind of a world column, or Unloaded when it is not resident.
+    QuaxelTerrainKind ColumnKind(int column, int row)
     {
         int chunk = FindChunk(QuaxelNoise.FloorDiv(column, ChunkColumns), QuaxelNoise.FloorDiv(row, ChunkColumns))
-        if chunk < 0 { return -1 }
+        if chunk < 0 { return QuaxelTerrainKind.Unloaded }
         int x = column - Chunks[chunk].X * ChunkColumns
         int z = row - Chunks[chunk].Z * ChunkColumns
         return Chunks[chunk].Kinds[x * ChunkColumns + z]

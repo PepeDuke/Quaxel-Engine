@@ -1,11 +1,12 @@
-QuaxelComponents
-#{
-    #int Transform = 1
-    #int MeshRenderer = 2
-    #int Camera = 4
-    #int Voxels = 8
-    #int Animator = 16
-    #int SocketFollower = 32
+// Component flags. Masks combine them with | and are stored as int.
+QuaxelComponents : int
+#@{
+    Transform: 1 << 0,
+    MeshRenderer: 1 << 1,
+    Camera: 1 << 2,
+    Voxels: 1 << 3,
+    Animator: 1 << 4,
+    SocketFollower: 1 << 5
 }
 
 QuaxelTransform

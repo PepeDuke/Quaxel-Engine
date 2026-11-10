@@ -88,10 +88,11 @@ Headless builds report no pointer.
 
 ## Files
 
-`OpenFile(path)` opens a file for reading and returns null on failure. `ReadFile`
-and `CloseFile` then work on that handle. Paths are UTF-16 `string` values. Both
-backends use the C runtime, so headless builds can read assets too. There is no
-write API yet.
+The platform layer has no file API of its own. Engine and game code use Duck's
+built-in `file` type (`Open`, `Read`, `ReadText`, `Create`, `Write`), which works
+the same in headless and Windows builds. `QuaxelAssets` searches the working
+directory and up to six parents for an asset, so games find their files when run
+from a build output directory.
 
 ## Vulkan renderer
 

@@ -1,9 +1,11 @@
-QuaxelTerrainKind
-#{
-    #int Open = 0
-    #int Mountain = 1
-    #int Water = 2
-    #int Structure = 3
+// Unloaded marks a column whose chunk is not resident.
+QuaxelTerrainKind : int
+#@{
+    Unloaded: -1,
+    Open,
+    Mountain,
+    Water,
+    Structure
 }
 
 // Games may add their own IDs from Custom upward and color them in SurfaceColor.
@@ -38,7 +40,7 @@ QuaxelTerrainColumn
     int Floor
     int Height
     int Surface
-    int Kind
+    QuaxelTerrainKind Kind
 
     MakeWater(int depth)
     {
