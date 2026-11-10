@@ -71,6 +71,12 @@ QuaxelUi
         Overlay.Sprite(x, y, atlasX, atlasY, width, height, AtlasWidth)
     }
 
+    // A sprite with a one-texel border in the outline color around its shapes.
+    OverlayOutlinedSprite(int x, int y, int atlasX, int atlasY, int width, int height, uint outline)
+    {
+        Overlay.OutlinedSprite(x, y, atlasX, atlasY, width, height, AtlasWidth, outline)
+    }
+
     // Lays out the tree for a window size and new mouse state.
     Layout(int width, int height, int pointerX, int pointerY, bool pointerDown)
     {
@@ -326,11 +332,24 @@ T{
         T.AreEqual(sprite.Cell, -1)
         T.IsTrue(sprite.GlyphFirst == (uint)10)
         T.IsTrue(sprite.GlyphLast == (uint)8)
+        T.IsTrue(sprite.Color == (uint)0)
         ui.Relayout(50, 50)
         T.AreEqual(ui.CommandCount, 3)
         ui.ClearOverlay()
         ui.Layout(100, 100, 0, 0, false)
         T.AreEqual(ui.CommandCount, 1)
+    }
+
+    AnOutlinedSpriteCarriesItsOutlineColor()
+    {
+        QuaxelUi ui()
+        ui.ConfigureAtlas(8, 4)
+        ui.OverlayOutlinedSprite(20, 30, 2, 1, 4, 3, 0xFF101010)
+        ui.Layout(100, 100, 0, 0, false)
+        T.AreEqual(ui.CommandCount, 1)
+        QuaxelUiCommand sprite = ui.GetCommand(0)
+        T.AreEqual(sprite.Cell, -1)
+        T.IsTrue(sprite.Color == (uint)0xFF101010)
     }
 
     EverythingLandsOnOnePixelGrid()

@@ -1,5 +1,5 @@
 // One filled rectangle, one glyph when Cell is positive, or one atlas sprite when
-// Cell is negative. Color is 0xAARRGGBB.
+// Cell is negative. Color is 0xAARRGGBB; a sprite uses it for its outline.
 QuaxelUiCommand
 {
     int X
@@ -48,13 +48,21 @@ QuaxelUiCanvas
     // Draws width * height atlas texels with the top-left at (x, y). A texel is one UI pixel.
     Sprite(int x, int y, int atlasX, int atlasY, int width, int height, int atlasWidth)
     {
+        OutlinedSprite(x, y, atlasX, atlasY, width, height, atlasWidth, 0)
+    }
+
+    // A sprite whose clear texels beside opaque ones are drawn in the outline color,
+    // a one-texel border around its shapes. Leave a clear texel at the sprite's edges
+    // for the border to land on. An outline with zero alpha draws no border.
+    OutlinedSprite(int x, int y, int atlasX, int atlasY, int width, int height, int atlasWidth, uint outline)
+    {
         if width <= 0 || height <= 0 { return }
         QuaxelUiCommand command
         command.X = x
         command.Y = y
         command.Width = width
         command.Height = height
-        command.Color = 0xFFFFFFFF
+        command.Color = outline
         command.Cell = -1
         command.GlyphFirst = (uint)(atlasY * atlasWidth + atlasX)
         command.GlyphLast = (uint)atlasWidth

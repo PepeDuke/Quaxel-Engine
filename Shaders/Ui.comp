@@ -4,7 +4,7 @@ layout(push_constant) uniform Params {
     ivec2 extent;
     ivec2 start;
     ivec2 size;
-    uint color; // 0xAARRGGBB, display-encoded
+    uint color; // 0xAARRGGBB, display-encoded. For a sprite, its outline color.
     uint glyphFirst;
     uint glyphLast;
     int cell; // Pixels per glyph cell, 0 for a solid rectangle, or -scale for a sprite.
@@ -13,6 +13,11 @@ layout(push_constant) uniform Params {
 layout(set=0,binding=0,std430) buffer Output { uint frame[]; };
 // 0xAARRGGBB texels. A sprite's glyphFirst is its first texel and glyphLast the atlas width.
 layout(set=1,binding=0,std430) readonly buffer Atlas { uint atlas[]; };
+
+bool Opaque(ivec2 texel, ivec2 texels) {
+    if (any(lessThan(texel, ivec2(0))) || any(greaterThanEqual(texel, texels))) return false;
+    return (atlas[pc.glyphFirst + uint(texel.y) * pc.glyphLast + uint(texel.x)] >> 24) != 0u;
+}
 
 void main() {
     ivec2 local = ivec2(gl_GlobalInvocationID.xy);
@@ -29,7 +34,14 @@ void main() {
     if (pc.cell < 0) {
         ivec2 texel = local / -pc.cell;
         value = atlas[pc.glyphFirst + uint(texel.y) * pc.glyphLast + uint(texel.x)];
-        if ((value >> 24) == 0u) return;
+        if ((value >> 24) == 0u) {
+            // A clear texel beside an opaque one in the sprite becomes its outline.
+            if ((pc.color >> 24) == 0u) return;
+            ivec2 texels = pc.size / -pc.cell;
+            if (!Opaque(texel + ivec2(1, 0), texels) && !Opaque(texel - ivec2(1, 0), texels) &&
+                !Opaque(texel + ivec2(0, 1), texels) && !Opaque(texel - ivec2(0, 1), texels)) return;
+            value = pc.color;
+        }
     }
     vec4 source = vec4((value >> 16) & 255u, (value >> 8) & 255u, value & 255u, value >> 24) / 255.0;
     vec4 target = unpackUnorm4x8(frame[index]);
