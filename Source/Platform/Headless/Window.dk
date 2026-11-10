@@ -10,6 +10,7 @@ QuaxelPlatformBackend
     bool ConsumeWindowStall() { return false }
     bool IsKeyDown(int key) { return false }
     bool IsMouseButtonDown() { return false }
+    bool IsRightMouseButtonDown() { return false }
 
     bool GetMousePosition(int& x, int& y)
     {

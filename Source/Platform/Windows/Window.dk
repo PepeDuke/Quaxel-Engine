@@ -76,6 +76,7 @@ QuaxelPlatformBackend
     -int MouseX
     -int MouseY
     -bool MouseDown
+    -bool RightMouseDown
     -QuaxelWinKeys Keys
     -QuaxelWinRedraw Redraw
     -uint Style = 0x00CF0000 // WS_OVERLAPPEDWINDOW
@@ -93,6 +94,8 @@ QuaxelPlatformBackend
     bool IsKeyDown(int key) { return Keys.Down[key] }
 
     bool IsMouseButtonDown() { return MouseDown }
+
+    bool IsRightMouseButtonDown() { return RightMouseDown }
 
     bool GetMousePosition(int& x, int& y)
     {
@@ -126,6 +129,7 @@ QuaxelPlatformBackend
             if message == 0x0008 { // WM_KILLFOCUS
                 ClearKeys()
                 MouseDown = false
+                RightMouseDown = false
             }
             if message == 0x0200 { TrackMouse(lParam) } // WM_MOUSEMOVE
             if message == 0x0201 { // WM_LBUTTONDOWN
@@ -136,13 +140,24 @@ QuaxelPlatformBackend
             if message == 0x0202 { // WM_LBUTTONUP
                 TrackMouse(lParam)
                 MouseDown = false
-                QuaxelWindowsNative.ReleaseCapture()
+                if !RightMouseDown { QuaxelWindowsNative.ReleaseCapture() }
+            }
+            if message == 0x0204 { // WM_RBUTTONDOWN
+                TrackMouse(lParam)
+                RightMouseDown = true
+                QuaxelWindowsNative.SetCapture(Window)
+            }
+            if message == 0x0205 { // WM_RBUTTONUP
+                TrackMouse(lParam)
+                RightMouseDown = false
+                if !MouseDown { QuaxelWindowsNative.ReleaseCapture() }
             }
             if message == 0x0231 { // WM_ENTERSIZEMOVE
                 InSizeMove = true
                 // The modal drag loop consumes key releases.
                 ClearKeys()
                 MouseDown = false
+                RightMouseDown = false
             }
             if message == 0x0232 { // WM_EXITSIZEMOVE
                 InSizeMove = false
@@ -157,6 +172,7 @@ QuaxelPlatformBackend
                 InSizeMove = false
                 ClearKeys()
                 MouseDown = false
+                RightMouseDown = false
                 Window = null
             }
         }

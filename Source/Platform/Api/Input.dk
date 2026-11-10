@@ -12,4 +12,7 @@ QuaxelPlatform
 
     // Reports the left button, which is released when the window loses focus.
     bool IsMouseButtonDown() { return QuaxelPlatformBackend.IsMouseButtonDown() }
+
+    // Reports the right button, which is also released when the window loses focus.
+    bool IsRightMouseButtonDown() { return QuaxelPlatformBackend.IsRightMouseButtonDown() }
 }
