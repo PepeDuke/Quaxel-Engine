@@ -137,6 +137,10 @@ QuaxelNode
     QuaxelAnimator Animator
     string Socket
     bool SocketMissing
+    // Set on the nodes that draw effects, which never catch other effects.
+    bool EffectNode
+    // This node and its descendants let effect particles pass through.
+    bool IgnoresEffects
 }
 
 // Node IDs are local to one world. An ID is never reused while the world lives
@@ -620,6 +624,9 @@ QuaxelWorld
         VolumeHandles.Clear()
         VolumeDirty.Clear()
         Animations.Clear()
+        Effects.Clear()
+        EffectColliders.Clear()
+        EffectNear.Clear()
         CameraNode = 0
         Stepping = false
         HasPendingChanges = false

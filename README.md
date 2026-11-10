@@ -75,6 +75,9 @@ Models are 3D color grids stored as editable text files, and can hold named
 animation clips and per-frame attachment sockets.
 [Voxel models](Docs/VoxelModels.md)
 
+Effects such as blood, smoke and fire are animated voxel particles that collide
+with the world's voxels, so blood stains whatever it lands on. [Effects](Docs/Effects.md)
+
 Worlds can be generated as seeded maps of clearings, passes and mountains, with
 each clearing filled by a swappable module. [Terrain generation](Docs/Terrain.md)
 

@@ -37,6 +37,8 @@ QuaxelEngine
         // First, so a clip the game starts holds its first frame for its full time.
         world.AdvanceAnimations((float)Quaxel.FixedDeltaSeconds())
         game.FixedStep(world, input, (float)Quaxel.FixedDeltaSeconds())
+        // After the game, so effects started this step move and draw at once.
+        world.AdvanceEffects((float)Quaxel.FixedDeltaSeconds())
         world.UpdateSockets()
         world.EndStep()
     }
