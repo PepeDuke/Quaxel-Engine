@@ -9,6 +9,18 @@ QuaxelPlatformBackend
         return false
     }
 
+    bool EnsureEffectPages(int pages) { return false }
+    bool ResetEffect(int slot) { return false }
+    bool WriteEffectParams(int slot, void* data, int bytes) { return false }
+    bool BakeEffect(int slot, int volume, void* matrix, int cellsX, int cellsY, int cellsZ) { return false }
+    bool SimulateEffect(int slot, int step, float seconds) { return false }
+    bool DrawEffect(int slot, int tick) { return false }
+    bool TraceEffect(int slot, void* boxFromClip, float left, float top, float right, float bottom, float lightX, float lightY, float lightZ)
+    {
+        return false
+    }
+    bool ReadEffectSlot(int slot, int words, void* destination) { return false }
+
     bool DrawUi(int x, int y, int width, int height, uint color, uint glyphFirst, uint glyphLast, int cell) { return false }
     bool MapUiAtlas(int words, void*& mapped) { return false }
     UnmapUiAtlas() {  }

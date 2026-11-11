@@ -1,0 +1,98 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// Draws one effect's particles into its slot volume: flying particles as
+// dithered balls with trails, stuck ones as stains lying on the surface they
+// hit. Runs after EffectClear and before EffectBricks.
+layout(local_size_x=64) in;
+#include "EffectCommon.glsl"
+
+int ramp(float t) {
+    float middle = clamp(pf(P_MIDDLE_AT), 0.01, 0.99);
+    if (t < middle) return mixRgb(pi(P_COLOR_START), pi(P_COLOR_MIDDLE), t / middle);
+    return mixRgb(pi(P_COLOR_MIDDLE), pi(P_COLOR_END), (t - middle) / (1.0 - middle));
+}
+
+void flying(int at) {
+    vec3 pos = rv(at, F_POS);
+    ivec3 c = toCell(pos);
+    if (!inGrid(c)) return;
+    float t = clamp(rf(at, F_AGE) / rf(at, F_LIFE), 0.0, 1.0);
+    int rgb = ramp(t);
+    float radius = mix(pf(P_SIZE_START), pf(P_SIZE_END), t);
+    float density = mix(pf(P_DENSITY_START), pf(P_DENSITY_END), t);
+    uint particleSeed = uint(words[at + F_SEED]);
+    uint flicker = pi(P_FLICKER) != 0 ? uint(pc.tick) : 0u;
+    uint seed = particleSeed ^ (flicker * 2246822519u);
+    float shade = pf(P_SHADE);
+    float base = 1.0 + (unit(particleSeed) - 0.5) * shade;
+    if (radius < 0.5) {
+        if (unit(cellHash(0, 0, 0, seed)) < density) putVoxel(c, scaleRgb(rgb, base));
+    } else {
+        int reach = min(int(radius) + 1, 8);
+        float limit = (radius + 0.25) * (radius + 0.25);
+        for (int dx = -reach; dx <= reach; ++dx)
+        for (int dy = -reach; dy <= reach; ++dy)
+        for (int dz = -reach; dz <= reach; ++dz) {
+            float distance = float(dx * dx + dy * dy + dz * dz);
+            if (distance > limit) continue;
+            uint h = cellHash(dx, dy, dz, seed);
+            if (unit(h) >= density) continue;
+            // Darker toward the rim, so a puff reads as round.
+            float rim = 1.0 - 0.25 * sqrt(distance / limit);
+            float jitter = 1.0 + (unit(h ^ 0x5bd1e995u) - 0.5) * 2.0 * shade;
+            putVoxel(c + ivec3(dx, dy, dz), scaleRgb(rgb, base * rim * jitter));
+        }
+    }
+    float streak = pf(P_STREAK);
+    if (streak > 0.0) {
+        vec3 vel = rv(at, F_VEL);
+        float speed = length(vel);
+        int trail = min(4, int(speed * streak));
+        if (trail > 0) {
+            vec3 back = vel * (-pf(P_VOXEL) / speed);
+            for (int s = 1; s <= trail; ++s) putVoxel(toCell(pos + back * float(s)), scaleRgb(rgb, base * (1.0 - 0.12 * float(s))));
+        }
+    }
+}
+
+// A ragged patch on the face the drop hit, stretched the way it slid. Cells
+// with nothing solid behind them are skipped, so stains stop at edges.
+void stain(int at) {
+    float seconds = max(0.01, pf(P_STAIN_SECONDS));
+    float age = rf(at, F_AGE);
+    int rgb = mixRgb(pi(P_STAIN_COLOR), pi(P_STAIN_DRY), age / (seconds * 0.5));
+    float fadeFrom = seconds * 0.6;
+    float gone = age > fadeFrom ? (age - fadeFrom) / max(0.01, seconds - fadeFrom) : 0.0;
+    uint seed = uint(words[at + F_SEED]);
+    float vs = pf(P_VOXEL);
+    vec3 surface = rv(at, F_POS);
+    vec3 normal = rv(at, F_NORMAL);
+    vec3 along = normalize(unpackSnorm4x8(uint(words[at + F_ALONG])).xyz);
+    vec3 across = cross(normal, along);
+    float radius = rf(at, F_RADIUS);
+    float stretch = rf(at, F_STRETCH);
+    int reachAlong = min(int(radius * stretch) + 1, 12);
+    int reachAcross = min(int(radius) + 1, 8);
+    for (int a = -reachAlong; a <= reachAlong; ++a)
+    for (int b = -reachAcross; b <= reachAcross; ++b) {
+        float fa = float(a) / stretch;
+        float edge = radius * (0.65 + 0.5 * unit(cellHash(a, b, 0, seed)));
+        if (fa * fa + float(b * b) > edge * edge) continue;
+        if (unit(cellHash(a, b, 2, seed)) < gone) continue;
+        vec3 local = surface + normal * (vs * 0.5) + along * (float(a) * vs) + across * (float(b) * vs);
+        // Step up onto a small rise instead of vanishing into it.
+        if (solidAt(local)) local += normal * vs;
+        if (solidAt(local)) continue;
+        if (!solidAt(local - normal * (vs * 1.5))) continue;
+        putVoxel(toCell(local), scaleRgb(rgb, 0.8 + 0.35 * unit(cellHash(a, b, 1, seed))));
+    }
+}
+
+void main() {
+    int i = int(gl_GlobalInvocationID.x);
+    if (i >= min(pi(P_MAX_PARTICLES), 1024)) return;
+    int at = particleAt(i);
+    int state = words[at + F_STATE];
+    if (state == FLYING) flying(at);
+    else if (state == STUCK) stain(at);
+}

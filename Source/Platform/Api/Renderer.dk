@@ -13,6 +13,28 @@ QuaxelRenderer
         return QuaxelPlatformBackend.TraceVolume(handle, boxFromClip, left, top, right, bottom, lightX, lightY, lightZ)
     }
 
+    // GPU effects. Each effect owns a slot in a persistent page buffer of eight
+    // slots. Create pages before opening the frame; the rest is recorded into
+    // the open frame, in the order Reset (once), WriteParams, Bake (once per
+    // overlapping volume), Simulate (once per fixed step), Draw, Trace.
+    bool EnsureEffectPages(int pages) { return QuaxelPlatformBackend.EnsureEffectPages(pages) }
+    bool ResetEffect(int slot) { return QuaxelPlatformBackend.ResetEffect(slot) }
+    bool WriteEffectParams(int slot, void* data, int bytes) { return QuaxelPlatformBackend.WriteEffectParams(slot, data, bytes) }
+    // Matrix maps slot cell coordinates to the volume's grid coordinates.
+    bool BakeEffect(int slot, int volume, void* matrix, int cellsX, int cellsY, int cellsZ)
+    {
+        return QuaxelPlatformBackend.BakeEffect(slot, volume, matrix, cellsX, cellsY, cellsZ)
+    }
+    bool SimulateEffect(int slot, int step, float seconds) { return QuaxelPlatformBackend.SimulateEffect(slot, step, seconds) }
+    bool DrawEffect(int slot, int tick) { return QuaxelPlatformBackend.DrawEffect(slot, tick) }
+    bool TraceEffect(int slot, void* boxFromClip, float left, float top, float right, float bottom, float lightX, float lightY, float lightZ)
+    {
+        return QuaxelPlatformBackend.TraceEffect(slot, boxFromClip, left, top, right, bottom, lightX, lightY, lightZ)
+    }
+    // Waits for the GPU and copies a slot's first words out. For tests; call
+    // outside a frame.
+    bool ReadEffectSlot(int slot, int words, void* destination) { return QuaxelPlatformBackend.ReadEffectSlot(slot, words, destination) }
+
     // Blends a rectangle over the frame, after its volumes. Color is 0xAARRGGBB
     // in display values. With a positive cell, draws a 5 x 7 glyph at that pixel
     // scale: glyphFirst holds columns 0..3, one byte each, and glyphLast column 4.

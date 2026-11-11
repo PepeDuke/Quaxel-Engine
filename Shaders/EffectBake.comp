@@ -1,0 +1,21 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// Marks the cells of one effect's grid that lie inside a solid voxel of one
+// world volume. Run once per overlapping volume when the effect starts.
+layout(local_size_x=4,local_size_y=4,local_size_z=4) in;
+#include "EffectCommon.glsl"
+
+layout(set=1,binding=0,std430) readonly buffer Grid { int grid[]; };
+
+void main() {
+    ivec3 c = ivec3(gl_GlobalInvocationID);
+    vec3 g = (pc.matrix * vec4(vec3(c) + 0.5, 1.0)).xyz;
+    if (any(lessThan(g, vec3(0))) || any(greaterThanEqual(g, vec3(pc.cells)))) return;
+    ivec3 v = ivec3(floor(g));
+    ivec3 bricks = (pc.cells + 7) / 8;
+    ivec3 b = v / 8;
+    int offset = grid[3 + b.x + bricks.x * (b.y + bricks.y * b.z)];
+    if (offset == 0 || grid[offset + mortonCell(v - b * 8)] == 0) return;
+    int i = cellIndex(c);
+    atomicOr(words[pc.base + MASK + (i >> 5)], 1 << (i & 31));
+}

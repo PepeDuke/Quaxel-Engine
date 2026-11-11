@@ -1,0 +1,145 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// Advances every particle of one effect by one fixed step: birth, forces,
+// movement against the baked solid mask, and what happens on contact.
+layout(local_size_x=64) in;
+#include "EffectCommon.glsl"
+
+// Births are fixed by the particle's index and the step, so the CPU uploads
+// no spawn data. Number k is the k-th particle the effect ever emits.
+void spawn(int at, uint k) {
+    uint seed = hash(uint(pi(P_SEED)) ^ (k * 0x9E3779B9u));
+    float radius = pf(P_SPAWN_RADIUS) * unit(seed ^ 1u);
+    vec3 offset = cone(vec3(0, 1, 0), 180.0, unit(seed ^ 2u), unit(seed ^ 3u)) * radius;
+    if (pi(P_SPAWN_FLAT) != 0) offset.y = 0.0;
+    vec3 direction = vec3(pf(P_DIR_X), pf(P_DIR_X + 1), pf(P_DIR_X + 2));
+    float speed = mix(pf(P_SPEED_MIN), pf(P_SPEED_MAX), unit(seed ^ 4u));
+    wv(at, F_POS, offset);
+    wv(at, F_VEL, cone(direction, pf(P_SPREAD), unit(seed ^ 5u), unit(seed ^ 6u)) * speed);
+    wf(at, F_AGE, 0.0);
+    wf(at, F_LIFE, max(0.01, mix(pf(P_LIFE_MIN), pf(P_LIFE_MAX), unit(seed ^ 7u))));
+    words[at + F_SEED] = int(seed);
+    words[at + F_STATE] = FLYING;
+}
+
+// The face crossed between a free and a blocked point. Ties favor the ground.
+vec3 contactNormal(vec3 free, vec3 blocked) {
+    if (blocked.y != free.y && solidAt(vec3(free.x, blocked.y, free.z))) return vec3(0, blocked.y < free.y ? 1 : -1, 0);
+    if (blocked.x != free.x && solidAt(vec3(blocked.x, free.y, free.z))) return vec3(blocked.x < free.x ? 1 : -1, 0, 0);
+    if (blocked.z != free.z && solidAt(vec3(free.x, free.y, blocked.z))) return vec3(0, 0, blocked.z < free.z ? 1 : -1);
+    vec3 d = blocked - free;
+    vec3 a = abs(d);
+    if (a.y >= a.x && a.y >= a.z) return vec3(0, d.y > 0.0 ? -1 : 1, 0);
+    if (a.x >= a.z) return vec3(d.x > 0.0 ? -1 : 1, 0, 0);
+    return vec3(0, 0, d.z > 0.0 ? -1 : 1);
+}
+
+void main() {
+    int i = int(gl_GlobalInvocationID.x);
+    int total = min(pi(P_MAX_PARTICLES), 1024);
+    if (i >= total) return;
+    int at = particleAt(i);
+    int burst = min(pi(P_BURST), total);
+    int state = words[at + F_STATE];
+
+    if (pc.step == 0 && i < burst) {
+        spawn(at, uint(i));
+        state = FLYING;
+    } else if (i >= burst && state == FREE && pc.step < pi(P_STOP) && pf(P_RATE) > 0.0) {
+        // Emitted particles take the slots after the burst in turn.
+        int ring = total - burst;
+        float perStep = pf(P_RATE) * pc.dt;
+        int lo = int(floor(perStep * float(pc.step)));
+        int hi = int(floor(perStep * float(pc.step + 1)));
+        int want = i - burst;
+        int k = lo + ((want - lo % ring) % ring + ring) % ring;
+        if (k < hi) {
+            spawn(at, uint(burst + k));
+            state = FLYING;
+        }
+    }
+    if (state == FREE) return;
+
+    float age = rf(at, F_AGE) + pc.dt;
+    wf(at, F_AGE, age);
+    if (age >= rf(at, F_LIFE)) {
+        words[at + F_STATE] = FREE;
+        return;
+    }
+    if (state == STUCK) return;
+
+    uint seed = uint(words[at + F_SEED]);
+    float vs = pf(P_VOXEL);
+    vec3 pos = rv(at, F_POS);
+    vec3 vel = rv(at, F_VEL);
+    vel.y += pf(P_GRAVITY) * pc.dt;
+    float wander = pf(P_WANDER);
+    if (wander > 0.0) {
+        uint stepSeed = hash(seed ^ uint(pc.step) * 0x85ebca6bu);
+        vel.x += (unit(stepSeed ^ 11u) * 2.0 - 1.0) * wander * pc.dt;
+        vel.z += (unit(stepSeed ^ 12u) * 2.0 - 1.0) * wander * pc.dt;
+    }
+    vel *= max(0.0, 1.0 - pf(P_DRAG) * pc.dt);
+    vec3 move = vel * pc.dt;
+    int contact = pi(P_CONTACT);
+
+    // A particle born inside a wall drifts out instead of sticking at once.
+    if (contact == PASS || solidAt(pos)) {
+        pos += move;
+    } else {
+        int steps = clamp(int(length(move) / (vs * 0.5)) + 1, 1, 12);
+        vec3 free = pos;
+        bool hit = false;
+        vec3 blocked = pos;
+        for (int s = 1; s <= steps; ++s) {
+            vec3 next = pos + move * (float(s) / float(steps));
+            if (solidAt(next)) { hit = true; blocked = next; break; }
+            free = next;
+        }
+        pos = free;
+        if (hit) {
+            if (contact == DIE) {
+                words[at + F_STATE] = FREE;
+                return;
+            }
+            vec3 normal = contactNormal(free, blocked);
+            if (contact == STICK) {
+                vec3 inside = blocked;
+                for (int b = 0; b < 5; ++b) {
+                    vec3 middle = (pos + inside) * 0.5;
+                    if (solidAt(middle)) inside = middle; else pos = middle;
+                }
+                vec3 sliding = vel - normal * dot(vel, normal);
+                float slide = length(sliding);
+                vec3 along = slide > 0.001 ? sliding / slide : perpendicular(normal);
+                float radius = pf(P_STAIN_RADIUS) * mix(0.6, 1.3, unit(seed ^ 21u)) * (1.0 + length(vel) * 0.12);
+                wv(at, F_POS, pos);
+                wv(at, F_VEL, vec3(0));
+                wf(at, F_AGE, 0.0);
+                wf(at, F_LIFE, max(0.01, pf(P_STAIN_SECONDS)));
+                wv(at, F_NORMAL, normal);
+                wf(at, F_RADIUS, radius);
+                wf(at, F_STRETCH, 1.0 + slide * 0.25);
+                words[at + F_ALONG] = int(packSnorm4x8(vec4(along, 0.0)));
+                words[at + F_STATE] = STUCK;
+                return;
+            }
+            float into = dot(vel, normal);
+            if (into < 0.0) {
+                vec3 tangent = vel - normal * into;
+                if (contact == BOUNCE) {
+                    vel = tangent * 0.8 - normal * (into * pf(P_BOUNCINESS));
+                    if (length(vel) < vs * 4.0) vel = vec3(0);
+                } else {
+                    vel = tangent;
+                }
+            }
+        }
+    }
+    if (!inGrid(toCell(pos))) {
+        words[at + F_STATE] = FREE;
+        return;
+    }
+    wv(at, F_POS, pos);
+    wv(at, F_VEL, vel);
+}

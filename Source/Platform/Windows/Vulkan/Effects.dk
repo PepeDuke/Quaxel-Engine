@@ -1,0 +1,272 @@
+// Push constants shared by the effect passes. Matches Params in
+// Shaders/EffectCommon.glsl.
+VkEffectParams
+{
+    float [16] Matrix
+    int Base
+    int Step
+    float Dt
+    int Tick
+    int [3] Cells
+    int Pad
+}
+
+VkEffectPages
+{
+    VkStorage [8] Items
+    int Count
+}
+
+// GPU voxel effects. Each effect owns a fixed slot in a persistent page
+// buffer: its traceable volume, a baked solid mask, its particles and its
+// params. Pages hold SlotsPerPage slots each and are created as the world
+// needs more. The passes are recorded into the open compute frame.
+QuaxelVulkan
+#{
+    -VkEffectPages EffectPages
+    -long EffectLayout
+    -long BakePipeline
+    -long SimPipeline
+    -long ClearPipeline
+    -long StampPipeline
+    -long BricksPipeline
+    // True while an effect pipeline is bound, so the next trace rebinds its own.
+    -bool EffectBound
+
+    // Slot layout in words. Must match Shaders/EffectCommon.glsl and
+    // QuaxelEffectSlot in Source/Core/Effects.dk.
+    #int SlotsPerPage = 8
+    #int SlotWords = 287616
+    #int VolumeWords = 262659
+    #int ParamsOffset = 287488
+
+    -bool CreateEffectPipelines()
+    {
+        VkPushConstantRange params
+        params.stageFlags = 32
+        params.vkSize = 96
+        long [2] sets = {StorageLayout, StorageLayout}
+        VkPipelineLayoutCreateInfo layout
+        layout.setLayoutCount = 2
+        layout.pSetLayouts = &sets[0]
+        layout.pushConstantRangeCount = 1
+        layout.pPushConstantRanges = &params
+        if Vk.CreatePipelineLayout(Device, &layout, null, &EffectLayout) != 0 { return false }
+        BakePipeline = MakeEffectPipeline(EffectShaders.Bake(Device))
+        SimPipeline = MakeEffectPipeline(EffectShaders.Sim(Device))
+        ClearPipeline = MakeEffectPipeline(EffectShaders.Clear(Device))
+        StampPipeline = MakeEffectPipeline(EffectShaders.Stamp(Device))
+        BricksPipeline = MakeEffectPipeline(EffectShaders.Bricks(Device))
+        return BakePipeline != 0 && SimPipeline != 0 && ClearPipeline != 0 && StampPipeline != 0 && BricksPipeline != 0
+    }
+
+    // Takes ownership of the shader module. Returns 0 on failure.
+    -long MakeEffectPipeline(long shader)
+    {
+        if shader == 0 { return 0 }
+        VkComputePipelineCreateInfo info
+        info.vkStage.vkStage = 32
+        info.vkStage.vkModule = shader
+        info.vkStage.pName = "main"
+        info.vkLayout = EffectLayout
+        long pipeline = 0
+        int result = Vk.CreateComputePipelines(Device, 0, 1, &info, null, &pipeline)
+        Vk.DestroyShaderModule(Device, shader, null)
+        return result == 0 ? pipeline | (long)0
+    }
+
+    -ReleaseEffects()
+    {
+        for i : 0; i < EffectPages.Count; i++ {
+            VkStorage storage = EffectPages.Items[i]
+            ReleaseStorage(storage)
+        }
+        EffectPages.Count = 0
+        Vk.DestroyPipeline(Device, BakePipeline, null)
+        Vk.DestroyPipeline(Device, SimPipeline, null)
+        Vk.DestroyPipeline(Device, ClearPipeline, null)
+        Vk.DestroyPipeline(Device, StampPipeline, null)
+        Vk.DestroyPipeline(Device, BricksPipeline, null)
+        Vk.DestroyPipelineLayout(Device, EffectLayout, null)
+        BakePipeline = 0
+        SimPipeline = 0
+        ClearPipeline = 0
+        StampPipeline = 0
+        BricksPipeline = 0
+        EffectLayout = 0
+    }
+
+    // Creates pages, device-local, until there are `count`. Call outside a frame.
+    bool EnsureEffectPages(int count)
+    {
+        if Device == 0 || count > 8 { return false }
+        while EffectPages.Count < count {
+            VkStorage storage
+            long bytes = (long)SlotsPerPage * SlotWords * 4
+            // TRANSFER_SRC | TRANSFER_DST, for fills, param updates and readback.
+            if !CreateStorage(bytes, 3, 1, storage) {
+                ReleaseStorage(storage)
+                return false
+            }
+            EffectPages.Items[EffectPages.Count] = storage
+            EffectPages.Count++
+        }
+        return true
+    }
+
+    -bool SlotReady(int slot)
+    {
+        return ComputeFrame && slot >= 0 && slot / SlotsPerPage < EffectPages.Count
+    }
+
+    -long PageBuffer(int slot) { return EffectPages.Items[slot / SlotsPerPage].Buffer }
+
+    -int SlotBase(int slot) { return (slot % SlotsPerPage) * SlotWords }
+
+    -AfterTransfer() { MemoryBarrier(0x1000, 0x1000, 0x800, 0x60) }
+
+    -AfterCompute() { MemoryBarrier(0x800, 0x40, 0x800, 0x60) }
+
+    -BindEffect(long pipeline, int slot)
+    {
+        UiBound = false
+        EffectBound = true
+        Vk.CmdBindPipeline(Command, 1, pipeline)
+        VkStorage page = EffectPages.Items[slot / SlotsPerPage]
+        Vk.CmdBindDescriptorSets(Command, 1, EffectLayout, 0, 1, &page.Descriptor, 0, null)
+    }
+
+    -PushEffect(VkEffectParams& params) { Vk.CmdPushConstants(Command, EffectLayout, 32, 0, 96, &params) }
+
+    // Empties a slot for a new effect and writes the volume's 64^3 header.
+    bool ResetEffect(int slot)
+    {
+        if !FrameOpen { return Device != 0 }
+        if !SlotReady(slot) { return false }
+        long base = (long)SlotBase(slot) * 4
+        Vk.CmdFillBuffer(Command, PageBuffer(slot), base, (long)ParamsOffset * 4, 0)
+        int [3] header = {64, 64, 64}
+        Vk.CmdUpdateBuffer(Command, PageBuffer(slot), base, 12, &header[0])
+        AfterTransfer()
+        return true
+    }
+
+    // Replaces the slot's params block. Bytes must be a multiple of 4.
+    bool WriteEffectParams(int slot, void* data, int bytes)
+    {
+        if !FrameOpen { return Device != 0 }
+        if !SlotReady(slot) || bytes <= 0 || bytes > 512 { return false }
+        Vk.CmdUpdateBuffer(Command, PageBuffer(slot), (long)(SlotBase(slot) + ParamsOffset) * 4, (long)bytes, data)
+        AfterTransfer()
+        return true
+    }
+
+    // Marks the slot cells inside solid voxels of one uploaded volume. Matrix
+    // maps slot cell coordinates to that volume's grid coordinates.
+    bool BakeEffect(int slot, int volume, void* matrix, int cellsX, int cellsY, int cellsZ)
+    {
+        if !FrameOpen { return Device != 0 }
+        if !SlotReady(slot) || volume < 0 || volume >= Volumes.Count { return false }
+        BindEffect(BakePipeline, slot)
+        VkStorage storage = Volumes.Items[volume]
+        Vk.CmdBindDescriptorSets(Command, 1, EffectLayout, 1, 1, &storage.Descriptor, 0, null)
+        VkEffectParams params
+        memcpy(&params.Matrix[0], matrix, 64)
+        params.Base = SlotBase(slot)
+        params.Cells[0] = cellsX
+        params.Cells[1] = cellsY
+        params.Cells[2] = cellsZ
+        PushEffect(params)
+        Vk.CmdDispatch(Command, 16, 16, 16)
+        AfterCompute()
+        return true
+    }
+
+    // Advances the slot's particles by one fixed step.
+    bool SimulateEffect(int slot, int step, float seconds)
+    {
+        if !FrameOpen { return Device != 0 }
+        if !SlotReady(slot) { return false }
+        BindEffect(SimPipeline, slot)
+        VkEffectParams params
+        params.Base = SlotBase(slot)
+        params.Step = step
+        params.Dt = seconds
+        PushEffect(params)
+        Vk.CmdDispatch(Command, 16, 1, 1)
+        AfterCompute()
+        return true
+    }
+
+    // Redraws the slot's volume from its particles and rebuilds its directory.
+    bool DrawEffect(int slot, int tick)
+    {
+        if !FrameOpen { return Device != 0 }
+        if !SlotReady(slot) { return false }
+        VkEffectParams params
+        params.Base = SlotBase(slot)
+        params.Tick = tick
+        BindEffect(ClearPipeline, slot)
+        PushEffect(params)
+        Vk.CmdDispatch(Command, 512, 1, 1)
+        AfterCompute()
+        BindEffect(StampPipeline, slot)
+        PushEffect(params)
+        Vk.CmdDispatch(Command, 16, 1, 1)
+        AfterCompute()
+        BindEffect(BricksPipeline, slot)
+        PushEffect(params)
+        Vk.CmdDispatch(Command, 512, 1, 1)
+        AfterCompute()
+        return true
+    }
+
+    bool TraceEffect(int slot, void* matrix, float left, float top, float right, float bottom, float lightX, float lightY, float lightZ)
+    {
+        if !FrameOpen { return Device != 0 }
+        if !SlotReady(slot) { return false }
+        VkStorage page = EffectPages.Items[slot / SlotsPerPage]
+        return Trace(page.Descriptor, SlotBase(slot), matrix, left, top, right, bottom, lightX, lightY, lightZ)
+    }
+
+    // Copies the first `words` words of a slot to destination, waiting for the
+    // GPU. For tests and tools. Call outside a frame.
+    bool ReadEffectSlot(int slot, int words, void* destination)
+    {
+        if Device == 0 || FrameOpen || slot < 0 || slot / SlotsPerPage >= EffectPages.Count || words <= 0 || words > SlotWords { return false }
+        if Vk.WaitForFences(Device, 1, &FrameFence, 1, -1) != 0 { return false }
+        VkStorage readback
+        long bytes = (long)words * 4
+        if !CreateStorage(bytes, 2, 6, readback) {
+            ReleaseStorage(readback)
+            return false
+        }
+        bool ok = Vk.ResetCommandBuffer(Command, 0) == 0
+        VkCommandBufferBeginInfo beginInfo
+        ok = ok && Vk.BeginCommandBuffer(Command, &beginInfo) == 0
+        if ok {
+            VkBufferCopy region
+            region.srcOffset = (long)SlotBase(slot) * 4
+            region.bytes = bytes
+            Vk.CmdCopyBuffer(Command, PageBuffer(slot), readback.Buffer, 1, &region)
+            MemoryBarrier(0x1000, 0x1000, 0x4000, 0x2000)
+            ok = Vk.EndCommandBuffer(Command) == 0
+        }
+        if ok {
+            VkSubmitInfo submit
+            submit.commandBufferCount = 1
+            submit.pCommandBuffers = &Command
+            ok = Vk.ResetFences(Device, 1, &FrameFence) == 0 && Vk.QueueSubmit(GraphicsQueue, 1, &submit, FrameFence) == 0
+            ok = ok && Vk.WaitForFences(Device, 1, &FrameFence, 1, -1) == 0
+        }
+        void* mapped = null
+        if ok && Vk.MapMemory(Device, readback.Memory, 0, bytes, 0, &mapped) == 0 {
+            memcpy(destination, mapped, bytes)
+            Vk.UnmapMemory(Device, readback.Memory)
+        } else {
+            ok = false
+        }
+        ReleaseStorage(readback)
+        return ok
+    }
+}

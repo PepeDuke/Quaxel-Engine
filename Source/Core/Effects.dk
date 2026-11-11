@@ -1,7 +1,7 @@
-// Voxel effects: blood, smoke, fire and the like. Each effect simulates its
-// particles in world space and redraws them every fixed step into a volume of
-// its own, so effects stay voxels and use the ordinary voxel renderer. Particles
-// collide with the voxels of other volumes, which is how blood stains the ground.
+// Voxel effects: blood, smoke, fire and the like. The CPU only records how an
+// effect starts and when it stops. Particles, collisions, stains and drawing
+// all run on the GPU, in a fixed 64^3 slot of a persistent page buffer, and the
+// voxel renderer traces each slot like any other volume. See Docs/Effects.md.
 
 // What a particle does when it reaches a solid voxel of another volume.
 QuaxelEffectContact : int
@@ -23,22 +23,19 @@ QuaxelEffectContact : int
 // fill one from scratch with an initializer.
 QuaxelEffectStyle
 {
-    // The effect's own grid, in cells. Particles that leave it end.
-    int Width = 48
-    int Height = 48
-    int Depth = 48
-    // World size of one effect voxel.
+    // World size of one effect voxel. Every effect has a 64^3 grid, so this
+    // also sets how far it reaches: 64 cells across. Particles that leave end.
     float VoxelSize = 0.05
     // Where the origin sits in the grid's height, from 0 (bottom) to 1 (top).
     // X and Z are always centered.
     float Floor = 0.5
+    // At most 1024.
     int MaxParticles = 600
-    int MaxStainCells = 4000
 
     // Particles released when the effect starts.
     int Burst
     // Particles per second, for EmitSeconds. A negative EmitSeconds emits until
-    // StopEffect.
+    // StopEffect. A particle is only emitted into a free particle slot.
     float Rate
     float EmitSeconds
     // Particles start this far from the origin at most. Flat keeps them level
@@ -94,9 +91,6 @@ QuaxelEffectStyle
     QuaxelEffectStyle BloodSplash()
     {
         QuaxelEffectStyle style
-        style.Width = 64
-        style.Height = 40
-        style.Depth = 64
         style.VoxelSize = 0.04
         style.Floor = 0.35
         style.Burst = 28
@@ -123,9 +117,7 @@ QuaxelEffectStyle
     QuaxelEffectStyle BloodSplatter()
     {
         QuaxelEffectStyle style = BloodSplash()
-        style.Width = 96
-        style.Depth = 96
-        style.Height = 48
+        style.VoxelSize = 0.05
         style.Floor = 0.3
         style.Burst = 60
         style.SpeedMin = 2.0
@@ -143,9 +135,6 @@ QuaxelEffectStyle
     QuaxelEffectStyle Fire()
     {
         QuaxelEffectStyle style
-        style.Width = 28
-        style.Height = 48
-        style.Depth = 28
         style.VoxelSize = 0.04
         style.Floor = 0.1
         style.MaxParticles = 160
@@ -179,10 +168,7 @@ QuaxelEffectStyle
     QuaxelEffectStyle Smoke()
     {
         QuaxelEffectStyle style
-        style.Width = 48
-        style.Height = 96
-        style.Depth = 48
-        style.VoxelSize = 0.05
+        style.VoxelSize = 0.06
         style.Floor = 0.05
         style.MaxParticles = 120
         style.Rate = 12.0
@@ -213,9 +199,6 @@ QuaxelEffectStyle
     QuaxelEffectStyle Dust()
     {
         QuaxelEffectStyle style
-        style.Width = 48
-        style.Height = 24
-        style.Depth = 48
         style.VoxelSize = 0.05
         style.Floor = 0.15
         style.Burst = 16
@@ -243,9 +226,6 @@ QuaxelEffectStyle
     QuaxelEffectStyle Sparks()
     {
         QuaxelEffectStyle style
-        style.Width = 64
-        style.Height = 40
-        style.Depth = 64
         style.VoxelSize = 0.03
         style.Floor = 0.3
         style.Burst = 24
@@ -267,24 +247,56 @@ QuaxelEffectStyle
     }
 }
 
-QuaxelEffectParticle
-{
-    // Relative to the effect's origin.
-    vec3 Position
-    vec3 Velocity
-    float Age
-    float Life
-    uint Seed
-}
 
-// One stained cell of an effect's grid.
-QuaxelEffectStain
+// The params block of a slot, as the GPU reads it. Every field is four bytes
+// and the order must match the P_ indexes in Shaders/EffectCommon.glsl.
+QuaxelEffectParams
 {
-    int X
-    int Y
-    int Z
-    float Age
+    float OriginX
+    float OriginY
+    float OriginZ
+    float DirectionX
+    float DirectionY
+    float DirectionZ
+    float VoxelSize
+    float Floor
+    int Burst
+    float Rate
+    // The first step that emits nothing.
+    int StopStep
+    float SpawnRadius
+    int SpawnFlat
+    float SpeedMin
+    float SpeedMax
+    float Spread
+    float Gravity
+    float Drag
+    float Wander
+    float LifeMin
+    float LifeMax
+    float SizeStart
+    float SizeEnd
+    float DensityStart
+    float DensityEnd
+    int ColorStart
+    int ColorMiddle
+    int ColorEnd
+    float MiddleAt
     float Shade
+    int Flicker
+    float Streak
+    int Contact
+    float Bounciness
+    float StainRadius
+    float StainSeconds
+    int StainColor
+    int StainDryColor
+    int Seed
+    int MaxParticles
+}
+#{
+    // Bytes in the block.
+    #int Size = 160
 }
 
 // A volume that effects can hit, with its world bounds for a quick reject.
@@ -302,123 +314,34 @@ QuaxelEffectCollider
     int CellsZ
 }
 
+// The CPU's record of one slot. Step counts fixed steps since the start, and
+// Simulated how many of them the GPU has run.
 QuaxelEffect
 {
     int Id
     bool Active
-    bool Emitting
-    int Node
-    int Volume
-    int Ignore
     QuaxelEffectStyle Style
     vec3 Origin
     vec3 Direction
-    float Age
-    float EmitCarry
-    QuaxelRandom Random
-    QuaxelEffectParticle [] Particles
-    QuaxelEffectStain [] Stains
-}
-
-QuaxelEffectMath
-#{
-    uint Hash(uint value)
-    {
-        uint x = value
-        x = x ^ (x >> 16)
-        x = x * (uint)0x7feb352d
-        x = x ^ (x >> 15)
-        x = x * (uint)0x846ca68b
-        x = x ^ (x >> 16)
-        return x
-    }
-
-    // In 0..1, excluding 1.
-    float Unit(uint value) { return (float)(Hash(value) & (uint)0xFFFFFF) / 16777216.0 }
-
-    // A stable value for a cell. Coordinates down to -1024 are fine.
-    uint Cell(int x, int y, int z, uint seed)
-    {
-        uint ux = (uint)(x + 1024) * (uint)73856093
-        uint uy = (uint)(y + 1024) * (uint)19349663
-        uint uz = (uint)(z + 1024) * (uint)83492791
-        return Hash(seed ^ ux ^ uy ^ uz)
-    }
-
-    int Mix(int from, int to, float t)
-    {
-        float u = Math.Clamp(t, 0.0, 1.0)
-        int red = (int)Math.Lerp((float)((from >> 16) & 255), (float)((to >> 16) & 255), u)
-        int green = (int)Math.Lerp((float)((from >> 8) & 255), (float)((to >> 8) & 255), u)
-        int blue = (int)Math.Lerp((float)(from & 255), (float)(to & 255), u)
-        return (red << 16) | (green << 8) | blue
-    }
-
-    int Scale(int rgb, float factor)
-    {
-        int red = (int)Math.Clamp((float)((rgb >> 16) & 255) * factor, 0.0, 255.0)
-        int green = (int)Math.Clamp((float)((rgb >> 8) & 255) * factor, 0.0, 255.0)
-        int blue = (int)Math.Clamp((float)(rgb & 255) * factor, 0.0, 255.0)
-        return (red << 16) | (green << 8) | blue
-    }
-
-    int Ramp(QuaxelEffectStyle& style, float t)
-    {
-        float middle = Math.Clamp(style.MiddleAt, 0.01, 0.99)
-        if t < middle { return Mix(style.ColorStart, style.ColorMiddle, t / middle) }
-        return Mix(style.ColorMiddle, style.ColorEnd, (t - middle) / (1.0 - middle))
-    }
-
-    vec3 Perpendicular(vec3 axis)
-    {
-        vec3 helper = Math.Abs(axis.Y) < 0.9 ? vec3(0.0, 1.0, 0.0) | vec3(1.0, 0.0, 0.0)
-        return Math.Normalize(Math.Cross(axis, helper))
-    }
-
-    // A unit vector at most `degrees` away from axis. A zero axis means up.
-    vec3 Cone(vec3 axis, float degrees, QuaxelRandom& random)
-    {
-        vec3 forward = Math.Normalize(axis)
-        if forward.Length() < 0.5 { forward = vec3(0.0, 1.0, 0.0) }
-        vec3 side = Perpendicular(forward)
-        vec3 up = Math.Cross(side, forward)
-        float limit = Math.Cos(Math.Clamp(degrees, 0.0, 180.0) * 0.0174532925)
-        float cosine = Math.Lerp(1.0, limit, random.Unit())
-        float sine = Math.Sqrt(Math.Max(0.0, 1.0 - cosine * cosine))
-        float turn = random.Unit() * 6.2831853
-        return forward * cosine + side * (Math.Cos(turn) * sine) + up * (Math.Sin(turn) * sine)
-    }
-}
-T{
-    MixAndScaleStayInRange()
-    {
-        T.AreEqual(QuaxelEffectMath.Mix(0x000000, 0xfe0000, 0.5), 0x7f0000)
-        T.AreEqual(QuaxelEffectMath.Mix(0x102030, 0x405060, 2.0), 0x405060)
-        T.AreEqual(QuaxelEffectMath.Scale(0x808080, 4.0), 0xffffff)
-    }
-
-    ConeStaysWithinItsAngle()
-    {
-        QuaxelRandom random
-        random.Begin((uint)3)
-        for i : 0; i < 200; i++ {
-            vec3 direction = QuaxelEffectMath.Cone(vec3(0.0, 0.0, 2.0), 30.0, random)
-            T.IsTrue(Math.Abs(direction.Length() - 1.0) < 0.001)
-            T.IsTrue(direction.Z >= 0.865)
-        }
-    }
+    int Ignore
+    int Seed
+    int Step
+    int Simulated
+    int StopStep
+    int EndStep
+    // Waits for the GPU to empty the slot and bake its collisions.
+    bool Fresh
+    bool ParamsChanged
 }
 
 QuaxelWorld
 {
     -QuaxelEffect [] Effects
+    -int EffectPages
     -QuaxelEffectCollider [] EffectColliders
-    // Indexes into EffectColliders near the effect being advanced.
+    // Indexes into EffectColliders near the effect being baked.
     -int [] EffectNear
     -int NextEffectId
-    -uint EffectTick
-
-    -int MaxEffects() { return 64 }
 
     // Starts an effect at a world position. Direction aims the particles: up for
     // fire, the hit direction for blood. Returns an ID for the other effect
@@ -432,50 +355,35 @@ QuaxelWorld
     // particles, so a wounded creature does not stop its own blood.
     int StartEffectIgnoring(QuaxelEffectStyle style, vec3 origin, vec3 direction, int ignoreNode)
     {
-        if style.VoxelSize <= 0.0 || style.Width < 1 || style.Height < 1 || style.Depth < 1 { return 0 }
+        if style.VoxelSize <= 0.0 || style.MaxParticles < 1 { return 0 }
         int slot = -1
         for i : 0; i < Effects.Len; i++ {
             if !Effects[i].Active && slot < 0 { slot = i }
         }
         if slot < 0 {
-            if Effects.Len >= MaxEffects() { return 0 }
-            int volume = CreateVolume(style.Width, style.Height, style.Depth)
-            if volume < 0 { return 0 }
-            Effects++
-            slot = (int)Effects.Len - 1
-            Effects[slot].Volume = volume
-        } else if !Volumes[Effects[slot].Volume].Configure(style.Width, style.Height, style.Depth) {
-            return 0
+            // Every slot is busy, so add a page of the same size.
+            if EffectPages >= MaxEffectPages { return 0 }
+            slot = (int)Effects.Len
+            EffectPages++
+            for i : 0; i < EffectSlotsPerPage; i++ { Effects++ }
         }
-        VolumeDirty[Effects[slot].Volume] = true
-        if !Exists(Effects[slot].Node) {
-            Effects[slot].Node = CreateNode()
-            Nodes[Effects[slot].Node - 1].EffectNode = true
-        }
-        int node = Effects[slot].Node
-        vec3 center = origin + vec3(0.0, (0.5 - style.Floor) * (float)style.Height * style.VoxelSize, 0.0)
-        AttachTransform(node, QuaxelTransform.Make(center, vec3(style.VoxelSize, style.VoxelSize, style.VoxelSize)))
-        AttachVoxels(node, Effects[slot].Volume)
-
         NextEffectId++
-        EffectTick++
+        float step = (float)Quaxel.FixedDeltaSeconds()
+        int stop = 0
+        if style.Rate > 0.0 && style.EmitSeconds < 0.0 { stop = 1000000000 }
+        else if style.Rate > 0.0 && style.EmitSeconds > 0.0 { stop = (int)Math.Ceil(style.EmitSeconds / step) }
         Effects[slot].Id = NextEffectId
         Effects[slot].Active = true
-        Effects[slot].Emitting = style.Rate > 0.0 && style.EmitSeconds (0.0)!= 0.0
-        Effects[slot].Ignore = ignoreNode
         Effects[slot].Style = style
         Effects[slot].Origin = origin
         Effects[slot].Direction = direction
-        Effects[slot].Age = 0.0
-        Effects[slot].EmitCarry = 0.0
-        Effects[slot].Particles.Clear()
-        Effects[slot].Stains.Clear()
-        QuaxelRandom random
-        random.Begin((uint)NextEffectId * (uint)2654435761 ^ EffectTick)
-        int burst = Math.Min(style.Burst, style.MaxParticles)
-        for n : 0; n < burst; n++ { Effects[slot].Particles += SpawnParticle(style, direction, random) }
-        Effects[slot].Random = random
-        DrawEffect(slot)
+        Effects[slot].Ignore = ignoreNode
+        Effects[slot].Seed = (int)QuaxelEffectMath.Hash((uint)NextEffectId * (uint)2654435761)
+        Effects[slot].Step = 0
+        Effects[slot].Simulated = 0
+        Effects[slot].Fresh = true
+        Effects[slot].ParamsChanged = true
+        SetEffectStop(slot, stop)
         return NextEffectId
     }
 
@@ -484,7 +392,7 @@ QuaxelWorld
     {
         int slot = EffectSlot(effect)
         if slot < 0 { return false }
-        Effects[slot].Emitting = false
+        if Effects[slot].Step < Effects[slot].StopStep { SetEffectStop(slot, Effects[slot].Step) }
         return true
     }
 
@@ -493,7 +401,7 @@ QuaxelWorld
     {
         int slot = EffectSlot(effect)
         if slot < 0 { return false }
-        FreeEffect(slot)
+        Effects[slot].Active = false
         return true
     }
 
@@ -507,38 +415,6 @@ QuaxelWorld
             if Effects[i].Active { count++ }
         }
         return count
-    }
-
-    int EffectParticleCount(int effect)
-    {
-        int slot = EffectSlot(effect)
-        return slot < 0 ? 0 | (int)Effects[slot].Particles.Len
-    }
-
-    int EffectStainCount(int effect)
-    {
-        int slot = EffectSlot(effect)
-        return slot < 0 ? 0 | (int)Effects[slot].Stains.Len
-    }
-
-    // The volume an effect draws into, or -1. Effects reuse volumes once they end.
-    int EffectVolume(int effect)
-    {
-        int slot = EffectSlot(effect)
-        return slot < 0 ? -1 | Effects[slot].Volume
-    }
-
-    // World position of the center of a cell of an effect's grid.
-    vec3 EffectCellCenter(int effect, int x, int y, int z)
-    {
-        int slot = EffectSlot(effect)
-        if slot < 0 { return vec3(0.0, 0.0, 0.0) }
-        QuaxelEffectStyle style = Effects[slot].Style
-        vec3 cell = vec3(
-            (float)x + 0.5 - (float)style.Width * 0.5,
-            (float)y + 0.5 - (float)style.Height * style.Floor,
-            (float)z + 0.5 - (float)style.Depth * 0.5)
-        return Effects[slot].Origin + cell * style.VoxelSize
     }
 
     // By default every voxel node stops effect particles. Pass false to let them
@@ -558,20 +434,125 @@ QuaxelWorld
         return EffectSolidAt(point)
     }
 
-    // Moves, collides and redraws every effect. The engine calls this once per
-    // fixed step, after the game's FixedStep.
+    // Counts fixed steps and ends effects whose last stain has faded. The
+    // engine calls this once per fixed step, after the game's FixedStep.
     AdvanceEffects(float deltaSeconds)
     {
-        bool any = false
         for i : 0; i < Effects.Len; i++ {
-            if Effects[i].Active { any = true }
+            if !Effects[i].Active { continue }
+            Effects[i].Step++
+            if Effects[i].Step >= Effects[i].EndStep { Effects[i].Active = false }
         }
-        if !any { return }
-        EffectTick++
+    }
+
+    // What the renderer needs, by slot. Slots are the GPU's page slots, in order.
+    int EffectPageCount() { return EffectPages }
+    int EffectSlotCount() { return (int)Effects.Len }
+    bool IsEffectSlotPlaying(int slot) { return slot >= 0 && slot < Effects.Len && Effects[slot].Active }
+    bool EffectNeedsReset(int slot) { return Effects[slot].Fresh }
+    bool EffectParamsChanged(int slot) { return Effects[slot].ParamsChanged }
+    int EffectStep(int slot) { return Effects[slot].Step }
+    int EffectSimulated(int slot) { return Effects[slot].Simulated }
+    SetEffectSimulated(int slot, int steps) { Effects[slot].Simulated = steps }
+
+    // Called once the GPU has the slot's current params, and its reset and bake.
+    MarkEffectUploaded(int slot)
+    {
+        Effects[slot].Fresh = false
+        Effects[slot].ParamsChanged = false
+    }
+
+    QuaxelEffectParams EffectParams(int slot)
+    {
+        QuaxelEffectStyle style = Effects[slot].Style
+        QuaxelEffectParams p
+        p.OriginX = Effects[slot].Origin.X
+        p.OriginY = Effects[slot].Origin.Y
+        p.OriginZ = Effects[slot].Origin.Z
+        p.DirectionX = Effects[slot].Direction.X
+        p.DirectionY = Effects[slot].Direction.Y
+        p.DirectionZ = Effects[slot].Direction.Z
+        p.VoxelSize = style.VoxelSize
+        p.Floor = Math.Clamp(style.Floor, 0.0, 1.0)
+        p.Burst = style.Burst
+        p.Rate = style.Rate
+        p.StopStep = Effects[slot].StopStep
+        p.SpawnRadius = style.SpawnRadius
+        p.SpawnFlat = style.SpawnFlat ? 1 | 0
+        p.SpeedMin = style.SpeedMin
+        p.SpeedMax = style.SpeedMax
+        p.Spread = style.Spread
+        p.Gravity = style.Gravity
+        p.Drag = style.Drag
+        p.Wander = style.Wander
+        p.LifeMin = style.LifeMin
+        p.LifeMax = style.LifeMax
+        p.SizeStart = style.SizeStart
+        p.SizeEnd = style.SizeEnd
+        p.DensityStart = style.DensityStart
+        p.DensityEnd = style.DensityEnd
+        p.ColorStart = style.ColorStart
+        p.ColorMiddle = style.ColorMiddle
+        p.ColorEnd = style.ColorEnd
+        p.MiddleAt = style.MiddleAt
+        p.Shade = style.Shade
+        p.Flicker = style.Flicker ? 1 | 0
+        p.Streak = style.Streak
+        p.Contact = style.Contact.Value
+        p.Bounciness = style.Bounciness
+        p.StainRadius = style.StainRadius
+        p.StainSeconds = style.StainSeconds
+        p.StainColor = style.StainColor
+        p.StainDryColor = style.StainDryColor
+        p.Seed = Effects[slot].Seed
+        p.MaxParticles = Math.Clamp(style.MaxParticles, 1, 1024)
+        return p
+    }
+
+    // Maps the unit box of the slot's grid to the world, for tracing.
+    mat4 EffectModel(int slot)
+    {
+        float size = (float)EffectCells * Effects[slot].Style.VoxelSize
+        float floor = Math.Clamp(Effects[slot].Style.Floor, 0.0, 1.0)
+        vec3 center = Effects[slot].Origin + vec3(0.0, (0.5 - floor) * size, 0.0)
+        return QuaxelMat4.Translation(center) * QuaxelMat4.Scaling(vec3(size, size, size))
+    }
+
+    // Lists the visible volumes that overlap the slot and catch its particles.
+    // Returns how many. Read them with EffectBakeVolume and EffectBakeMatrix.
+    int GatherEffectBake(int slot)
+    {
         RefreshEffectColliders()
-        for i : 0; i < Effects.Len; i++ {
-            if Effects[i].Active { AdvanceEffect(i, deltaSeconds) }
+        mat4 model = EffectModel(slot)
+        vec3 half = vec3(model[0][0], model[1][1], model[2][2]) * 0.5
+        vec3 center = vec3(model[3][0], model[3][1], model[3][2])
+        GatherEffectColliders(center - half, center + half, Effects[slot].Ignore)
+        return (int)EffectNear.Len
+    }
+
+    int EffectBakeVolume(int k) { return EffectColliders[EffectNear[k]].Volume }
+
+    int EffectBakeCells(int k, int axis)
+    {
+        if axis == 0 { return EffectColliders[EffectNear[k]].CellsX }
+        if axis == 1 { return EffectColliders[EffectNear[k]].CellsY }
+        return EffectColliders[EffectNear[k]].CellsZ
+    }
+
+    // Maps slot cell coordinates to the grid coordinates of the k-th gathered volume.
+    mat4 EffectBakeMatrix(int slot, int k)
+    {
+        int index = EffectNear[k]
+        if !EffectColliders[index].Inverted {
+            EffectColliders[index].Inverse = EffectColliders[index].Model.Inverse()
+            EffectColliders[index].Inverted = true
         }
+        float size = Effects[slot].Style.VoxelSize
+        float cells = (float)EffectCells
+        vec3 low = Effects[slot].Origin - vec3(cells * 0.5, cells * Math.Clamp(Effects[slot].Style.Floor, 0.0, 1.0), cells * 0.5) * size
+        mat4 world = QuaxelMat4.Translation(low) * QuaxelMat4.Scaling(vec3(size, size, size))
+        vec3 dims = vec3((float)EffectColliders[index].CellsX, (float)EffectColliders[index].CellsY, (float)EffectColliders[index].CellsZ)
+        return QuaxelMat4.Scaling(dims) * QuaxelMat4.Translation(vec3(0.5, 0.5, 0.5)) * EffectColliders[index].Inverse * world
     }
 
     -int EffectSlot(int effect)
@@ -583,294 +564,17 @@ QuaxelWorld
         return -1
     }
 
-    -FreeEffect(int slot)
-    {
-        Effects[slot].Active = false
-        Effects[slot].Emitting = false
-        Effects[slot].Particles.Clear()
-        Effects[slot].Stains.Clear()
-        int node = Effects[slot].Node
-        if Has(node, QuaxelComponents.Voxels) { Nodes[node - 1].Mask -= QuaxelComponents.Voxels }
-        ResetVolume(Effects[slot].Volume)
-    }
-
-    -QuaxelEffectParticle SpawnParticle(QuaxelEffectStyle& style, vec3 direction, QuaxelRandom& random)
-    {
-        QuaxelEffectParticle particle
-        vec3 offset = QuaxelEffectMath.Cone(vec3(0.0, 1.0, 0.0), 180.0, random) * (style.SpawnRadius * random.Unit())
-        if style.SpawnFlat { offset.Y = 0.0 }
-        particle.Position = offset
-        particle.Velocity = QuaxelEffectMath.Cone(direction, style.Spread, random) * random.Range(style.SpeedMin, style.SpeedMax)
-        particle.Life = Math.Max(0.01, random.Range(style.LifeMin, style.LifeMax))
-        particle.Seed = random.Next()
-        return particle
-    }
-
-    // Converts a position relative to the origin into a cell of the effect grid.
-    -bool EffectCell(QuaxelEffectStyle& style, vec3 local, int& x, int& y, int& z)
-    {
-        float fx = local.X / style.VoxelSize + (float)style.Width * 0.5
-        float fy = local.Y / style.VoxelSize + (float)style.Height * style.Floor
-        float fz = local.Z / style.VoxelSize + (float)style.Depth * 0.5
-        if fx < 0.0 || fy < 0.0 || fz < 0.0 { return false }
-        if fx >= (float)style.Width || fy >= (float)style.Height || fz >= (float)style.Depth { return false }
-        x = (int)fx
-        y = (int)fy
-        z = (int)fz
-        return true
-    }
-
-    -AdvanceEffect(int slot, float deltaSeconds)
+    // The last particle can be born just before the stop and lives at most
+    // LifeMax, then StainSeconds more as a stain.
+    -SetEffectStop(int slot, int stop)
     {
         QuaxelEffectStyle style = Effects[slot].Style
-        QuaxelRandom random = Effects[slot].Random
-        vec3 origin = Effects[slot].Origin
-        Effects[slot].Age += deltaSeconds
-
-        if Effects[slot].Emitting && style.EmitSeconds >= 0.0 && Effects[slot].Age >= style.EmitSeconds {
-            Effects[slot].Emitting = false
-        }
-        if Effects[slot].Emitting {
-            float carry = Effects[slot].EmitCarry + style.Rate * deltaSeconds
-            int count = (int)carry
-            Effects[slot].EmitCarry = carry - (float)count
-            for n : 0; n < count; n++ {
-                if Effects[slot].Particles.Len < style.MaxParticles {
-                    Effects[slot].Particles += SpawnParticle(style, Effects[slot].Direction, random)
-                }
-            }
-        }
-
-        bool collides = style.Contact != QuaxelEffectContact.Pass
-        if collides {
-            vec3 low = origin - vec3((float)style.Width * 0.5, (float)style.Height * style.Floor, (float)style.Depth * 0.5) * style.VoxelSize
-            vec3 high = low + vec3((float)style.Width, (float)style.Height, (float)style.Depth) * style.VoxelSize
-            GatherEffectColliders(low, high, Effects[slot].Ignore)
-            collides = EffectNear.Len > 0
-        }
-
-        float keep = Math.Max(0.0, 1.0 - style.Drag * deltaSeconds)
-        for j : (int)Effects[slot].Particles.Len - 1; j >= 0; j-- {
-            QuaxelEffectParticle particle = Effects[slot].Particles[j]
-            particle.Age += deltaSeconds
-            bool alive = particle.Age < particle.Life
-            if alive {
-                vec3 velocity = particle.Velocity
-                velocity.Y += style.Gravity * deltaSeconds
-                if style.Wander > 0.0 {
-                    velocity.X += random.Range(-1.0, 1.0) * style.Wander * deltaSeconds
-                    velocity.Z += random.Range(-1.0, 1.0) * style.Wander * deltaSeconds
-                }
-                particle.Velocity = velocity * keep
-                alive = MoveParticle(slot, style, particle, deltaSeconds, collides, random)
-            }
-            if alive {
-                int x = 0
-                int y = 0
-                int z = 0
-                alive = EffectCell(style, particle.Position, x, y, z)
-            }
-            if alive {
-                Effects[slot].Particles[j] = particle
-            } else {
-                Effects[slot].Particles -= [j]
-            }
-        }
-
-        for k : (int)Effects[slot].Stains.Len - 1; k >= 0; k-- {
-            Effects[slot].Stains[k].Age += deltaSeconds
-            if Effects[slot].Stains[k].Age >= style.StainSeconds { Effects[slot].Stains -= [k] }
-        }
-
-        Effects[slot].Random = random
-        if !Effects[slot].Emitting && Effects[slot].Particles.Len == 0 && Effects[slot].Stains.Len == 0 {
-            FreeEffect(slot)
-            return
-        }
-        DrawEffect(slot)
-    }
-
-    // Returns false when the particle ends.
-    -bool MoveParticle(int slot, QuaxelEffectStyle& style, QuaxelEffectParticle& particle, float deltaSeconds, bool collides, QuaxelRandom& random)
-    {
-        vec3 move = particle.Velocity * deltaSeconds
-        vec3 origin = Effects[slot].Origin
-        // A particle born inside a wall drifts out instead of sticking at once.
-        if !collides || EffectSolidAt(origin + particle.Position) {
-            particle.Position = particle.Position + move
-            return true
-        }
-        int steps = Math.Clamp((int)(move.Length() / (style.VoxelSize * 0.5)) + 1, 1, 12)
-        vec3 free = particle.Position
-        for s : 1; s <= steps; s++ {
-            vec3 next = particle.Position + move * ((float)s / (float)steps)
-            if EffectSolidAt(origin + next) { return Contact(slot, style, particle, free, next, random) }
-            free = next
-        }
-        particle.Position = free
-        return true
-    }
-
-    -bool Contact(int slot, QuaxelEffectStyle& style, QuaxelEffectParticle& particle, vec3 free, vec3 blocked, QuaxelRandom& random)
-    {
-        if style.Contact == QuaxelEffectContact.Die { return false }
-        vec3 origin = Effects[slot].Origin
-        vec3 normal = ContactNormal(origin, free, blocked)
-        if style.Contact == QuaxelEffectContact.Stick {
-            vec3 surface = free
-            vec3 inside = blocked
-            for i : 0; i < 5; i++ {
-                vec3 middle = (surface + inside) * 0.5
-                if EffectSolidAt(origin + middle) {
-                    inside = middle
-                } else {
-                    surface = middle
-                }
-            }
-            Stain(slot, style, surface, normal, particle.Velocity, random)
-            return false
-        }
-        vec3 velocity = particle.Velocity
-        float into = velocity.Dot(normal)
-        if into < 0.0 {
-            vec3 along = velocity - normal * into
-            if style.Contact == QuaxelEffectContact.Bounce {
-                velocity = along * 0.8 - normal * (into * style.Bounciness)
-                if velocity.Length() < style.VoxelSize * 4.0 { velocity = vec3(0.0, 0.0, 0.0) }
-            } else {
-                velocity = along
-            }
-        }
-        particle.Velocity = velocity
-        particle.Position = free
-        return true
-    }
-
-    // The face crossed between a free and a blocked point. Ties favor the ground.
-    -vec3 ContactNormal(vec3 origin, vec3 free, vec3 blocked)
-    {
-        if Math.Abs(blocked.Y - free.Y) > 0.0 && EffectSolidAt(origin + vec3(free.X, blocked.Y, free.Z)) {
-            return vec3(0.0, blocked.Y < free.Y ? 1.0 | -1.0, 0.0)
-        }
-        if Math.Abs(blocked.X - free.X) > 0.0 && EffectSolidAt(origin + vec3(blocked.X, free.Y, free.Z)) {
-            return vec3(blocked.X < free.X ? 1.0 | -1.0, 0.0, 0.0)
-        }
-        if Math.Abs(blocked.Z - free.Z) > 0.0 && EffectSolidAt(origin + vec3(free.X, free.Y, blocked.Z)) {
-            return vec3(0.0, 0.0, blocked.Z < free.Z ? 1.0 | -1.0)
-        }
-        vec3 d = blocked - free
-        float ax = Math.Abs(d.X)
-        float ay = Math.Abs(d.Y)
-        float az = Math.Abs(d.Z)
-        if ay >= ax && ay >= az { return vec3(0.0, d.Y > 0.0 ? -1.0 | 1.0, 0.0) }
-        if ax >= az { return vec3(d.X > 0.0 ? -1.0 | 1.0, 0.0, 0.0) }
-        return vec3(0.0, 0.0, d.Z > 0.0 ? -1.0 | 1.0)
-    }
-
-    // Spreads a ragged patch over the surface, stretched along the direction the
-    // drop was moving. Cells over empty space are skipped, so stains stop at edges.
-    -Stain(int slot, QuaxelEffectStyle& style, vec3 surface, vec3 normal, vec3 velocity, QuaxelRandom& random)
-    {
-        vec3 origin = Effects[slot].Origin
-        float size = style.VoxelSize
-        vec3 sliding = velocity - normal * velocity.Dot(normal)
-        float slide = sliding.Length()
-        vec3 along = slide > 0.001 ? sliding * (1.0 / slide) | QuaxelEffectMath.Perpendicular(normal)
-        vec3 across = Math.Cross(normal, along)
-        float radius = style.StainRadius * random.Range(0.6, 1.3) * (1.0 + velocity.Length() * 0.12)
-        float stretch = 1.0 + slide * 0.25
-        int reachAlong = (int)(radius * stretch) + 1
-        int reachAcross = (int)radius + 1
-        vec3 lift = normal * (size * 0.5)
-        uint seed = random.Next()
-        for a : -reachAlong; a <= reachAlong; a++ {
-            for b : -reachAcross; b <= reachAcross; b++ {
-                if Effects[slot].Stains.Len >= style.MaxStainCells { return }
-                float fa = (float)a / stretch
-                float fb = (float)b
-                float edge = radius * (0.65 + 0.5 * QuaxelEffectMath.Unit(QuaxelEffectMath.Cell(a, b, 0, seed)))
-                if fa * fa + fb * fb > edge * edge { continue }
-                vec3 local = surface + lift + along * ((float)a * size) + across * ((float)b * size)
-                // Step up onto a small rise instead of vanishing into it.
-                if EffectSolidAt(origin + local) { local = local + normal * size }
-                if EffectSolidAt(origin + local) { continue }
-                if !EffectSolidAt(origin + local - normal * (size * 1.5)) { continue }
-                QuaxelEffectStain cell
-                if !EffectCell(style, local, cell.X, cell.Y, cell.Z) { continue }
-                cell.Shade = 0.8 + 0.35 * QuaxelEffectMath.Unit(QuaxelEffectMath.Cell(a, b, 1, seed))
-                Effects[slot].Stains += cell
-            }
-        }
-    }
-
-    -DrawEffect(int slot)
-    {
-        int volume = Effects[slot].Volume
-        Volumes[volume].Reset()
-        VolumeDirty[volume] = true
-        QuaxelEffectStyle style = Effects[slot].Style
-
-        float dryAt = Math.Max(0.01, style.StainSeconds * 0.5)
-        float fadeFrom = style.StainSeconds * 0.6
-        float fadeSpan = Math.Max(0.01, style.StainSeconds - fadeFrom)
-        for index : 0; index < Effects[slot].Stains.Len; index++ {
-            QuaxelEffectStain stain = Effects[slot].Stains[index]
-            if stain.Age > fadeFrom {
-                float gone = (stain.Age - fadeFrom) / fadeSpan
-                if QuaxelEffectMath.Unit(QuaxelEffectMath.Cell(stain.X, stain.Y, stain.Z, (uint)77)) < gone { continue }
-            }
-            int rgb = QuaxelEffectMath.Mix(style.StainColor, style.StainDryColor, stain.Age / dryAt)
-            Volumes[volume].SetVoxel(stain.X, stain.Y, stain.Z, QuaxelEffectMath.Scale(rgb, stain.Shade))
-        }
-
-        uint flicker = style.Flicker ? EffectTick | (uint)0
-        for index : 0; index < Effects[slot].Particles.Len; index++ {
-            QuaxelEffectParticle particle = Effects[slot].Particles[index]
-            int x = 0
-            int y = 0
-            int z = 0
-            if !EffectCell(style, particle.Position, x, y, z) { continue }
-            float t = Math.Clamp(particle.Age / particle.Life, 0.0, 1.0)
-            int rgb = QuaxelEffectMath.Ramp(style, t)
-            float radius = Math.Lerp(style.SizeStart, style.SizeEnd, t)
-            float density = Math.Lerp(style.DensityStart, style.DensityEnd, t)
-            uint seed = particle.Seed ^ (flicker * (uint)2246822519)
-            float base = 1.0 + (QuaxelEffectMath.Unit(particle.Seed) - 0.5) * style.Shade
-            if radius < 0.5 {
-                if QuaxelEffectMath.Unit(QuaxelEffectMath.Cell(0, 0, 0, seed)) < density {
-                    Volumes[volume].SetVoxel(x, y, z, QuaxelEffectMath.Scale(rgb, base))
-                }
-            } else {
-                int reach = (int)radius + 1
-                float limit = (radius + 0.25) * (radius + 0.25)
-                for dx : -reach; dx <= reach; dx++ {
-                    for dy : -reach; dy <= reach; dy++ {
-                        for dz : -reach; dz <= reach; dz++ {
-                            float distance = (float)(dx * dx + dy * dy + dz * dz)
-                            if distance > limit { continue }
-                            uint cell = QuaxelEffectMath.Cell(dx, dy, dz, seed)
-                            if QuaxelEffectMath.Unit(cell) >= density { continue }
-                            // Darker toward the rim, so a puff reads as round.
-                            float rim = 1.0 - 0.25 * Math.Sqrt(distance / limit)
-                            float jitter = 1.0 + (QuaxelEffectMath.Unit(cell ^ (uint)0x5bd1e995) - 0.5) * 2.0 * style.Shade
-                            Volumes[volume].SetVoxel(x + dx, y + dy, z + dz, QuaxelEffectMath.Scale(rgb, base * rim * jitter))
-                        }
-                    }
-                }
-            }
-            if style.Streak > 0.0 {
-                float speed = particle.Velocity.Length()
-                int trail = Math.Min(4, (int)(speed * style.Streak))
-                if trail > 0 {
-                    vec3 back = particle.Velocity * (-style.VoxelSize / speed)
-                    for s : 1; s <= trail; s++ {
-                        if EffectCell(style, particle.Position + back * (float)s, x, y, z) {
-                            Volumes[volume].SetVoxel(x, y, z, QuaxelEffectMath.Scale(rgb, base * (1.0 - 0.12 * (float)s)))
-                        }
-                    }
-                }
-            }
-        }
+        float step = (float)Quaxel.FixedDeltaSeconds()
+        float tail = style.LifeMax
+        if style.Contact == QuaxelEffectContact.Stick { tail += style.StainSeconds }
+        Effects[slot].StopStep = stop
+        Effects[slot].EndStep = Math.Min(stop, 1000000000) + (int)Math.Ceil(tail / step) + 2
+        Effects[slot].ParamsChanged = true
     }
 
     // Lists every visible voxel node that catches effects, with world bounds.
@@ -904,7 +608,7 @@ QuaxelWorld
     {
         int current = id
         while current != 0 {
-            if current == ignore || Nodes[current - 1].EffectNode || Nodes[current - 1].IgnoresEffects { return false }
+            if current == ignore || Nodes[current - 1].IgnoresEffects { return false }
             current = Nodes[current - 1].Parent
         }
         return true
@@ -943,6 +647,26 @@ QuaxelWorld
         return false
     }
 }
+#{
+    // Cells along each side of a slot, slots per page and the most pages.
+    #int EffectCells = 64
+    #int EffectSlotsPerPage = 8
+    #int MaxEffectPages = 8
+}
+
+QuaxelEffectMath
+#{
+    uint Hash(uint value)
+    {
+        uint x = value
+        x = x ^ (x >> 16)
+        x = x * (uint)0x7feb352d
+        x = x ^ (x >> 15)
+        x = x * (uint)0x846ca68b
+        x = x ^ (x >> 16)
+        return x
+    }
+}
 
 // Scenes shared by the effect tests.
 QuaxelEffectFixtures
@@ -962,26 +686,11 @@ QuaxelEffectFixtures
         return node
     }
 
+    extern "C" void* memcpy(void* target, void* source, long byteCount)
+
     Run(QuaxelWorld& world, int steps)
     {
         for i : 0; i < steps; i++ { world.AdvanceEffects(1.0 / 60.0) }
-    }
-
-    // Counts occupied cells of an effect and checks they lie in the box.
-    int CountCellsWithin(QuaxelWorld& world, int effect, QuaxelEffectStyle style, vec3 low, vec3 high)
-    {
-        int volume = world.EffectVolume(effect)
-        int outside = 0
-        for x : 0; x < style.Width; x++ {
-            for y : 0; y < style.Height; y++ {
-                for z : 0; z < style.Depth; z++ {
-                    if world.GetVoxel(volume, x, y, z) < 0 { continue }
-                    vec3 center = world.EffectCellCenter(effect, x, y, z)
-                    if center.X < low.X || center.Y < low.Y || center.Z < low.Z || center.X > high.X || center.Y > high.Y || center.Z > high.Z { outside++ }
-                }
-            }
-        }
-        return outside
     }
 }
 T{
@@ -996,80 +705,92 @@ T{
         T.IsFalse(world.IsSolidAt(vec3(0.3, -0.1, 0.2)))
     }
 
-    BloodFallsAndStainsTheTopOfTheGround()
+    BurstsEndAfterTheirLongestLifeAndStains()
     {
         QuaxelWorld world()
-        QuaxelEffectFixtures.MakeGround(world, 64)
         QuaxelEffectStyle style = QuaxelEffectStyle.BloodSplash()
-        int effect = world.StartEffect(style, vec3(0.0, 0.4, 0.0), vec3(0.0, 1.0, 0.0))
+        int effect = world.StartEffect(style, vec3(0.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0))
         T.IsTrue(effect > 0)
-        T.AreEqual(world.EffectParticleCount(effect), style.Burst)
-        QuaxelEffectFixtures.Run(world, 180)
+        int seconds = (int)Math.Ceil(style.LifeMax + style.StainSeconds)
+        QuaxelEffectFixtures.Run(world, seconds * 60 - 10)
         T.IsTrue(world.IsEffectPlaying(effect))
-        T.AreEqual(world.EffectParticleCount(effect), 0)
-        T.IsTrue(world.EffectStainCount(effect) > style.Burst)
-        // Every drawn cell is a stain resting on the surface, not in or under it.
-        T.AreEqual(QuaxelEffectFixtures.CountCellsWithin(world, effect, style, vec3(-9.0, 0.0, -9.0), vec3(9.0, 0.09, 9.0)), 0)
+        QuaxelEffectFixtures.Run(world, 80)
+        T.IsFalse(world.IsEffectPlaying(effect))
     }
 
-    StainsStopAtTheEdgeOfALedge()
+    EmittersPlayUntilStoppedThenFade()
     {
         QuaxelWorld world()
-        // 0.5 units wide, so heavy drops run off its sides.
-        QuaxelEffectFixtures.MakeGround(world, 4)
-        QuaxelEffectStyle style = QuaxelEffectStyle.BloodSplatter()
-        style.SpeedMin = 0.4
-        style.SpeedMax = 1.0
-        style.Spread = 40.0
-        int effect = world.StartEffect(style, vec3(0.0, 0.3, 0.0), vec3(0.0, 1.0, 0.0))
-        QuaxelEffectFixtures.Run(world, 240)
-        T.IsTrue(world.EffectStainCount(effect) > 0)
-        // Stains may wrap onto the sides, but none hang in the air past them.
-        // The margin allows for the effect grid not lining up with the ground's.
-        T.AreEqual(QuaxelEffectFixtures.CountCellsWithin(world, effect, style, vec3(-0.3, -0.5, -0.3), vec3(0.3, 0.09, 0.3)), 0)
+        int fire = world.StartEffect(QuaxelEffectStyle.Fire(), vec3(0.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0))
+        QuaxelEffectFixtures.Run(world, 6000)
+        T.IsTrue(world.IsEffectPlaying(fire))
+        T.IsTrue(world.StopEffect(fire))
+        QuaxelEffectFixtures.Run(world, 30)
+        T.IsTrue(world.IsEffectPlaying(fire))
+        QuaxelEffectFixtures.Run(world, 30)
+        T.IsFalse(world.IsEffectPlaying(fire))
+        T.IsFalse(world.StopEffect(fire))
     }
 
-    IgnoredNodeLetsItsOwnBloodThrough()
+    PagesGrowWhenEverySlotIsBusy()
+    {
+        QuaxelWorld world()
+        T.AreEqual(world.EffectPageCount(), 0)
+        int [] ids
+        for i : 0; i < 8; i++ { ids += world.StartEffect(QuaxelEffectStyle.Fire(), vec3(0.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0)) }
+        T.AreEqual(world.EffectPageCount(), 1)
+        T.AreEqual(world.EffectSlotCount(), 8)
+        ids += world.StartEffect(QuaxelEffectStyle.Fire(), vec3(0.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0))
+        T.AreEqual(world.EffectPageCount(), 2)
+        T.AreEqual(world.EffectSlotCount(), 16)
+        // A freed slot is reused before any new page.
+        T.IsTrue(world.EndEffect(ids[3]))
+        int again = world.StartEffect(QuaxelEffectStyle.Dust(), vec3(0.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0))
+        T.AreEqual(world.EffectPageCount(), 2)
+        T.IsTrue(world.IsEffectSlotPlaying(3))
+        T.IsTrue(again > ids[8])
+        T.IsFalse(world.IsEffectPlaying(ids[3]))
+    }
+
+    SixtyFourEffectsAtMost()
+    {
+        QuaxelWorld world()
+        for i : 0; i < 64; i++ { T.IsTrue(world.StartEffect(QuaxelEffectStyle.Fire(), vec3(0.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0)) > 0) }
+        T.AreEqual(world.StartEffect(QuaxelEffectStyle.Fire(), vec3(0.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0)), 0)
+        T.AreEqual(world.EffectPageCount(), 8)
+    }
+
+    BakeFindsTheGroundUnderAnEffect()
     {
         QuaxelWorld world()
         int ground = QuaxelEffectFixtures.MakeGround(world, 64)
-        int effect = world.StartEffectIgnoring(QuaxelEffectStyle.BloodSplash(), vec3(0.0, 0.4, 0.0), vec3(0.0, 1.0, 0.0), ground)
-        QuaxelEffectFixtures.Run(world, 180)
-        T.AreEqual(world.EffectStainCount(effect), 0)
+        world.StartEffect(QuaxelEffectStyle.BloodSplash(), vec3(0.0, 0.4, 0.0), vec3(0.0, 1.0, 0.0))
+        T.AreEqual(world.GatherEffectBake(0), 1)
+        T.AreEqual(world.EffectBakeCells(0, 0), 64)
+        // The slot cell at the origin's column, just under y = 0, is ground cell (32, 3, 32).
+        QuaxelEffectStyle style = QuaxelEffectStyle.BloodSplash()
+        float underY = 64.0 * style.Floor - 0.4 / style.VoxelSize - 0.5
+        vec4 cell = world.EffectBakeMatrix(0, 0) * vec4(vec3(32.0, underY, 32.0), 1.0)
+        T.IsTrue(Math.Abs(cell.X - 32.0) < 0.01)
+        T.IsTrue(cell.Y > 3.0 && cell.Y < 4.0)
+        int ignored = world.StartEffectIgnoring(QuaxelEffectStyle.BloodSplash(), vec3(0.0, 0.4, 0.0), vec3(0.0, 1.0, 0.0), ground)
+        T.IsTrue(ignored > 0)
+        T.AreEqual(world.GatherEffectBake(1), 0)
     }
 
-    SmokeRisesAndFireEndsAfterStop()
+    ParamsMatchTheShaderLayout()
     {
         QuaxelWorld world()
         QuaxelEffectStyle style = QuaxelEffectStyle.Smoke()
-        int smoke = world.StartEffect(style, vec3(0.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0))
-        int fire = world.StartEffect(QuaxelEffectStyle.Fire(), vec3(0.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0))
-        QuaxelEffectFixtures.Run(world, 90)
-        T.IsTrue(world.EffectParticleCount(smoke) > 5)
-        T.IsTrue(world.EffectParticleCount(fire) > 10)
-        // Nothing has sunk below the origin, and something is well above it.
-        T.AreEqual(QuaxelEffectFixtures.CountCellsWithin(world, smoke, style, vec3(-9.0, -0.25, -9.0), vec3(9.0, 9.0, 9.0)), 0)
-        T.IsTrue(QuaxelEffectFixtures.CountCellsWithin(world, smoke, style, vec3(-9.0, -9.0, -9.0), vec3(9.0, 0.4, 9.0)) > 0)
-        T.IsTrue(world.StopEffect(fire))
-        QuaxelEffectFixtures.Run(world, 60)
-        T.IsFalse(world.IsEffectPlaying(fire))
-        T.IsTrue(world.IsEffectPlaying(smoke))
-    }
-
-    FinishedEffectsGiveBackTheirVolumeAndNode()
-    {
-        QuaxelWorld world()
-        int first = world.StartEffect(QuaxelEffectStyle.Sparks(), vec3(0.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0))
-        int volume = world.EffectVolume(first)
-        int nodes = world.NodeCount
-        QuaxelEffectFixtures.Run(world, 120)
-        T.IsFalse(world.IsEffectPlaying(first))
-        T.AreEqual(world.PlayingEffectCount(), 0)
-        int second = world.StartEffect(QuaxelEffectStyle.Dust(), vec3(1.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0))
-        T.AreNotEqual(first, second)
-        T.AreEqual(world.EffectVolume(second), volume)
-        T.AreEqual(world.NodeCount, nodes)
-        T.IsTrue(world.EndEffect(second))
-        T.IsFalse(world.StopEffect(second))
+        world.StartEffect(style, vec3(1.0, 2.0, 3.0), vec3(0.0, 1.0, 0.0))
+        QuaxelEffectParams params = world.EffectParams(0)
+        // The block is 40 four-byte words; the shader reads MaxParticles at 39.
+        int [40] words
+        QuaxelEffectFixtures.memcpy(&words[0], &params, (long)QuaxelEffectParams.Size)
+        T.AreEqual(words[39], style.MaxParticles)
+        T.AreEqual(words[38], params.Seed)
+        T.AreEqual(words[32], QuaxelEffectContact.Slide + 0)
+        T.AreEqual(words[10], 1000000000)
     }
 }
+

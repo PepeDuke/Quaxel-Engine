@@ -149,7 +149,12 @@ QuaxelEngine
         if !Render(*world, *ui, width, height) { RedrawFailed = true }
     }
 
-    -bool Render(QuaxelWorld& world, QuaxelUi& ui, int width, int height)
+    // Most fixed steps of effect simulation recorded in one frame. A longer
+    // stall skips the rest, so a slow frame cannot snowball.
+    -int MaxEffectStepsPerFrame() { return 10 }
+
+    // Draws one frame. Public so GPU tests can render without the main loop.
+    bool Render(QuaxelWorld& world, QuaxelUi& ui, int width, int height)
     {
         mat4 viewProjection = mat4.Identity()
         int cameraNode = world.ActiveCamera
@@ -178,27 +183,77 @@ QuaxelEngine
             QuaxelRenderer.UnmapUiAtlas()
             ui.MarkAtlasUploaded()
         }
+        int pages = world.EffectPageCount()
+        if pages > 0 && !QuaxelRenderer.EnsureEffectPages(pages) { return false }
         if !QuaxelRenderer.BeginVoxelFrame() { return false }
+        if !RunEffects(world) { return false }
         for id : world.NextWith(0, mask); id != 0; id = world.NextWith(id, mask) {
             if world.IsHidden(id) { continue }
-            mat4 model = world.VolumeModel(id)
-            mat4 clip = viewProjection * model
-            float rx = (Math.Abs(clip[0][0]) + Math.Abs(clip[1][0]) + Math.Abs(clip[2][0])) * 0.5
-            float ry = (Math.Abs(clip[0][1]) + Math.Abs(clip[1][1]) + Math.Abs(clip[2][1])) * 0.5
-            float left = Math.Clamp((clip[3][0] - rx + 1.0) * 0.5, 0.0, 1.0)
-            float right = Math.Clamp((clip[3][0] + rx + 1.0) * 0.5, 0.0, 1.0)
-            float top = Math.Clamp((clip[3][1] - ry + 1.0) * 0.5, 0.0, 1.0)
-            float bottom = Math.Clamp((clip[3][1] + ry + 1.0) * 0.5, 0.0, 1.0)
-            if left >= right || top >= bottom { continue }
-            if clip.Determinant() (0.0)== 0.0 { continue } // Exact: a small model has a tiny but valid determinant.
-            mat4 boxFromClip = clip.Inverse()
             vec3 lights = world.FaceLights(id)
-            if !QuaxelRenderer.TraceVolume(world.VolumeHandle(world.VolumeOf(id)), &boxFromClip, left, top, right, bottom, lights.X, lights.Y, lights.Z) { return false }
+            if !Trace(viewProjection * world.VolumeModel(id), world.VolumeHandle(world.VolumeOf(id)), -1, lights) { return false }
+        }
+        // Effects are never rotated, so their faces take the default lights.
+        vec3 effectLights = vec3(0.68, 1.0, 0.42)
+        for slot : 0; slot < world.EffectSlotCount(); slot++ {
+            if !world.IsEffectSlotPlaying(slot) { continue }
+            if !Trace(viewProjection * world.EffectModel(slot), -1, slot, effectLights) { return false }
         }
         for i : 0; i < ui.CommandCount; i++ {
             QuaxelUiCommand command = ui.GetCommand(i)
             if !QuaxelRenderer.DrawUi(command.X, command.Y, command.Width, command.Height, command.Color, command.GlyphFirst, command.GlyphLast, command.Cell) { return false }
         }
         return QuaxelRenderer.EndFrame()
+    }
+
+    // Traces a unit box placed by clip: a volume when handle >= 0, otherwise an
+    // effect slot. Off-screen and degenerate boxes are skipped.
+    -bool Trace(mat4 clip, int handle, int slot, vec3 lights)
+    {
+        float rx = (Math.Abs(clip[0][0]) + Math.Abs(clip[1][0]) + Math.Abs(clip[2][0])) * 0.5
+        float ry = (Math.Abs(clip[0][1]) + Math.Abs(clip[1][1]) + Math.Abs(clip[2][1])) * 0.5
+        float left = Math.Clamp((clip[3][0] - rx + 1.0) * 0.5, 0.0, 1.0)
+        float right = Math.Clamp((clip[3][0] + rx + 1.0) * 0.5, 0.0, 1.0)
+        float top = Math.Clamp((clip[3][1] - ry + 1.0) * 0.5, 0.0, 1.0)
+        float bottom = Math.Clamp((clip[3][1] + ry + 1.0) * 0.5, 0.0, 1.0)
+        if left >= right || top >= bottom { return true }
+        if clip.Determinant() (0.0)== 0.0 { return true } // Exact: a small model has a tiny but valid determinant.
+        mat4 boxFromClip = clip.Inverse()
+        if handle >= 0 { return QuaxelRenderer.TraceVolume(handle, &boxFromClip, left, top, right, bottom, lights.X, lights.Y, lights.Z) }
+        return QuaxelRenderer.TraceEffect(slot, &boxFromClip, left, top, right, bottom, lights.X, lights.Y, lights.Z)
+    }
+
+    // Records each playing effect's GPU work into the open frame: a new
+    // effect's reset and collision bake, changed params, the fixed steps since
+    // the last frame, and the redraw of its volume.
+    -bool RunEffects(QuaxelWorld& world)
+    {
+        float seconds = (float)Quaxel.FixedDeltaSeconds()
+        for slot : 0; slot < world.EffectSlotCount(); slot++ {
+            if !world.IsEffectSlotPlaying(slot) { continue }
+            bool fresh = world.EffectNeedsReset(slot)
+            if fresh && !QuaxelRenderer.ResetEffect(slot) { return false }
+            if fresh || world.EffectParamsChanged(slot) {
+                QuaxelEffectParams params = world.EffectParams(slot)
+                if !QuaxelRenderer.WriteEffectParams(slot, &params, QuaxelEffectParams.Size) { return false }
+            }
+            if fresh {
+                int count = world.GatherEffectBake(slot)
+                for k : 0; k < count; k++ {
+                    int handle = world.VolumeHandle(world.EffectBakeVolume(k))
+                    if handle < 0 { continue }
+                    mat4 matrix = world.EffectBakeMatrix(slot, k)
+                    if !QuaxelRenderer.BakeEffect(slot, handle, &matrix, world.EffectBakeCells(k, 0), world.EffectBakeCells(k, 1), world.EffectBakeCells(k, 2)) { return false }
+                }
+            }
+            world.MarkEffectUploaded(slot)
+            int target = world.EffectStep(slot)
+            int first = Math.Max(world.EffectSimulated(slot), target - MaxEffectStepsPerFrame())
+            for step : first; step < target; step++ {
+                if !QuaxelRenderer.SimulateEffect(slot, step, seconds) { return false }
+            }
+            world.SetEffectSimulated(slot, target)
+            if !QuaxelRenderer.DrawEffect(slot, target) { return false }
+        }
+        return true
     }
 }

@@ -137,8 +137,6 @@ QuaxelNode
     QuaxelAnimator Animator
     string Socket
     bool SocketMissing
-    // Set on the nodes that draw effects, which never catch other effects.
-    bool EffectNode
     // This node and its descendants let effect particles pass through.
     bool IgnoresEffects
 }
@@ -625,6 +623,7 @@ QuaxelWorld
         VolumeDirty.Clear()
         Animations.Clear()
         Effects.Clear()
+        EffectPages = 0
         EffectColliders.Clear()
         EffectNear.Clear()
         CameraNode = 0

@@ -128,6 +128,7 @@ Vk
     extern "C" CmdDispatch(long cmd, int x, int y, int z) = "vkCmdDispatch"
     extern "C" CmdBindDescriptorSets(long cmd, int point, long layout, int first, int count, void* sets, int dynamicCount, void* offsets) = "vkCmdBindDescriptorSets"
     extern "C" CmdFillBuffer(long cmd, long buffer, long offset, long bytes, int data) = "vkCmdFillBuffer"
+    extern "C" CmdUpdateBuffer(long cmd, long buffer, long offset, long bytes, void* data) = "vkCmdUpdateBuffer"
     extern "C" CmdPipelineBarrier(long cmd, int srcStage, int dstStage, int flags, int barriers, void* memory, int buffers, void* bufferInfo, int images, void* imageInfo) = "vkCmdPipelineBarrier"
     extern "C" CmdCopyBufferToImage(long cmd, long src, long dst, int layout, int count, void* regions) = "vkCmdCopyBufferToImage"
 }

@@ -22,6 +22,8 @@ VkVoxelParams
     int Srgb
     int Bgra
     float [3] FaceLight
+    // First word of the volume in its buffer: 0, or an effect slot in a page.
+    int Base
 }
 
 VkUiParams
@@ -61,7 +63,7 @@ QuaxelVulkan
         long [2] sets = {StorageLayout, StorageLayout}
         VkPushConstantRange params
         params.stageFlags = 32
-        params.vkSize = 100
+        params.vkSize = 104
         VkPipelineLayoutCreateInfo layout
         layout.setLayoutCount = 2
         layout.pSetLayouts = &sets[0]
@@ -77,7 +79,7 @@ QuaxelVulkan
         info.vkLayout = ComputeLayout
         int result = Vk.CreateComputePipelines(Device, 0, 1, &info, null, &ComputePipeline)
         Vk.DestroyShaderModule(Device, shader, null)
-        return result == 0 && CreateUiPipeline()
+        return result == 0 && CreateUiPipeline() && CreateEffectPipelines()
     }
 
     -bool CreateUiPipeline()
@@ -119,6 +121,7 @@ QuaxelVulkan
 
     -ReleaseCompute()
     {
+        ReleaseEffects()
         for i : 0; i < Volumes.Count; i++ {
             VkStorage storage = Volumes.Items[i]
             ReleaseStorage(storage)
@@ -231,6 +234,7 @@ QuaxelVulkan
         Vk.CmdFillBuffer(Command, Output.Buffer, bytes, bytes, 0x3f800000) // far depth = 1
         MemoryBarrier(0x1000, 0x1000, 0x800, 0x60) // transfer write -> compute read/write
         UiBound = false
+        EffectBound = false
         Vk.CmdBindPipeline(Command, 1, ComputePipeline)
         Vk.CmdBindDescriptorSets(Command, 1, ComputeLayout, 0, 1, &Output.Descriptor, 0, null)
     }
@@ -239,6 +243,13 @@ QuaxelVulkan
     {
         if !FrameOpen { return Device != 0 }
         if !ComputeFrame || handle < 0 || handle >= Volumes.Count { return false }
+        VkStorage storage = Volumes.Items[handle]
+        return Trace(storage.Descriptor, 0, matrix, left, top, right, bottom, lightX, lightY, lightZ)
+    }
+
+    // Traces one volume that starts at word `base` of the buffer behind descriptor.
+    -bool Trace(long descriptor, int base, void* matrix, float left, float top, float right, float bottom, float lightX, float lightY, float lightZ)
+    {
         VkVoxelParams params
         memcpy(&params.Matrix[0], matrix, 64)
         params.Width = Extent.width
@@ -252,14 +263,15 @@ QuaxelVulkan
         params.FaceLight[0] = lightX
         params.FaceLight[1] = lightY
         params.FaceLight[2] = lightZ
-        if UiBound {
+        params.Base = base
+        if UiBound || EffectBound {
             UiBound = false
+            EffectBound = false
             Vk.CmdBindPipeline(Command, 1, ComputePipeline)
             Vk.CmdBindDescriptorSets(Command, 1, ComputeLayout, 0, 1, &Output.Descriptor, 0, null)
         }
-        VkStorage storage = Volumes.Items[handle]
-        Vk.CmdBindDescriptorSets(Command, 1, ComputeLayout, 1, 1, &storage.Descriptor, 0, null)
-        Vk.CmdPushConstants(Command, ComputeLayout, 32, 0, 100, &params)
+        Vk.CmdBindDescriptorSets(Command, 1, ComputeLayout, 1, 1, &descriptor, 0, null)
+        Vk.CmdPushConstants(Command, ComputeLayout, 32, 0, 104, &params)
         Vk.CmdDispatch(Command, (endX - params.StartX + 7) / 8, (endY - params.StartY + 7) / 8, 1)
         MemoryBarrier(0x800, 0x40, 0x800, 0x60) // following volume compares against this depth
         return true

@@ -1,0 +1,13 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// Empties the bricks the last frame drew into. One workgroup per brick; bricks
+// already marked empty in the directory are skipped.
+layout(local_size_x=64) in;
+#include "EffectCommon.glsl"
+
+void main() {
+    int brick = int(gl_WorkGroupID.x);
+    if (words[pc.base + DIRECTORY + brick] == 0) return;
+    int first = pc.base + BRICKS + brick * 512 + int(gl_LocalInvocationID.x) * 8;
+    for (int i = 0; i < 8; ++i) words[first + i] = 0;
+}
