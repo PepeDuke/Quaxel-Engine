@@ -31,6 +31,11 @@ QuaxelTerrainConfig
     // Radius of an extra clearing beyond the level's -Z edge, joined to it by one
     // pass. The player starts there. 0 adds none.
     float EntryRadius
+    // World columns from the origin to the center of the spawn clearing, in
+    // multiples of 4. A second level, such as a dungeon, can sit this far from the
+    // first so that nothing left behind in one shows up in the other.
+    int OffsetColumns
+    int OffsetRows
 }
 
 // One clearing. X, Z and Radius are in layout space, before the warp is applied.
@@ -43,6 +48,9 @@ QuaxelTerrainSite
     float Z
     float Radius
     int PortCount
+    // Passes between here and the spawn clearing, set when the terrain routes
+    // modules. -1 until then, or when no path reaches it.
+    int Depth = -1
     // Unit vectors from the center toward each connected clearing.
     float [4] PortX
     float [4] PortZ
@@ -81,6 +89,9 @@ QuaxelTerrainSite
 // A capsule joining two clearings, in layout space.
 QuaxelTerrainPass
 {
+    // The sites it joins.
+    int A
+    int B
     float AX
     float AZ
     float BX
@@ -249,6 +260,8 @@ QuaxelTerrainLayout
         Sites[first].AddPort(x, z)
         Sites[second].AddPort(-x, -z)
         QuaxelTerrainPass pass
+        pass.A = first
+        pass.B = second
         pass.AX = Sites[first].X
         pass.AZ = Sites[first].Z
         pass.BX = Sites[second].X
@@ -280,6 +293,30 @@ QuaxelTerrainLayout
             }
         }
         return found == Sites.Len
+    }
+
+    // Fills each site's Depth: the fewest passes from the given site.
+    MeasureDepths(int from)
+    {
+        for site : Sites { site.Depth = -1 }
+        if from < 0 || from >= Sites.Len { return }
+        Sites[from].Depth = 0
+        bool grew = true
+        while grew {
+            grew = false
+            for pass : Passes {
+                int a = Sites[pass.A].Depth
+                int b = Sites[pass.B].Depth
+                if a >= 0 && (b < 0 || b > a + 1) {
+                    Sites[pass.B].Depth = a + 1
+                    grew = true
+                }
+                if b >= 0 && (a < 0 || a > b + 1) {
+                    Sites[pass.A].Depth = b + 1
+                    grew = true
+                }
+            }
+        }
     }
 
     -int SiteAt(float x, float z)
@@ -338,6 +375,27 @@ T{
         T.AreEqual(first.Sites.Len, second.Sites.Len)
         T.AreEqual(first.Passes.Len, second.Passes.Len)
         for i : 0; i < first.Sites.Len; i++ { T.AreEqual(first.Sites[i].X, second.Sites[i].X) }
+    }
+
+    DepthCountsPassesFromTheChosenSite()
+    {
+        for seed : 1; seed <= 6; seed++ {
+            QuaxelTerrainConfig config
+            config.Seed = (uint)seed
+            config.EntryRadius = 38.0
+            QuaxelTerrainLayout layout()
+            T.IsTrue(layout.Build(config))
+            layout.MeasureDepths(layout.EntrySite)
+            T.AreEqual(layout.Sites[layout.EntrySite].Depth, 0)
+            int deepest = 0
+            for site : layout.Sites {
+                T.IsTrue(site.Depth >= 0)
+                deepest = Math.Max(deepest, site.Depth)
+            }
+            T.IsTrue(deepest >= 4)
+            // Joined sites are never more than one pass apart in depth.
+            for pass : layout.Passes { T.IsTrue(Math.Abs(layout.Sites[pass.A].Depth - layout.Sites[pass.B].Depth) <= 1) }
+        }
     }
 
     AxisRunsBetweenTheWidestPorts()

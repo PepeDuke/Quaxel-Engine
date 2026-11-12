@@ -138,6 +138,7 @@ QuaxelTerrain
         FloorSeed = config.Seed * (uint)0xC2B2AE35 + (uint)59
         RidgeSeed = config.Seed * (uint)0x27D4EB2F + (uint)67
         ChooseSpawn()
+        Layout.MeasureDepths(SpawnSite)
         Route()
         Allocate()
         FindOrigin()
@@ -204,6 +205,8 @@ QuaxelTerrain
     {
         int ports = Layout.Sites[index].PortCount
         if ports < rules.MinPorts || ports > rules.MaxPorts { return false }
+        int depth = Layout.Sites[index].Depth
+        if depth < rules.MinDepth || depth > rules.MaxDepth { return false }
         if !rules.Isolated { return true }
         float radius = Math.Max(Layout.Sites[index].Radius, rules.MinRadius)
         for i : 0; i < Layout.Sites.Len; i++ {
@@ -253,9 +256,11 @@ QuaxelTerrain
         float x = 0.0
         float z = 0.0
         WorldFromLayout(Layout.Sites[SpawnSite].X, Layout.Sites[SpawnSite].Z, x, z)
-        OriginColumn = QuaxelNoise.FloorDiv((int)Math.Floor(x / Cell), NodeColumns) * NodeColumns
-        OriginRow = QuaxelNoise.FloorDiv((int)Math.Floor(z / Cell), NodeColumns) * NodeColumns
-        SpawnLevel = FloorAt((float)OriginColumn * Cell, (float)OriginRow * Cell)
+        int spawnColumn = QuaxelNoise.FloorDiv((int)Math.Floor(x / Cell), NodeColumns) * NodeColumns
+        int spawnRow = QuaxelNoise.FloorDiv((int)Math.Floor(z / Cell), NodeColumns) * NodeColumns
+        SpawnLevel = FloorAt((float)spawnColumn * Cell, (float)spawnRow * Cell)
+        OriginColumn = spawnColumn - Config.OffsetColumns
+        OriginRow = spawnRow - Config.OffsetRows
     }
 
     // The warp at a node of the coarse grid, as an offset from the node.
@@ -504,6 +509,25 @@ QuaxelTerrain
         placement.LightRow = row + offer.LightZ
         placement.LightRadius = offer.LightRadius
         Placements += placement
+        return true
+    }
+
+    // Swaps in another layout, as a game does to move between levels. Every chunk
+    // and its models are released, and the ground around focus is built again
+    // before it returns. False if no layout fits or a world call fails.
+    bool Reconfigure(QuaxelWorld& world, QuaxelTerrainConfig config, vec3 focus)
+    {
+        for chunk : Chunks {
+            for n : 0; n < chunk.PlacementNodes.Len; n++ { world.DestroyNode(chunk.PlacementNodes[n]) }
+            chunk.PlacementNodes.Clear()
+            chunk.Valid = false
+        }
+        BuildPhase = 0
+        Placements.Clear()
+        if !Configure(config) { return false }
+        while !IsReady(focus) {
+            if !Stream(world, focus, 1000000) { return false }
+        }
         return true
     }
 

@@ -12,6 +12,14 @@ QuaxelAssets
         return false
     }
 
+    // Whether a file can be found by the same search the loaders use. Lets a game
+    // fall back to a stand-in without an error printed for the missing file.
+    bool Exists(string path)
+    {
+        file source
+        return OpenNearby(source, path)
+    }
+
     // Loads a .qvox model into a new volume. Returns its index, or -1 after
     // printing what went wrong.
     int LoadVoxelModel(QuaxelWorld& world, string path)

@@ -262,6 +262,32 @@ T{
         }
     }
 
+    // A second level sits apart from the first, its spawn where the offset says.
+    AnOffsetLevelReplacesTheFirstAndPutsItsSpawnWhereAsked()
+    {
+        QuaxelTerrainConfig config
+        QuaxelWorld world()
+        QuaxelTerrain terrain()
+        T.IsTrue(terrain.Configure(config) && terrain.Start(world, vec3(0.0, 0.0, 0.0)))
+        int nodes = world.NodeCount
+        QuaxelTerrainConfig below
+        below.Seed = (uint)9
+        below.SiteGrid = 3
+        below.OffsetColumns = 8000
+        below.OffsetRows = -4000
+        vec3 arrival = vec3(1000.0, 0.0, -500.0)
+        T.IsTrue(terrain.Reconfigure(world, below, arrival))
+        T.AreEqual(terrain.ColumnKind(8000, -4000), QuaxelTerrainKind.Open)
+        T.IsTrue(Math.Abs(terrain.GroundY(1000.0, -500.0)) <= 0.25)
+        T.AreEqual(terrain.ColumnKind(0, 0), QuaxelTerrainKind.Unloaded)
+        T.AreEqual(terrain.ChunkCount, QuaxelTerrain.ResidentChunks)
+        T.IsTrue(world.NodeCount <= nodes)
+        // And back again.
+        T.IsTrue(terrain.Reconfigure(world, config, vec3(0.0, 0.0, 0.0)))
+        T.AreEqual(terrain.ColumnKind(0, 0), QuaxelTerrainKind.Open)
+        T.AreEqual(terrain.ColumnKind(8000, -4000), QuaxelTerrainKind.Unloaded)
+    }
+
     UnbuiltGroundIsBlocked()
     {
         QuaxelTerrainConfig config

@@ -69,6 +69,10 @@ QuaxelTerrainModuleRules
     // The fraction of clearings wanted, from 0 to 1.
     float Share
     int MaxCount = 1000000
+    // Passes from the spawn clearing, inclusive. Lets a game lay its zones out
+    // from near the start to far from it.
+    int MinDepth
+    int MaxDepth = 1000000
 }
 
 // A voxel model a module would like in its clearing.
