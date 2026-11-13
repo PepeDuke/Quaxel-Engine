@@ -7,6 +7,7 @@ QuaxelKey : int
     E: 69,
     F: 70,
     I: 73,
+    L: 76,
     P: 80,
     Q: 81,
     R: 82,
