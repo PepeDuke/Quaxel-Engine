@@ -175,6 +175,9 @@ QuaxelPlatformBackend
                 RightMouseDown = false
                 Window = null
             }
+            // Alt pressed and released alone would enter the menu loop, which
+            // swallows the next key and stalls the game. Alt is a game key here.
+            if message == 0x0112 && (wParam & (uint64)0xFFF0) == (uint64)0xF100 && lParam == 0 { return 0 } // WM_SYSCOMMAND, SC_KEYMENU from the keyboard
         }
         return QuaxelWindowsNative.DefWindowProcW(window, message, wParam, lParam)
     }

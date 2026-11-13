@@ -120,6 +120,8 @@ QuaxelVoxelVolume
 
     QuaxelVoxelSocket SocketAt(int index) { return Sockets[index] }
 
+    int SocketCount() { return (int)Sockets.Len }
+
     // Grid size along axis 0 (X), 1 (Y) or 2 (Z), or 0 before Configure.
     int Cells(int axis) { return Words.Len < 3 ? 0 | Words[axis] }
 

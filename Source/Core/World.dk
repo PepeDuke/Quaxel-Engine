@@ -573,6 +573,21 @@ QuaxelWorld
         return true
     }
 
+    // A volume's sockets, read by index, for marks a game takes out of a model
+    // rather than attaching to, such as the perches on a building. Positions
+    // are in voxels from the volume's center, as sockets are stored.
+    int VolumeSocketCount(int volume)
+    {
+        if volume < 0 || volume >= Volumes.Len { return 0 }
+        return Volumes[volume].SocketCount()
+    }
+
+    vec3 VolumeSocketPosition(int volume, int index)
+    {
+        QuaxelVoxelSocket socket = Volumes[volume].SocketAt(index)
+        return socket.Position
+    }
+
     // Brightness of the faces whose normals are the volume's X, Y and Z axes.
     // Rotation tilts the faces. Facing does not, so a character keeps its
     // shading as it turns.
@@ -773,6 +788,22 @@ T{
         mat4 model = turned.LocalMatrix()
         vec3 up = vec3(model * vec4(vec3(0.0, 1.0, 0.0), 1.0))
         T.IsTrue(Math.Abs(up.X - 1.0) < 0.0001)
+    }
+
+    AVolumesSocketsCanBeReadByIndex()
+    {
+        QuaxelWorld world()
+        int volume = world.CreateVolume(4, 4, 4)
+        T.AreEqual(world.VolumeSocketCount(volume), 0)
+        T.IsTrue(world.AddSocket(volume, "a", 3.0, 1.0, 0.0, QuaxelRotation.FromDegrees(0.0, 0.0, 0.0)))
+        T.IsTrue(world.AddSocket(volume, "b", 0.0, 3.0, 2.0, QuaxelRotation.FromDegrees(0.0, 0.0, 0.0)))
+        T.AreEqual(world.VolumeSocketCount(volume), 2)
+        // Cell (0, 3, 2) has its center at (-1.5, 1.5, 0.5) in a 4^3 grid.
+        vec3 second = world.VolumeSocketPosition(volume, 1)
+        T.AreEqual(second.X, -1.5)
+        T.AreEqual(second.Y, 1.5)
+        T.AreEqual(second.Z, 0.5)
+        T.AreEqual(world.VolumeSocketCount(-1), 0)
     }
 
     SocketRotationAndPositionMoveTheChild()
