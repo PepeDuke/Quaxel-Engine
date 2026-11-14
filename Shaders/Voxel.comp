@@ -4,13 +4,17 @@ layout(push_constant) uniform Params {
     mat4 boxFromClip;
     ivec2 extent;
     ivec2 start;
-    int srgb;
-    int bgra;
-    float faceLight[3];
     int base;  // First word of the volume in the buffer: 0, or an effect slot.
+    // World normals of the box's +X, +Y and +Z faces, three floats each.
+    float axes[9];
 } pc;
+// Per pixel: albedo RGB with ambient occlusion in the top byte, then depth,
+// then the world normal as signed bytes. VoxelLight.comp turns it into color.
 layout(set=0,binding=0,std430) buffer Output { uint frame[]; };
 layout(set=1,binding=0,std430) readonly buffer Grid { int words[]; };
+// A brick payload is 16 occupancy words, one bit per cell in Morton order,
+// followed by 512 color words. The directory offset points at the mask.
+const int MASK_WORDS = 16;
 // Morton index for an 8^3 brick, with x/y/z at bit positions 3i + 0/1/2.
 int mortonCell(ivec3 p) {
     ivec3 bits = (p & 1) | ((p & 2) << 2) | ((p & 4) << 4);
@@ -21,6 +25,66 @@ ivec3 enteringCell(vec3 position, vec3 direction) {
     return ivec3(mix(floor(position), ceil(position) - 1.0, lessThan(direction, vec3(0))));
 }
 
+ivec3 dims;
+ivec3 bricks;
+
+// First word of the brick holding cell c, or 0 when it is empty or outside.
+int brickAt(ivec3 c) {
+    if (any(lessThan(c, ivec3(0))) || any(greaterThanEqual(c, dims))) return 0;
+    ivec3 b = c >> 3;
+    int offset = words[pc.base + 3 + b.x + bricks.x * (b.y + bricks.y * b.z)];
+    return offset == 0 ? 0 : pc.base + offset;
+}
+
+float solid(ivec3 c) {
+    int at = brickAt(c);
+    if (at == 0) return 0.0;
+    int m = mortonCell(c & 7);
+    return float((words[at + (m >> 5)] >> (m & 31)) & 1);
+}
+
+// Share of solid cells in the 2^3 block holding c: one byte of the mask.
+float density2(ivec3 c) {
+    int at = brickAt(c);
+    if (at == 0) return 0.0;
+    int m = mortonCell(c & 7);
+    return float(bitCount((words[at + (m >> 5)] >> (m & 24)) & 255)) / 8.0;
+}
+
+// Share of solid cells in the 4^3 block holding c: a pair of mask words.
+float density4(ivec3 c) {
+    int at = brickAt(c);
+    if (at == 0) return 0.0;
+    int w = (mortonCell(c & 7) >> 5) & ~1;
+    return float(bitCount(words[at + w]) + bitCount(words[at + w + 1])) / 64.0;
+}
+
+// Occlusion of the face of `hit` that faces `n`, at `f` across the face.
+// Corner occlusion reads the eight cells around the air cell in front of the
+// face. Wider occlusion reads 2^3 and 4^3 densities further out.
+float occlusion(ivec3 hit, ivec3 n, ivec3 u, ivec3 v, vec2 f) {
+    ivec3 air = hit + n;
+    float s[9];
+    for (int j = 0; j < 3; ++j)
+        for (int i = 0; i < 3; ++i)
+            s[i + 3 * j] = (i == 1 && j == 1) ? 0.0 : solid(air + (i - 1) * u + (j - 1) * v);
+    vec4 corner;  // (-u,-v), (+u,-v), (-u,+v), (+u,+v)
+    corner.x = s[1] + s[3] > 1.5 ? 3.0 : s[1] + s[3] + s[0];
+    corner.y = s[1] + s[5] > 1.5 ? 3.0 : s[1] + s[5] + s[2];
+    corner.z = s[7] + s[3] > 1.5 ? 3.0 : s[7] + s[3] + s[6];
+    corner.w = s[7] + s[5] > 1.5 ? 3.0 : s[7] + s[5] + s[8];
+    corner = 1.0 - 0.2 * corner;
+    float contact = mix(mix(corner.x, corner.y, f.x), mix(corner.z, corner.w, f.x), f.y);
+    ivec3 out2 = air + 2 * n;
+    float near = (density2(out2) + density2(out2 + 2 * u) + density2(out2 - 2 * u)
+                + density2(out2 + 2 * v) + density2(out2 - 2 * v)) / 5.0;
+    float far = density4(air + 4 * n);
+    float wide = 1.0 - 0.5 * (0.65 * near + 0.35 * far);
+    return contact * wide;
+}
+
+vec3 axis(int a) { return vec3(pc.axes[3 * a], pc.axes[3 * a + 1], pc.axes[3 * a + 2]); }
+
 void main() {
     ivec2 pixel = pc.start + ivec2(gl_GlobalInvocationID.xy);
     if (any(greaterThanEqual(pixel, pc.extent))) return;
@@ -28,8 +92,8 @@ void main() {
     vec2 xy = (vec2(pixel) + 0.5) * (2.0 / vec2(pc.extent)) - 1.0;
     vec3 nearBox = (pc.boxFromClip * vec4(xy, 0, 1)).xyz + 0.5;
     vec3 ray = pc.boxFromClip[2].xyz;
-    ivec3 dims = ivec3(words[pc.base], words[pc.base + 1], words[pc.base + 2]);
-    ivec3 bricks = (dims + 7) / 8;
+    dims = ivec3(words[pc.base], words[pc.base + 1], words[pc.base + 2]);
+    bricks = (dims + 7) / 8;
     vec3 origin = nearBox * dims;
     vec3 dir = ray * dims;
     ivec3 stepDir = ivec3(sign(dir));
@@ -37,6 +101,7 @@ void main() {
     vec3 invDir = 1.0 / mix(dir, vec3(1.0), parallel);
     ivec3 positive = max(stepDir, ivec3(0));
     int depthIndex = index + pc.extent.x * pc.extent.y;
+    int normalIndex = depthIndex + pc.extent.x * pc.extent.y;
     float t = 0.0, end = uintBitsToFloat(frame[depthIndex]);
     int face = 1;
     for (int a = 0; a < 3; ++a) {
@@ -62,22 +127,51 @@ void main() {
             vec3 tMax = mix((vec3(cell + positive) - origin) * invDir, vec3(2.0), parallel);
             vec3 tDelta = abs(invDir);
             ivec3 local = cell - low;
+            int brickBase = pc.base + offset;
+            float stop = min(end, brickExit);
             while (all(greaterThanEqual(local, ivec3(0))) && all(lessThan(local, ivec3(8)))) {
-                int value = words[pc.base + offset + mortonCell(local)];
-                if (value != 0) {
-                    int rgb = value - 1;
-                    float light = pc.faceLight[face];
-                    vec3 linear = vec3(rgb >> 16, (rgb >> 8) & 255, rgb & 255) * (light / 255.0);
-                    vec3 encoded = linear;
-                    if (pc.srgb != 0)
-                        encoded = mix(12.92 * linear, 1.055 * pow(linear, vec3(1.0/2.4)) - 0.055,
-                                      greaterThan(linear, vec3(0.0031308)));
-                    frame[index] = packUnorm4x8(vec4(pc.bgra != 0 ? encoded.bgr : encoded, 1));
+                // Test the occupancy bit; read the color only at the hit.
+                int m = mortonCell(local);
+                int word = words[brickBase + (m >> 5)];
+                // An empty 2^3 block is one zero byte of the mask, and an empty
+                // 4^3 block is a zero pair of words. Jump to the block's exit.
+                int size = 1;
+                if (((word >> (m & 24)) & 255) == 0)
+                    size = (word | words[brickBase + ((m >> 5) ^ 1)]) == 0 ? 4 : 2;
+                if (size > 1) {
+                    ivec3 blockLow = low + (local & ~(size - 1));
+                    ivec3 blockEdge = blockLow + positive * size;
+                    vec3 exits = mix((vec3(blockEdge) - origin) * invDir, vec3(2.0), parallel);
+                    t = min(exits.x, min(exits.y, exits.z));
+                    if (t >= stop) break;
+                    // Same reconstruction as a brick jump: tied axes all advance.
+                    ivec3 entered = clamp(enteringCell(origin + t * dir, dir), blockLow, blockLow + size - 1);
+                    bvec3 crossedBlock = equal(exits, vec3(t));
+                    entered = mix(entered, blockEdge + min(stepDir, ivec3(0)), crossedBlock);
+                    face = crossedBlock.x ? 0 : (crossedBlock.y ? 1 : 2);
+                    local = entered - low;
+                    tMax = mix((vec3(entered + positive) - origin) * invDir, vec3(2.0), parallel);
+                    continue;
+                }
+                if (((word >> (m & 31)) & 1) != 0) {
+                    int rgb = words[brickBase + MASK_WORDS + m] - 1;
+                    // The face the ray came through points against the step.
+                    ivec3 n = ivec3(0);
+                    n[face] = stepDir[face] != 0 ? -stepDir[face] : 1;
+                    ivec3 u = ivec3(0), v = ivec3(0);
+                    int ua = (face + 1) % 3, va = (face + 2) % 3;
+                    u[ua] = 1;
+                    v[va] = 1;
+                    ivec3 hit = low + local;
+                    vec3 p = origin + t * dir - vec3(hit);
+                    float ao = occlusion(hit, n, u, v, clamp(vec2(p[ua], p[va]), 0.0, 1.0));
+                    frame[index] = uint(rgb & 0xFFFFFF) | (uint(clamp(ao, 0.0, 1.0) * 255.0 + 0.5) << 24);
                     frame[depthIndex] = floatBitsToUint(t);
+                    frame[normalIndex] = packSnorm4x8(vec4(axis(face) * float(n[face]), 0.0));
                     return;
                 }
                 t = min(tMax.x, min(tMax.y, tMax.z));
-                if (t >= min(end, brickExit)) break;
+                if (t >= stop) break;
                 bvec3 crossedCell = equal(tMax, vec3(t));
                 local += mix(ivec3(0), stepDir, crossedCell);
                 tMax += mix(vec3(0.0), tDelta, crossedCell);
@@ -95,5 +189,3 @@ void main() {
     }
     return;
 }
-
-

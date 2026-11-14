@@ -53,7 +53,10 @@ and reusable plane and cube geometry.
 The x64 Windows backend provides a performance clock, held-key state and one
 resizable main window. Its Vulkan compute shader renders the active world by casting orthographic
 rays through sparse voxel volumes. Empty 8×8×8 bricks are skipped in one
-step. Occupied bricks use incremental Amanatides–Woo grid traversal. In a 960 x 540
+step. Occupied bricks use incremental Amanatides–Woo grid traversal over
+per-cell occupancy bits, jumping over empty 2×2×2 and 4×4×4 blocks. A
+lighting pass then adds sunlight with voxel shadows, sky light and ambient
+occlusion. In a 960 x 540
 client area, Hellfeather shows a cube on a plane that WASD moves. The headless
 build runs three fixed simulation steps with neutral input and no GPU.
 

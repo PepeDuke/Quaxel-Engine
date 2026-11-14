@@ -15,7 +15,9 @@ void main() {
     ivec3 bricks = (pc.cells + 7) / 8;
     ivec3 b = v / 8;
     int offset = grid[3 + b.x + bricks.x * (b.y + bricks.y * b.z)];
-    if (offset == 0 || grid[offset + mortonCell(v - b * 8)] == 0) return;
+    if (offset == 0) return;
+    int m = mortonCell(v - b * 8);
+    if (((grid[offset + (m >> 5)] >> (m & 31)) & 1) == 0) return;
     int i = cellIndex(c);
-    atomicOr(words[pc.base + MASK + (i >> 5)], 1 << (i & 31));
+    atomicOr(words[pc.base + SOLID + (i >> 5)], 1 << (i & 31));
 }

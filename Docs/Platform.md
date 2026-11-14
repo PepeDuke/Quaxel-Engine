@@ -97,10 +97,22 @@ from a build output directory.
 ## Vulkan renderer
 
 The engine starts Vulkan on the window-owning thread. It uploads new and
-edited voxel volumes before opening a frame. Each visible volume dispatches
-an 8×8 compute shader over its projected screen rectangle. Rays clip to the
-volume and stop at the first occupied cell or the closest depth already
-written by another volume. A transfer copies the finished colors to the
+edited voxel volumes before opening a frame. Volumes are traced nearest
+first, so later ones stop early where nearer ones already hit. Each visible
+volume dispatches an 8×8 compute shader over its projected screen rectangle.
+Rays clip to the volume and stop at the first occupied cell or the closest
+depth already written by another volume.
+
+The trace does not shade. For each pixel it writes the voxel color with its
+ambient occlusion in the top byte, the depth, and the world normal of the face
+it hit as signed bytes. Occlusion comes from the cells around the face and
+from the occupancy of 2×2×2 and 4×4×4 blocks further out, all read from the
+volume's mask. One lighting pass then shades every pixel with sunlight and
+ambient sky light. Sunlight needs a clear path: a shadow ray walks every
+caster volume with the same brick and block skipping as the trace. The
+casters are bound together as an array of up to 256 storage buffers, which
+needs the `shaderStorageBufferArrayDynamicIndexing` device feature. UI is
+drawn after lighting, and a transfer copies the finished colors to the
 swapchain image for FIFO presentation.
 
 The backend uses one graphics/compute/present queue and one frame in flight.

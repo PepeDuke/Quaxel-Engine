@@ -19,11 +19,28 @@ VkVoxelParams
     int Height
     int StartX
     int StartY
-    int Srgb
-    int Bgra
-    float [3] FaceLight
     // First word of the volume in its buffer: 0, or an effect slot in a page.
     int Base
+    // World normals of the box's +X, +Y and +Z faces.
+    float [9] Axes
+}
+
+// Push constants of Shaders/VoxelLight.comp.
+VkLightParams
+{
+    float [16] Matrix
+    int Width
+    int Height
+    int Srgb
+    int Bgra
+    int Casters
+}
+
+// The Scene buffer of Shaders/VoxelLight.comp: 16 words of sun and sky
+// colors, then 20 words per caster (its world-to-box matrix and first word).
+VkLightScene
+{
+    int [5136] Words
 }
 
 VkUiParams
@@ -53,6 +70,17 @@ QuaxelVulkan
     -long UiPipeline
     -bool UiBound
     -VkStorage UiAtlas
+    -long CasterLayout
+    -long CasterPool
+    -long CasterSet
+    -long LightLayout
+    -long LightPipeline
+    -bool LightBound
+    -VkStorage SceneStorage
+    -VkLightScene Scene
+    -long [256] CasterBuffers
+    -int CasterCount
+    #int MaxCasters = 256
 
     -bool CreateComputePipeline()
     {
@@ -63,7 +91,7 @@ QuaxelVulkan
         long [2] sets = {StorageLayout, StorageLayout}
         VkPushConstantRange params
         params.stageFlags = 32
-        params.vkSize = 104
+        params.vkSize = 120
         VkPipelineLayoutCreateInfo layout
         layout.setLayoutCount = 2
         layout.pSetLayouts = &sets[0]
@@ -79,7 +107,49 @@ QuaxelVulkan
         info.vkLayout = ComputeLayout
         int result = Vk.CreateComputePipelines(Device, 0, 1, &info, null, &ComputePipeline)
         Vk.DestroyShaderModule(Device, shader, null)
-        return result == 0 && CreateUiPipeline() && CreateEffectPipelines()
+        return result == 0 && CreateUiPipeline() && CreateEffectPipelines() && CreateLightPipeline()
+    }
+
+    -bool CreateLightPipeline()
+    {
+        VkDescriptorSetLayoutBinding binding
+        binding.descriptorCount = MaxCasters
+        VkDescriptorSetLayoutCreateInfo descriptor
+        descriptor.pBindings = &binding
+        if Vk.CreateDescriptorSetLayout(Device, &descriptor, null, &CasterLayout) != 0 { return false }
+        VkDescriptorPoolSize size
+        size.descriptorCount = MaxCasters
+        VkDescriptorPoolCreateInfo pool
+        pool.pPoolSizes = &size
+        if Vk.CreateDescriptorPool(Device, &pool, null, &CasterPool) != 0 { return false }
+        VkDescriptorSetAllocateInfo setInfo
+        setInfo.descriptorPool = CasterPool
+        setInfo.pSetLayouts = &CasterLayout
+        if Vk.AllocateDescriptorSets(Device, &setInfo, &CasterSet) != 0 { return false }
+        // TRANSFER_DST, device local: rewritten by CmdUpdateBuffer each frame.
+        VkStorage scene
+        if !CreateStorage((long)Scene.Words.Len * 4, 2, 1, scene) { return false }
+        SceneStorage = scene
+        long [3] sets = {StorageLayout, StorageLayout, CasterLayout}
+        VkPushConstantRange params
+        params.stageFlags = 32
+        params.vkSize = 84
+        VkPipelineLayoutCreateInfo layout
+        layout.setLayoutCount = 3
+        layout.pSetLayouts = &sets[0]
+        layout.pushConstantRangeCount = 1
+        layout.pPushConstantRanges = &params
+        if Vk.CreatePipelineLayout(Device, &layout, null, &LightLayout) != 0 { return false }
+        long shader = VoxelLightShaders.Compute(Device)
+        if shader == 0 { return false }
+        VkComputePipelineCreateInfo info
+        info.vkStage.vkStage = 32
+        info.vkStage.vkModule = shader
+        info.vkStage.pName = "main"
+        info.vkLayout = LightLayout
+        int result = Vk.CreateComputePipelines(Device, 0, 1, &info, null, &LightPipeline)
+        Vk.DestroyShaderModule(Device, shader, null)
+        return result == 0
     }
 
     -bool CreateUiPipeline()
@@ -122,6 +192,19 @@ QuaxelVulkan
     -ReleaseCompute()
     {
         ReleaseEffects()
+        VkStorage scene = SceneStorage
+        ReleaseStorage(scene)
+        SceneStorage = scene
+        Vk.DestroyPipeline(Device, LightPipeline, null)
+        Vk.DestroyPipelineLayout(Device, LightLayout, null)
+        Vk.DestroyDescriptorPool(Device, CasterPool, null)
+        Vk.DestroyDescriptorSetLayout(Device, CasterLayout, null)
+        LightPipeline = 0
+        LightLayout = 0
+        CasterPool = 0
+        CasterSet = 0
+        CasterLayout = 0
+        CasterCount = 0
         for i : 0; i < Volumes.Count; i++ {
             VkStorage storage = Volumes.Items[i]
             ReleaseStorage(storage)
@@ -235,20 +318,23 @@ QuaxelVulkan
         MemoryBarrier(0x1000, 0x1000, 0x800, 0x60) // transfer write -> compute read/write
         UiBound = false
         EffectBound = false
+        LightBound = false
+        CasterCount = 0
         Vk.CmdBindPipeline(Command, 1, ComputePipeline)
         Vk.CmdBindDescriptorSets(Command, 1, ComputeLayout, 0, 1, &Output.Descriptor, 0, null)
     }
 
-    bool TraceVolume(int handle, void* matrix, float left, float top, float right, float bottom, float lightX, float lightY, float lightZ)
+    // Axes points at 9 floats: the world normals of the box's +X, +Y and +Z faces.
+    bool TraceVolume(int handle, void* matrix, float left, float top, float right, float bottom, void* axes)
     {
         if !FrameOpen { return Device != 0 }
         if !ComputeFrame || handle < 0 || handle >= Volumes.Count { return false }
         VkStorage storage = Volumes.Items[handle]
-        return Trace(storage.Descriptor, 0, matrix, left, top, right, bottom, lightX, lightY, lightZ)
+        return Trace(storage.Descriptor, 0, matrix, left, top, right, bottom, axes)
     }
 
     // Traces one volume that starts at word `base` of the buffer behind descriptor.
-    -bool Trace(long descriptor, int base, void* matrix, float left, float top, float right, float bottom, float lightX, float lightY, float lightZ)
+    -bool Trace(long descriptor, int base, void* matrix, float left, float top, float right, float bottom, void* axes)
     {
         VkVoxelParams params
         memcpy(&params.Matrix[0], matrix, 64)
@@ -258,22 +344,77 @@ QuaxelVulkan
         params.StartY = (int)(top * (float)Extent.height)
         int endX = (int)(right * (float)Extent.width) + 1
         int endY = (int)(bottom * (float)Extent.height) + 1
-        params.Srgb = Format == 50 || Format == 43 ? 1 | 0
-        params.Bgra = Format == 50 || Format == 44 ? 1 | 0
-        params.FaceLight[0] = lightX
-        params.FaceLight[1] = lightY
-        params.FaceLight[2] = lightZ
         params.Base = base
-        if UiBound || EffectBound {
+        memcpy(&params.Axes[0], axes, 36)
+        if UiBound || EffectBound || LightBound {
             UiBound = false
             EffectBound = false
+            LightBound = false
             Vk.CmdBindPipeline(Command, 1, ComputePipeline)
             Vk.CmdBindDescriptorSets(Command, 1, ComputeLayout, 0, 1, &Output.Descriptor, 0, null)
         }
         Vk.CmdBindDescriptorSets(Command, 1, ComputeLayout, 1, 1, &descriptor, 0, null)
-        Vk.CmdPushConstants(Command, ComputeLayout, 32, 0, 104, &params)
+        Vk.CmdPushConstants(Command, ComputeLayout, 32, 0, 120, &params)
         Vk.CmdDispatch(Command, (endX - params.StartX + 7) / 8, (endY - params.StartY + 7) / 8, 1)
         MemoryBarrier(0x800, 0x40, 0x800, 0x60) // following volume compares against this depth
+        return true
+    }
+
+    // Adds a volume whose voxels block sunlight in this frame's LightVoxels.
+    // BoxFromWorld points at 16 floats mapping world positions to the
+    // volume's unit box. Casters past MaxCasters are ignored.
+    bool AddShadowCaster(int handle, void* boxFromWorld)
+    {
+        if !FrameOpen { return Device != 0 }
+        if !ComputeFrame || handle < 0 || handle >= Volumes.Count { return false }
+        if CasterCount >= MaxCasters { return true }
+        int at = 16 + CasterCount * 20
+        memcpy(&Scene.Words[at], boxFromWorld, 64)
+        for i : 16; i < 20; i++ { Scene.Words[at + i] = 0 }
+        CasterBuffers[CasterCount] = Volumes.Items[handle].Buffer
+        CasterCount++
+        return true
+    }
+
+    // Turns the traced albedo, occlusion, depth and normals into lit color.
+    // WorldFromClip points at 16 floats. Lighting points at 16 floats: the
+    // direction toward the sun, then sun, sky and ground colors, each padded
+    // to four. Clears the casters.
+    bool LightVoxels(void* worldFromClip, void* lighting)
+    {
+        if !FrameOpen { return Device != 0 }
+        if !ComputeFrame { return false }
+        memcpy(&Scene.Words[0], lighting, 64)
+        // Unused array entries must still name a valid buffer.
+        VkDescriptorBufferInfo [256] infos
+        for i : 0; i < MaxCasters; i++ {
+            infos[i].buffer = i < CasterCount ? CasterBuffers[i] | Output.Buffer
+            infos[i].range = -1 // VK_WHOLE_SIZE
+        }
+        VkWriteDescriptorSet write
+        write.dstSet = CasterSet
+        write.descriptorCount = MaxCasters
+        write.pBufferInfo = &infos[0]
+        Vk.UpdateDescriptorSets(Device, 1, &write, 0, null)
+        Vk.CmdUpdateBuffer(Command, SceneStorage.Buffer, 0, (long)(16 + CasterCount * 20) * 4, &Scene.Words[0])
+        MemoryBarrier(0x1000, 0x1000, 0x800, 0x20) // transfer write -> compute read
+        VkLightParams params
+        memcpy(&params.Matrix[0], worldFromClip, 64)
+        params.Width = Extent.width
+        params.Height = Extent.height
+        params.Srgb = Format == 50 || Format == 43 ? 1 | 0
+        params.Bgra = Format == 50 || Format == 44 ? 1 | 0
+        params.Casters = CasterCount
+        UiBound = false
+        EffectBound = false
+        LightBound = true
+        Vk.CmdBindPipeline(Command, 1, LightPipeline)
+        long [3] sets = {Output.Descriptor, SceneStorage.Descriptor, CasterSet}
+        Vk.CmdBindDescriptorSets(Command, 1, LightLayout, 0, 3, &sets[0], 0, null)
+        Vk.CmdPushConstants(Command, LightLayout, 32, 0, 84, &params)
+        Vk.CmdDispatch(Command, (Extent.width + 7) / 8, (Extent.height + 7) / 8, 1)
+        MemoryBarrier(0x800, 0x40, 0x800, 0x60) // UI blends over the lit frame
+        CasterCount = 0
         return true
     }
 

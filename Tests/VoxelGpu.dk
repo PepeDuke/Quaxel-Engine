@@ -1,5 +1,75 @@
+// One 8^3 brick in the volume upload format: dimensions, directory, then 16
+// mask words and 512 colors.
+QuaxelTestBrick
+{
+    int [532] Words
+}
+
 QuaxelVulkan
-#{}
+#{
+    -QuaxelTestBrick EmptyBrick()
+    {
+        QuaxelTestBrick brick
+        brick.Words[0] = 8
+        brick.Words[1] = 8
+        brick.Words[2] = 8
+        brick.Words[3] = 4
+        return brick
+    }
+
+    -SetTestCell(QuaxelTestBrick& brick, int x, int y, int z, int rgb)
+    {
+        int m = 0
+        for bit : 0; bit < 3; bit++ {
+            m |= ((x >> bit) & 1) << (3 * bit)
+            m |= ((y >> bit) & 1) << (3 * bit + 1)
+            m |= ((z >> bit) & 1) << (3 * bit + 2)
+        }
+        brick.Words[4 + (m >> 5)] |= 1 << (m & 31)
+        brick.Words[20 + m] = rgb + 1
+    }
+
+    -int UploadTestBrick(QuaxelTestBrick& brick)
+    {
+        void* mapped = null
+        int handle = MapVolume(-1, 532, mapped)
+        if handle < 0 { return -1 }
+        memcpy(mapped, &brick.Words[0], 2128)
+        UnmapVolume(handle)
+        return handle
+    }
+
+    // Ends the frame and returns frame-buffer words at the given indexes.
+    -bool ReadFrameWords(long [4]& indexes, int count, uint [4]& words)
+    {
+        VkStorage readback
+        if !CreateStorage((long)count * 4, 2, 6, readback) { return false }
+        MemoryBarrier(0x1800, 0x1040, 0x1000, 0x800)
+        VkBufferCopy [4] regions
+        for i : 0; i < count; i++ {
+            regions[i].srcOffset = indexes[i] * 4
+            regions[i].dstOffset = (long)i * 4
+            regions[i].bytes = 4
+        }
+        Vk.CmdCopyBuffer(Command, Output.Buffer, readback.Buffer, count, &regions[0])
+        MemoryBarrier(0x1000, 0x1000, 0x4000, 0x2000)
+        bool ok = EndFrame() && Vk.WaitForFences(Device, 1, &FrameFence, 1, -1) == 0
+        void* mapped = null
+        ok = ok && Vk.MapMemory(Device, readback.Memory, 0, (long)count * 4, 0, &mapped) == 0
+        if ok {
+            memcpy(&words[0], mapped, (long)count * 4)
+            Vk.UnmapMemory(Device, readback.Memory)
+        }
+        ReleaseStorage(readback)
+        return ok
+    }
+
+    // Frame word of the pixel at the middle column whose ray meets cell row y
+    // of an 8-cell-tall box that fills the screen.
+    -long RowAt(float cellY) { return (long)(Extent.width / 2) + (long)Extent.width * (int)(cellY * (float)Extent.height / 8.0) }
+
+    -float Green(uint color) { return (float)((color >> (uint)8) & (uint)255) }
+}
 T{
     UiBlendsRectanglesAndDrawsGlyphBits()
     {
@@ -53,50 +123,122 @@ T{
         T.AreEqual(pixels[6], clear)
     }
 
-    FaceBrightnessComesFromTheCaller()
+    TraceWritesAlbedoOcclusionDepthAndNormal()
     {
-        T.IsTrue(QuaxelPlatformBackend.OpenWindow("Voxel face light", 128, 128, false))
+        T.IsTrue(QuaxelPlatformBackend.OpenWindow("Voxel G-buffer", 128, 128, false))
         T.IsTrue(QuaxelPlatformBackend.StartRenderer())
-        // One white cell.
-        int [516] words
+        // One white cell: its occupancy bit, then its color.
+        int [532] words
         words[0] = 1
         words[1] = 1
         words[2] = 1
         words[3] = 4
-        words[4] = 0xffffff + 1
+        words[4] = 1
+        words[4 + 16] = 0xffffff + 1
         void* mapped = null
-        int handle = MapVolume(-1, 516, mapped)
+        int handle = MapVolume(-1, 532, mapped)
         T.IsTrue(handle >= 0)
-        memcpy(mapped, &words[0], 2064)
+        memcpy(mapped, &words[0], 2128)
         UnmapVolume(handle)
         T.IsTrue(BeginFrame(128, 128, null))
-        // The cell fills the screen. Rays start in front of it and enter through a Z face.
+        // The cell fills the screen. Rays start in front of it and enter through
+        // its -Z face. The right half claims the box's Z axis points along world X.
         float [16] matrix = {0.5, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, -0.75, 1.0}
-        T.IsTrue(TraceVolume(handle, &matrix[0], 0.0, 0.0, 0.5, 1.0, 0.0, 0.0, 1.0))
-        T.IsTrue(TraceVolume(handle, &matrix[0], 0.5, 0.0, 1.0, 1.0, 1.0, 1.0, 0.25))
-        VkStorage readback
-        T.IsTrue(CreateStorage(8, 2, 6, readback))
-        MemoryBarrier(0x1800, 0x1040, 0x1000, 0x800)
-        VkBufferCopy [2] regions
-        regions[0].srcOffset = (long)(Extent.width / 4 + Extent.width * (Extent.height / 2)) * 4
-        regions[0].bytes = 4
-        regions[1].srcOffset = (long)(Extent.width * 3 / 4 + Extent.width * (Extent.height / 2)) * 4
-        regions[1].dstOffset = 4
-        regions[1].bytes = 4
-        Vk.CmdCopyBuffer(Command, Output.Buffer, readback.Buffer, 2, &regions[0])
-        MemoryBarrier(0x1000, 0x1000, 0x4000, 0x2000)
-        T.IsTrue(EndFrame())
-        T.AreEqual(Vk.WaitForFences(Device, 1, &FrameFence, 1, -1), 0)
-        T.AreEqual(Vk.MapMemory(Device, readback.Memory, 0, 8, 0, &mapped), 0)
-        uint [2] pixels
-        memcpy(&pixels[0], mapped, 8)
-        Vk.UnmapMemory(Device, readback.Memory)
-        ReleaseStorage(readback)
+        float [9] plain = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0}
+        float [9] turned = {0.0, 0.0, -1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0}
+        T.IsTrue(TraceVolume(handle, &matrix[0], 0.0, 0.0, 0.5, 1.0, &plain[0]))
+        T.IsTrue(TraceVolume(handle, &matrix[0], 0.5, 0.0, 1.0, 1.0, &turned[0]))
+        long pixels = (long)Extent.width * Extent.height
+        long left = (long)(Extent.width / 4) + (long)Extent.width * (Extent.height / 2)
+        long right = (long)(Extent.width * 3 / 4) + (long)Extent.width * (Extent.height / 2)
+        long [4] at = {left, left + pixels, left + 2 * pixels, right + 2 * pixels}
+        uint [4] read
+        T.IsTrue(ReadFrameWords(at, 4, read))
         Stop()
         QuaxelPlatformBackend.CloseWindow()
-        T.AreEqual(pixels[0], 0xFFFFFFFF)
-        uint dim = pixels[1] & (uint)255
-        T.IsTrue(dim > (uint)0 && dim < (uint)200)
+        // White, and nothing around the cell occludes it.
+        T.AreEqual(read[0], 0xFFFFFFFF)
+        // Entered a quarter of the way into the clip range.
+        float depth = 0.0
+        memcpy(&depth, &read[1], 4)
+        T.IsTrue(depth > 0.2499 && depth < 0.2501)
+        // Signed bytes: the -Z face is (0, 0, -127), the turned one (-127, 0, 0).
+        T.AreEqual(read[2], 0x00810000)
+        T.AreEqual(read[3], 0x00000081)
+    }
+
+    SunLightsFacesAndBlockersCastShadows()
+    {
+        T.IsTrue(QuaxelPlatformBackend.OpenWindow("Voxel shadows", 128, 128, false))
+        T.IsTrue(QuaxelPlatformBackend.StartRenderer())
+        // A white wall at z = 7 faces the camera. A ledge at z = 5 covers rows
+        // 4 to 7. The sun is up and behind the camera, so the ledge shades the
+        // wall just below it, while the wall's lowest rows stay in sunlight.
+        QuaxelTestBrick brick = EmptyBrick()
+        for x : 0...7 |
+            y : 0...7
+        {
+            SetTestCell(brick, x, y, 7, 0xffffff)
+            if y >= 4 { SetTestCell(brick, x, y, 5, 0xffffff) }
+        }
+        int handle = UploadTestBrick(brick)
+        T.IsTrue(handle >= 0)
+        T.IsTrue(BeginFrame(128, 128, null))
+        // The box is the world's unit cube; rays run along +Z.
+        float [16] matrix = {0.5, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, -0.5, 1.0}
+        float [16] identity = {1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0}
+        float [9] axes = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0}
+        T.IsTrue(TraceVolume(handle, &matrix[0], 0.0, 0.0, 1.0, 1.0, &axes[0]))
+        T.IsTrue(AddShadowCaster(handle, &identity[0]))
+        // Toward the sun (0, 0.707, -0.707); white sun; dim gray sky and ground.
+        float [16] lighting = {0.0, 0.70710678, -0.70710678, 0.0, 1.0, 1.0, 1.0, 0.0, 0.2, 0.2, 0.2, 0.0, 0.2, 0.2, 0.2, 0.0}
+        T.IsTrue(LightVoxels(&matrix[0], &lighting[0]))
+        long [4] at = {RowAt(0.5), RowAt(3.5), RowAt(6.5), 0}
+        uint [4] read
+        T.IsTrue(ReadFrameWords(at, 3, read))
+        Stop()
+        QuaxelPlatformBackend.CloseWindow()
+        float sunny = Green(read[0])
+        float shaded = Green(read[1])
+        float ledge = Green(read[2])
+        T.IsTrue(sunny > shaded + 60.0)
+        // The ledge's own face is in front of everything, so it is lit.
+        T.IsTrue(ledge > shaded + 60.0)
+        T.IsTrue(shaded > 0.0)
+    }
+
+    FacesBesideACornerAreOccluded()
+    {
+        T.IsTrue(QuaxelPlatformBackend.OpenWindow("Voxel occlusion", 128, 128, false))
+        T.IsTrue(QuaxelPlatformBackend.StartRenderer())
+        // A wall at z = 7 meets a floor at y = 0. Light comes straight at the
+        // wall, so only occlusion tells its bottom row from its middle.
+        QuaxelTestBrick brick = EmptyBrick()
+        for x : 0...7 |
+            y : 0...7
+        {
+            SetTestCell(brick, x, y, 7, 0xffffff)
+            SetTestCell(brick, x, 0, y, 0xffffff)
+        }
+        int handle = UploadTestBrick(brick)
+        T.IsTrue(handle >= 0)
+        T.IsTrue(BeginFrame(128, 128, null))
+        float [16] matrix = {0.5, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, -0.5, 1.0}
+        float [16] identity = {1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0}
+        float [9] axes = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0}
+        T.IsTrue(TraceVolume(handle, &matrix[0], 0.0, 0.0, 1.0, 1.0, &axes[0]))
+        T.IsTrue(AddShadowCaster(handle, &identity[0]))
+        float [16] lighting = {0.0, 0.0, -1.0, 0.0, 0.5, 0.5, 0.5, 0.0, 0.5, 0.5, 0.5, 0.0, 0.5, 0.5, 0.5, 0.0}
+        T.IsTrue(LightVoxels(&matrix[0], &lighting[0]))
+        long [4] at = {RowAt(1.05), RowAt(5.5), 0, 0}
+        uint [4] read
+        T.IsTrue(ReadFrameWords(at, 2, read))
+        Stop()
+        QuaxelPlatformBackend.CloseWindow()
+        float corner = Green(read[0])
+        float open = Green(read[1])
+        T.IsTrue(open > corner + 20.0)
+        T.IsTrue(corner > 0.0)
     }
 
     RayCrossesEmptyBrickAndWritesFirstHitDepth()
@@ -104,28 +246,31 @@ T{
         T.IsTrue(QuaxelPlatformBackend.OpenWindow("Voxel traversal", 128, 128, false))
         T.IsTrue(QuaxelPlatformBackend.StartRenderer())
         // One column, 23 cells deep. The final cell is occupied.
-        int [518] words
+        int [534] words
         words[0] = 1
         words[1] = 1
         words[2] = 23
         words[5] = 6
-        words[6 + 288] = 0xff0001
+        // Morton(0,0,6) = 288: mask word 9, bit 0.
+        words[6 + 9] = 1
+        words[6 + 16 + 288] = 0xff0001
         void* mapped = null
-        int handle = MapVolume(-1, 518, mapped)
+        int handle = MapVolume(-1, 534, mapped)
         T.IsTrue(handle >= 0)
-        memcpy(mapped, &words[0], 2072)
+        memcpy(mapped, &words[0], 2136)
         UnmapVolume(handle)
         T.IsTrue(BeginFrame(128, 128, null))
         float [16] matrix = {1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0}
-        T.IsTrue(TraceVolume(handle, &matrix[0], 0.0, 0.0, 1.0, 1.0, 0.68, 1.0, 0.42))
+        float [9] axes = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0}
+        T.IsTrue(TraceVolume(handle, &matrix[0], 0.0, 0.0, 1.0, 1.0, &axes[0]))
         // A second instance covers the left side. Its ray enters through +Z
         // and hits the last voxel at depth 0.25. Then redraw the farther one.
         matrix[10] = -1.0
         matrix[14] = 0.75
-        T.IsTrue(TraceVolume(handle, &matrix[0], 0.0, 0.0, 0.375, 1.0, 0.68, 1.0, 0.42))
+        T.IsTrue(TraceVolume(handle, &matrix[0], 0.0, 0.0, 0.375, 1.0, &axes[0]))
         matrix[10] = 1.0
         matrix[14] = 0.0
-        T.IsTrue(TraceVolume(handle, &matrix[0], 0.0, 0.0, 1.0, 1.0, 0.68, 1.0, 0.42))
+        T.IsTrue(TraceVolume(handle, &matrix[0], 0.0, 0.0, 1.0, 1.0, &axes[0]))
         VkStorage readback
         T.IsTrue(CreateStorage(12, 2, 6, readback))
         MemoryBarrier(0x1800, 0x1040, 0x1000, 0x800)

@@ -5,10 +5,12 @@ QuaxelPlatformBackend
     int MapVolume(int previous, int words, void*& mapped) { return QuaxelVulkan.MapVolume(previous, words, mapped) }
     UnmapVolume(int handle) { QuaxelVulkan.UnmapVolume(handle) }
     bool BeginVoxelFrame() { return BeginFrame(null) }
-    bool TraceVolume(int handle, void* boxFromClip, float left, float top, float right, float bottom, float lightX, float lightY, float lightZ)
+    bool TraceVolume(int handle, void* boxFromClip, float left, float top, float right, float bottom, void* axes)
     {
-        return QuaxelVulkan.TraceVolume(handle, boxFromClip, left, top, right, bottom, lightX, lightY, lightZ)
+        return QuaxelVulkan.TraceVolume(handle, boxFromClip, left, top, right, bottom, axes)
     }
+    bool AddShadowCaster(int handle, void* boxFromWorld) { return QuaxelVulkan.AddShadowCaster(handle, boxFromWorld) }
+    bool LightVoxels(void* worldFromClip, void* lighting) { return QuaxelVulkan.LightVoxels(worldFromClip, lighting) }
 
     bool EnsureEffectPages(int pages) { return QuaxelVulkan.EnsureEffectPages(pages) }
     bool ResetEffect(int slot) { return QuaxelVulkan.ResetEffect(slot) }
@@ -19,9 +21,9 @@ QuaxelPlatformBackend
     }
     bool SimulateEffect(int slot, int step, float seconds) { return QuaxelVulkan.SimulateEffect(slot, step, seconds) }
     bool DrawEffect(int slot, int tick) { return QuaxelVulkan.DrawEffect(slot, tick) }
-    bool TraceEffect(int slot, void* boxFromClip, float left, float top, float right, float bottom, float lightX, float lightY, float lightZ)
+    bool TraceEffect(int slot, void* boxFromClip, float left, float top, float right, float bottom, void* axes)
     {
-        return QuaxelVulkan.TraceEffect(slot, boxFromClip, left, top, right, bottom, lightX, lightY, lightZ)
+        return QuaxelVulkan.TraceEffect(slot, boxFromClip, left, top, right, bottom, axes)
     }
     bool ReadEffectSlot(int slot, int words, void* destination) { return QuaxelVulkan.ReadEffectSlot(slot, words, destination) }
 

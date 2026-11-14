@@ -57,8 +57,9 @@ GPU, about 9 MB.
 A slot holds, in order:
 
 1. **Its volume.** This uses the same brick format as any volume, with each of
-   its 512 bricks at a fixed place. The GPU rebuilds the brick directory every
-   frame, so empty bricks are skipped while tracing.
+   its 512 bricks at a fixed place. The GPU rebuilds each brick's occupancy
+   bits and the brick directory every frame, so empty bricks are skipped while
+   tracing.
 2. **A solid mask.** One bit per cell, marking the world voxels it covers.
 3. **Up to 1024 particles.**
 4. **The effect's params.** These are the style, origin, direction, seed and
@@ -90,7 +91,7 @@ tracing the world:
    - `EffectClear.comp` empties the bricks that were drawn into last frame.
    - `EffectStamp.comp` draws flying particles as dithered balls with trails,
      and stuck ones as stains lying on the face they hit.
-   - `EffectBricks.comp` rebuilds the directory.
+   - `EffectBricks.comp` rebuilds the occupancy bits and the directory.
 4. **Trace.** After the world's volumes, each slot is traced with the ordinary
    voxel shader, starting at the slot's first word. The shared depth buffer
    orders effects against everything else.

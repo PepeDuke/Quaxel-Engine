@@ -1,3 +1,14 @@
+// One volume or effect slot to trace this frame. Near is the clip-space depth
+// of its box's closest point.
+QuaxelTraceItem
+{
+    mat4 Clip
+    mat4 BoxFromWorld
+    int Handle
+    int Slot
+    float Near
+}
+
 // Owns the main loop: startup, message pumping, fixed updates, rendering, teardown.
 QuaxelEngine
 #{
@@ -6,6 +17,8 @@ QuaxelEngine
     -void* RenderedWorld
     -void* RenderedUi
     -bool RedrawFailed
+    // Reused every frame so ordering the traces allocates nothing.
+    -QuaxelTraceItem [] TraceOrder
 
     // Frames slower than this many steps drop the excess instead of catching up.
     -int MaxStepsPerFrame() { return 5 }
@@ -187,17 +200,49 @@ QuaxelEngine
         if pages > 0 && !QuaxelRenderer.EnsureEffectPages(pages) { return false }
         if !QuaxelRenderer.BeginVoxelFrame() { return false }
         if !RunEffects(world) { return false }
+        // Trace near volumes first. Each trace stops at the depth already
+        // written, so whatever they hide costs almost nothing. The order only
+        // affects speed: every pixel still keeps its nearest hit.
+        TraceOrder.Clear()
         for id : world.NextWith(0, mask); id != 0; id = world.NextWith(id, mask) {
             if world.IsHidden(id) { continue }
-            vec3 lights = world.FaceLights(id)
-            if !Trace(viewProjection * world.VolumeModel(id), world.VolumeHandle(world.VolumeOf(id)), -1, lights) { return false }
+            mat4 model = world.VolumeModel(id)
+            // Exact: a small model has a tiny but valid determinant.
+            if model.Determinant() (0.0)== 0.0 { continue }
+            QuaxelTraceItem item
+            item.Clip = viewProjection * model
+            item.BoxFromWorld = model.Inverse()
+            item.Handle = world.VolumeHandle(world.VolumeOf(id))
+            item.Slot = -1
+            item.Near = NearDepth(item.Clip)
+            TraceOrder += item
         }
-        // Effects are never rotated, so their faces take the default lights.
-        vec3 effectLights = vec3(0.68, 1.0, 0.42)
         for slot : 0; slot < world.EffectSlotCount(); slot++ {
             if !world.IsEffectSlotPlaying(slot) { continue }
-            if !Trace(viewProjection * world.EffectModel(slot), -1, slot, effectLights) { return false }
+            mat4 model = world.EffectModel(slot)
+            if model.Determinant() (0.0)== 0.0 { continue }
+            QuaxelTraceItem item
+            item.Clip = viewProjection * model
+            item.BoxFromWorld = model.Inverse()
+            item.Handle = -1
+            item.Slot = slot
+            item.Near = NearDepth(item.Clip)
+            TraceOrder += item
         }
+        SortByNear(TraceOrder)
+        for item : TraceOrder {
+            if !Trace(item.Clip, item.BoxFromWorld, item.Handle, item.Slot) { return false }
+        }
+        // Every volume blocks sunlight, including those off screen. Effects
+        // receive light but cast no shadows.
+        if world.Shadows {
+            for item : TraceOrder {
+                if item.Handle < 0 { continue }
+                mat4 boxFromWorld = item.BoxFromWorld
+                if !QuaxelRenderer.AddShadowCaster(item.Handle, &boxFromWorld) { return false }
+            }
+        }
+        if !Light(world, viewProjection) { return false }
         for i : 0; i < ui.CommandCount; i++ {
             QuaxelUiCommand command = ui.GetCommand(i)
             if !QuaxelRenderer.DrawUi(command.X, command.Y, command.Width, command.Height, command.Color, command.GlyphFirst, command.GlyphLast, command.Cell) { return false }
@@ -205,9 +250,70 @@ QuaxelEngine
         return QuaxelRenderer.EndFrame()
     }
 
+    // Clip-space depth of the closest corner of the unit box placed by clip.
+    -float NearDepth(mat4 clip)
+    {
+        return clip[3][2] - (Math.Abs(clip[0][2]) + Math.Abs(clip[1][2]) + Math.Abs(clip[2][2])) * 0.5
+    }
+
+    // Insertion sort by Near: few items, already nearly ordered from the last
+    // frame's camera. Stable, so equal depths keep node order, then slot order,
+    // and shared surfaces cannot flicker between frames.
+    -SortByNear(QuaxelTraceItem []& items)
+    {
+        for i : 1; i < items.Len; i++ {
+            QuaxelTraceItem moving = items[i]
+            long j = i - 1
+            while j >= 0 && items[j].Near > moving.Near {
+                items[j + 1] = items[j]
+                j--
+            }
+            items[j + 1] = moving
+        }
+    }
+
+    // Lights the traced frame with the world's sun and sky.
+    -bool Light(QuaxelWorld& world, mat4 viewProjection)
+    {
+        if viewProjection.Determinant() (0.0)== 0.0 { return true }
+        mat4 worldFromClip = viewProjection.Inverse()
+        vec3 sun = world.SunDirection
+        float length = sun.Length()
+        sun = length > 0.0 ? sun * (1.0 / length) | vec3(0.0, 1.0, 0.0)
+        float [16] lighting
+        lighting[0] = sun.X
+        lighting[1] = sun.Y
+        lighting[2] = sun.Z
+        lighting[4] = world.SunColor.X
+        lighting[5] = world.SunColor.Y
+        lighting[6] = world.SunColor.Z
+        lighting[8] = world.SkyColor.X
+        lighting[9] = world.SkyColor.Y
+        lighting[10] = world.SkyColor.Z
+        lighting[12] = world.GroundColor.X
+        lighting[13] = world.GroundColor.Y
+        lighting[14] = world.GroundColor.Z
+        return QuaxelRenderer.LightVoxels(&worldFromClip, &lighting[0])
+    }
+
+    // World normals of the faces of the box placed by boxFromWorld, for its
+    // +X, +Y and +Z axes. A face normal transforms by the inverse transpose,
+    // so axis a's normal is row a of boxFromWorld.
+    -FaceNormals(mat4 boxFromWorld, float [9]& axes)
+    {
+        for a : 0; a < 3; a++ {
+            vec3 n = vec3(boxFromWorld[0][a], boxFromWorld[1][a], boxFromWorld[2][a])
+            float length = n.Length()
+            if length > 0.0 { n = n * (1.0 / length) }
+            axes[3 * a] = n.X
+            axes[3 * a + 1] = n.Y
+            axes[3 * a + 2] = n.Z
+        }
+    }
+
     // Traces a unit box placed by clip: a volume when handle >= 0, otherwise an
     // effect slot. Off-screen and degenerate boxes are skipped.
-    -bool Trace(mat4 clip, int handle, int slot, vec3 lights)
+    -bool Trace(mat4 clip, mat4 boxFromWorld, int handle, int slot)
     {
         float rx = (Math.Abs(clip[0][0]) + Math.Abs(clip[1][0]) + Math.Abs(clip[2][0])) * 0.5
         float ry = (Math.Abs(clip[0][1]) + Math.Abs(clip[1][1]) + Math.Abs(clip[2][1])) * 0.5
@@ -218,8 +324,10 @@ QuaxelEngine
         if left >= right || top >= bottom { return true }
         if clip.Determinant() (0.0)== 0.0 { return true } // Exact: a small model has a tiny but valid determinant.
         mat4 boxFromClip = clip.Inverse()
-        if handle >= 0 { return QuaxelRenderer.TraceVolume(handle, &boxFromClip, left, top, right, bottom, lights.X, lights.Y, lights.Z) }
-        return QuaxelRenderer.TraceEffect(slot, &boxFromClip, left, top, right, bottom, lights.X, lights.Y, lights.Z)
+        float [9] axes
+        FaceNormals(boxFromWorld, axes)
+        if handle >= 0 { return QuaxelRenderer.TraceVolume(handle, &boxFromClip, left, top, right, bottom, &axes[0]) }
+        return QuaxelRenderer.TraceEffect(slot, &boxFromClip, left, top, right, bottom, &axes[0])
     }
 
     // Records each playing effect's GPU work into the open frame: a new
@@ -255,5 +363,35 @@ QuaxelEngine
             if !QuaxelRenderer.DrawEffect(slot, target) { return false }
         }
         return true
+    }
+}
+T{
+    TracesSortNearestFirstAndKeepTiesInOrder()
+    {
+        QuaxelTraceItem [] items
+        float [5] nears = {0.7, 0.2, 0.5, 0.2, 0.1}
+        for i : 0; i < 5; i++ {
+            QuaxelTraceItem item
+            item.Slot = i
+            item.Near = nears[i]
+            items += item
+        }
+        SortByNear(items)
+        T.AreEqual(items[0].Slot, 4)
+        T.AreEqual(items[1].Slot, 1)
+        T.AreEqual(items[2].Slot, 3)
+        T.AreEqual(items[3].Slot, 2)
+        T.AreEqual(items[4].Slot, 0)
+    }
+
+    NearDepthIsTheClosestCornerOfTheBox()
+    {
+        // A unit box scaled to depth 0.4 and centred at clip depth 0.5, then
+        // turned about Y so the corners reach further toward the camera.
+        mat4 clip = mat4.Identity()
+        clip[2][2] = 0.4
+        clip[0][2] = 0.3
+        clip[3][2] = 0.5
+        T.IsTrue(NearDepth(clip) (0.00001)== 0.15)
     }
 }

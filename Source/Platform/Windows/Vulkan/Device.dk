@@ -1,4 +1,4 @@
-// Vulkan 1.0, one frame in flight, and one graphics queue with presentation support.
+// Vulkan 1.0 with shaderStorageBufferArrayDynamicIndexing, one frame in flight, and one graphics queue with presentation support.
 VkInstanceExtensions
 {
     cstring surface = "VK_KHR_surface"
@@ -64,7 +64,16 @@ QuaxelVulkan
                     queueInfo.queueCount = 1
                     queueInfo.pQueuePriorities = &priority
                     cstring extension = "VK_KHR_swapchain"
+                    // VkPhysicalDeviceFeatures: 55 VkBool32. Index 35 is
+                    // shaderStorageBufferArrayDynamicIndexing.
+                    int [55] supported
+                    Vk.GetPhysicalDeviceFeatures(adapters[i], &supported[0])
+                    // The shadow pass indexes an array of volume buffers.
+                    if supported[35] == 0 { continue }
+                    int [55] enabled
+                    enabled[35] = 1
                     VkDeviceCreateInfo info
+                    info.pEnabledFeatures = &enabled[0]
                     info.queueCreateInfoCount = 1
                     info.pQueueCreateInfos = &queueInfo
                     info.enabledExtensionCount = 1

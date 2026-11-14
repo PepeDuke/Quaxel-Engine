@@ -142,7 +142,8 @@ QuaxelVulkan
         if Vk.GetSwapchainImagesKHR(Device, Chain, &count, &handles[0]) != 0 || count == 0 { return false }
         ImageCount = count
         if ComputeFrame {
-            if !CreateStorage((long)Extent.width * Extent.height * 8, 3, 1, Output) { return false }
+            // Per pixel: color, then depth, then a packed world normal.
+            if !CreateStorage((long)Extent.width * Extent.height * 12, 3, 1, Output) { return false }
         } else {
             if !CreateDepthTarget() || !CreatePass() || !CreatePipeline() { return false }
         }

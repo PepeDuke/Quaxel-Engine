@@ -1,20 +1,31 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
-// Rebuilds one effect's brick directory after drawing: a brick with any voxel
-// points at its fixed payload, an empty one is 0 so the trace skips it.
+// Rebuilds one effect brick's occupancy mask and directory entry after
+// drawing. Each of the 64 threads covers 8 consecutive Morton cells, which is
+// one 2^3 block and so one byte of the mask. A brick with any voxel points at
+// its fixed payload, an empty one is 0 so the trace skips it.
 layout(local_size_x=64) in;
 #include "EffectCommon.glsl"
 
-shared int occupied;
+shared uint mask[MASK_WORDS];
 
 void main() {
     int brick = int(gl_WorkGroupID.x);
-    if (gl_LocalInvocationID.x == 0) occupied = 0;
+    uint t = gl_LocalInvocationID.x;
+    if (t < uint(MASK_WORDS)) mask[t] = 0u;
     barrier();
-    int first = pc.base + BRICKS + brick * 512 + int(gl_LocalInvocationID.x) * 8;
+    int at = pc.base + BRICKS + brick * BRICK;
+    int first = at + MASK_WORDS + int(t) * 8;
+    uint bits = 0u;
     for (int i = 0; i < 8; ++i) {
-        if (words[first + i] != 0) { atomicOr(occupied, 1); break; }
+        if (words[first + i] != 0) bits |= 1u << i;
     }
+    if (bits != 0u) atomicOr(mask[t >> 2], bits << ((t & 3u) * 8u));
     barrier();
-    if (gl_LocalInvocationID.x == 0) words[pc.base + DIRECTORY + brick] = occupied != 0 ? BRICKS + brick * 512 : 0;
+    if (t < uint(MASK_WORDS)) words[at + int(t)] = int(mask[t]);
+    if (t == 0u) {
+        uint any = 0u;
+        for (int i = 0; i < MASK_WORDS; ++i) any |= mask[i];
+        words[pc.base + DIRECTORY + brick] = any != 0u ? BRICKS + brick * BRICK : 0;
+    }
 }

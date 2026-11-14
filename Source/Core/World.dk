@@ -156,6 +156,17 @@ QuaxelWorld
     -bool Stepping
     -bool HasPendingChanges
 
+    // Lighting of the voxel renderer. SunDirection points toward the sun and
+    // need not be unit length. Colors multiply voxel color: sunlight on faces
+    // that face the sun and are not shadowed, and ambient light that blends
+    // from GroundColor on faces pointing down to SkyColor on faces pointing up.
+    vec3 SunDirection = vec3(-0.35, 0.8, 0.6)
+    vec3 SunColor = vec3(0.78, 0.74, 0.66)
+    vec3 SkyColor = vec3(0.42, 0.46, 0.54)
+    vec3 GroundColor = vec3(0.24, 0.22, 0.2)
+    // When false, nothing blocks sunlight.
+    bool Shadows = true
+
     bool Exists(int id) { return id >= 1 && id <= Nodes.Len && Nodes[id - 1].Alive }
 
     bool IsActive(int id) { return Exists(id) && Nodes[id - 1].Active }
@@ -588,28 +599,6 @@ QuaxelWorld
         return socket.Position
     }
 
-    // Brightness of the faces whose normals are the volume's X, Y and Z axes.
-    // Rotation tilts the faces. Facing does not, so a character keeps its
-    // shading as it turns.
-    vec3 FaceLights(int id)
-    {
-        quat rotation
-        int current = id
-        while current != 0 {
-            rotation = Nodes[current - 1].Transform.Rotation * rotation
-            current = Nodes[current - 1].Parent
-        }
-        return vec3(
-            AxisLight(rotation.Rotate(vec3(1.0, 0.0, 0.0))),
-            AxisLight(rotation.Rotate(vec3(0.0, 1.0, 0.0))),
-            AxisLight(rotation.Rotate(vec3(0.0, 0.0, 1.0))))
-    }
-
-    -float AxisLight(vec3 normal)
-    {
-        return normal.Y * normal.Y + 0.68 * normal.X * normal.X + 0.42 * normal.Z * normal.Z
-    }
-
     int AddMesh(QuaxelMeshData mesh)
     {
         int volumeIndex = -1
@@ -937,26 +926,6 @@ T{
         vec3 origin = vec3(matrix * vec4(vec3(0.0, 0.0, 0.0), 1.0))
         T.AreEqual(origin.X, 6.0)
         T.IsFalse(world.GetSocketMatrix(node, "none", matrix))
-    }
-
-    FaceLightsFollowRotationButNotFacing()
-    {
-        QuaxelWorld world()
-        int node = world.CreateNode()
-        QuaxelTransform pose = QuaxelTransform.Make(vec3(0.0, 0.0, 0.0), vec3(1.0, 1.0, 1.0))
-        pose.FacingX = 0.70710678
-        pose.FacingZ = 0.70710678
-        world.AttachTransform(node, pose)
-        vec3 lights = world.FaceLights(node)
-        T.AreEqual(lights.X, 0.68)
-        T.AreEqual(lights.Y, 1.0)
-        T.AreEqual(lights.Z, 0.42)
-        // Rolling 90 degrees swaps which local axes face up and sideways.
-        pose.Rotation = QuaxelRotation.FromDegrees(0.0, 0.0, 90.0)
-        world.SetTransform(node, pose)
-        lights = world.FaceLights(node)
-        T.IsTrue(Math.Abs(lights.X - 1.0) < 0.0001)
-        T.IsTrue(Math.Abs(lights.Y - 0.68) < 0.0001)
     }
 
     DestroyingActiveCameraClearsIt()

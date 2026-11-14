@@ -1,7 +1,7 @@
 // A whole effect slot read back from the GPU: its volume words.
 QuaxelEffectReadback
 {
-    int [262659] Words
+    int [270851] Words
 
     // Calls visit once per drawn voxel, with its cell in the slot's 64^3 grid.
     int Count(func bool(int, int, int) visit)
@@ -14,7 +14,9 @@ QuaxelEffectReadback
             int by = (brick / 8) % 8
             int bz = brick / 64
             for cell : 0; cell < 512; cell++ {
-                if Words[offset + cell] == 0 { continue }
+                if Words[offset + 16 + cell] == 0 { continue }
+                // The occupancy bit must agree with the color.
+                if ((Words[offset + (cell >> 5)] >> (cell & 31)) & 1) == 0 { return -1 }
                 int x = (cell & 1) | ((cell >> 2) & 2) | ((cell >> 4) & 4)
                 int y = ((cell >> 1) & 1) | ((cell >> 3) & 2) | ((cell >> 5) & 4)
                 int z = ((cell >> 2) & 1) | ((cell >> 4) & 2) | ((cell >> 6) & 4)
@@ -32,7 +34,7 @@ QuaxelEffectReadback
     // A typed view of fresh memory. Constructing the container would zero a
     // megabyte word by word, which takes the compiler minutes to build;
     // ReadEffectSlot fills it anyway.
-    QuaxelEffectReadback* Allocate() { return (QuaxelEffectReadback*)HeapAlloc(GetProcessHeap(), 0, (long)262659 * 4) }
+    QuaxelEffectReadback* Allocate() { return (QuaxelEffectReadback*)HeapAlloc(GetProcessHeap(), 0, (long)270851 * 4) }
 
     Release(QuaxelEffectReadback* back) { HeapFree(GetProcessHeap(), 0, back) }
 
@@ -63,7 +65,7 @@ T{
         }
         T.IsTrue(world.IsEffectPlaying(effect))
         QuaxelEffectReadback* back = QuaxelEffectReadback.Allocate()
-        T.IsTrue(QuaxelRenderer.ReadEffectSlot(0, 262659, &back.Words[0]))
+        T.IsTrue(QuaxelRenderer.ReadEffectSlot(0, 270851, &back.Words[0]))
         T.AreEqual(back.Words[0], 64)
         int all = back.Count(@ bool(int x, int y, int z) { return true })
         // Everything drawn is a stain lying on the ground's top, at y = 0.
@@ -98,7 +100,7 @@ T{
             T.IsTrue(Render(world, ui, 128, 128))
         }
         QuaxelEffectReadback* back = QuaxelEffectReadback.Allocate()
-        T.IsTrue(QuaxelRenderer.ReadEffectSlot(0, 262659, &back.Words[0]))
+        T.IsTrue(QuaxelRenderer.ReadEffectSlot(0, 270851, &back.Words[0]))
         float size = style.VoxelSize
         int all = back.Count(@ bool(int x, int y, int z) { return true })
         // Stains may wrap onto the sides, but none hang in the air past them.
@@ -132,11 +134,11 @@ T{
             T.IsTrue(Render(world, ui, 128, 128))
         }
         QuaxelEffectReadback* back = QuaxelEffectReadback.Allocate()
-        T.IsTrue(QuaxelRenderer.ReadEffectSlot(8, 262659, &back.Words[0]))
+        T.IsTrue(QuaxelRenderer.ReadEffectSlot(8, 270851, &back.Words[0]))
         int high = back.Count(@ bool(int x, int y, int z) { return QuaxelEffectReadback.RowY(style, origin, y) > 0.6 })
         int sunk = back.Count(@ bool(int x, int y, int z) { return QuaxelEffectReadback.RowY(style, origin, y) < -0.4 })
         QuaxelEffectReadback* fire = QuaxelEffectReadback.Allocate()
-        T.IsTrue(QuaxelRenderer.ReadEffectSlot(0, 262659, &fire.Words[0]))
+        T.IsTrue(QuaxelRenderer.ReadEffectSlot(0, 270851, &fire.Words[0]))
         int flames = fire.Count(@ bool(int x, int y, int z) { return true })
         QuaxelEffectReadback.Release(back)
         QuaxelEffectReadback.Release(fire)

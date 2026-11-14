@@ -14,7 +14,10 @@ QuaxelVoxelSocket
 }
 
 // Words starts with the grid dimensions, then one offset per 8^3 brick.
-// A zero offset means empty space. Only written bricks have a payload.
+// A zero offset means empty space. Only written bricks have a payload of
+// BrickWords: MaskWords of occupancy bits, then one color word per cell. Both
+// are indexed by the cell's Morton number, so the bits of each 2^3 block share
+// a byte and each 4^3 block spans two words.
 QuaxelVoxelVolume
 {
     -int [] Words
@@ -71,18 +74,22 @@ QuaxelVoxelVolume
             if FreeOffsets.Len > 0 {
                 offset = (FreeOffsets--)
             } else {
-                if Words.Len > 33554432 - 512 { return false }
+                if Words.Len > 33554432 - BrickWords { return false }
                 offset = (int)Words.Len
-                for i : 0; i < 512; i++ { Words += 0 }
+                for i : 0; i < BrickWords; i++ { Words += 0 }
                 OccupiedCounts += 0
             }
             Words[brick] = offset
         }
-        int cell = offset + (Spread(x) | (Spread(y) << 1) | (Spread(z) << 2))
-        int slot = (offset - PayloadStart) / 512
+        int morton = Spread(x) | (Spread(y) << 1) | (Spread(z) << 2)
+        int cell = offset + MaskWords + morton
+        int maskWord = offset + (morton >> 5)
+        int bit = 1 << (morton & 31)
+        int slot = (offset - PayloadStart) / BrickWords
         if rgb < 0 {
             if Words[cell] == 0 { return true }
             Words[cell] = 0
+            Words[maskWord] &= ~bit
             OccupiedCounts[slot]--
             if OccupiedCounts[slot] == 0 {
                 Words[brick] = 0
@@ -91,6 +98,7 @@ QuaxelVoxelVolume
         } else {
             if Words[cell] == 0 { OccupiedCounts[slot]++ }
             Words[cell] = (rgb & 0xffffff) + 1
+            Words[maskWord] |= bit
         }
         return true
     }
@@ -133,7 +141,7 @@ QuaxelVoxelVolume
         int rows = (Words[1] + 7) / 8
         int offset = Words[3 + x / 8 + columns * (y / 8 + rows * (z / 8))]
         if offset == 0 { return -1 }
-        return Words[offset + (Spread(x) | (Spread(y) << 1) | (Spread(z) << 2))] - 1
+        return Words[offset + MaskWords + (Spread(x) | (Spread(y) << 1) | (Spread(z) << 2))] - 1
     }
 
     CopyTo(void* destination)
@@ -166,12 +174,17 @@ QuaxelVoxelVolume
         upload.Words[brick] = 0
         if offset == 0 { return }
         upload.Words[brick] = next
-        for i : 0; i < 512; i++ { upload.Words[next + i] = Words[offset + i] }
-        next += 512
+        for i : 0; i < BrickWords; i++ { upload.Words[next + i] = Words[offset + i] }
+        next += BrickWords
     }
 }
 @{
-    WordCount: (int)Words.Len - (int)FreeOffsets.Len * 512
+    WordCount: (int)Words.Len - (int)FreeOffsets.Len * BrickWords
+}
+#{
+    // One occupancy bit per cell of an 8^3 brick, then 512 color words.
+    #int MaskWords = 16
+    #int BrickWords = 528
 }
 T{
     UploadPacksMortonBricksAndCellsRegardlessOfWriteOrder()
@@ -181,13 +194,15 @@ T{
         // Morton brick (0,1,0) precedes (2,0,0), opposite directory order.
         T.IsTrue(volume.SetVoxel(16, 0, 0, 0xaabbcc))
         T.IsTrue(volume.SetVoxel(1, 10, 4, 0x123456))
-        int [1033] packed
+        int [1065] packed
         volume.CopyTo(&packed[0])
         T.AreEqual(packed[3 + 3], 9)
-        T.AreEqual(packed[3 + 2], 521)
-        // Morton(1,2,4) = 1 + 16 + 256.
-        T.AreEqual(packed[9 + 273], 0x123457)
-        T.AreEqual(packed[521], 0xaabbcd)
+        T.AreEqual(packed[3 + 2], 537)
+        // Morton(1,2,4) = 1 + 16 + 256 = 273: mask word 8, bit 17.
+        T.AreEqual(packed[9 + 16 + 273], 0x123457)
+        T.AreEqual(packed[9 + 8], 1 << 17)
+        T.AreEqual(packed[537 + 16], 0xaabbcd)
+        T.AreEqual(packed[537], 1)
     }
 
     SparseWritesAllocateOnlyTouchedBricks()
@@ -199,11 +214,30 @@ T{
         T.AreEqual(volume.WordCount, 6)
         T.IsTrue(volume.SetVoxel(16, 7, 1, 0))
         T.IsTrue(volume.SetVoxel(16, 6, 0, 0xffffff))
-        T.AreEqual(volume.WordCount, 518)
+        T.AreEqual(volume.WordCount, 534)
         T.IsFalse(volume.SetVoxel(17, 0, 0, 0))
         T.IsTrue(volume.SetVoxel(16, 6, 0, -1))
         T.IsTrue(volume.SetVoxel(16, 7, 1, -1))
         T.IsTrue(volume.SetVoxel(0, 0, 0, 0))
-        T.AreEqual(volume.WordCount, 518)
+        T.AreEqual(volume.WordCount, 534)
+    }
+
+    MaskTracksSetAndErasedCells()
+    {
+        QuaxelVoxelVolume volume()
+        T.IsTrue(volume.Configure(8, 8, 8))
+        // Cells (1,1,1) and (0,0,0) share the first 2^3 byte; (7,7,7) is bit 511.
+        T.IsTrue(volume.SetVoxel(1, 1, 1, 0x010203))
+        T.IsTrue(volume.SetVoxel(0, 0, 0, 0))
+        T.IsTrue(volume.SetVoxel(7, 7, 7, 0x0a0b0c))
+        int [532] packed
+        volume.CopyTo(&packed[0])
+        T.AreEqual(packed[4], 0x81)
+        T.AreEqual(packed[4 + 15], 1 << 31)
+        T.IsTrue(volume.SetVoxel(1, 1, 1, -1))
+        T.AreEqual(volume.GetVoxel(1, 1, 1), -1)
+        T.AreEqual(volume.GetVoxel(7, 7, 7), 0x0a0b0c)
+        volume.CopyTo(&packed[0])
+        T.AreEqual(packed[4], 1)
     }
 }

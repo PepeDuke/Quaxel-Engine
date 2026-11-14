@@ -4,10 +4,12 @@ QuaxelPlatformBackend
     int MapVolume(int previous, int words, void*& mapped) { return -1 }
     UnmapVolume(int handle) {  }
     bool BeginVoxelFrame() { return false }
-    bool TraceVolume(int handle, void* boxFromClip, float left, float top, float right, float bottom, float lightX, float lightY, float lightZ)
+    bool TraceVolume(int handle, void* boxFromClip, float left, float top, float right, float bottom, void* axes)
     {
         return false
     }
+    bool AddShadowCaster(int handle, void* boxFromWorld) { return false }
+    bool LightVoxels(void* worldFromClip, void* lighting) { return false }
 
     bool EnsureEffectPages(int pages) { return false }
     bool ResetEffect(int slot) { return false }
@@ -15,7 +17,7 @@ QuaxelPlatformBackend
     bool BakeEffect(int slot, int volume, void* matrix, int cellsX, int cellsY, int cellsZ) { return false }
     bool SimulateEffect(int slot, int step, float seconds) { return false }
     bool DrawEffect(int slot, int tick) { return false }
-    bool TraceEffect(int slot, void* boxFromClip, float left, float top, float right, float bottom, float lightX, float lightY, float lightZ)
+    bool TraceEffect(int slot, void* boxFromClip, float left, float top, float right, float bottom, void* axes)
     {
         return false
     }

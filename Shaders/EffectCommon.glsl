@@ -3,9 +3,10 @@
 // QuaxelEffectSlot in Source/Core/Effects.dk.
 //
 //   VOLUME     3 dimension words, a 512-entry brick directory, then 512 bricks
-//              of 512 words at fixed offsets. The voxel trace reads it as an
-//              ordinary volume. A directory entry is 0 for an empty brick.
-//   MASK       one bit per cell: solid world voxels, baked when the effect starts.
+//              of BRICK words at fixed offsets: 16 occupancy words, then 512
+//              colors. The voxel trace reads it as an ordinary volume. A
+//              directory entry is 0 for an empty brick.
+//   SOLID      one bit per cell: solid world voxels, baked when the effect starts.
 //   PARTICLES  STRIDE words per particle.
 //   PARAMS     the effect's style and timing, written by the CPU.
 
@@ -24,10 +25,12 @@ layout(set=0,binding=0,std430) buffer Page { int words[]; };
 const int N = 64;
 const int DIRECTORY = 3;
 const int BRICKS = 515;
-const int MASK = 262912;
-const int PARTICLES = 271104;
+const int BRICK = 528;
+const int MASK_WORDS = 16;
+const int SOLID = 271104;
+const int PARTICLES = 279296;
 const int STRIDE = 16;
-const int PARAMS = 287488;
+const int PARAMS = 295680;
 
 // Params, in the field order of QuaxelEffectParams.
 const int P_VOXEL = 6, P_FLOOR = 7, P_BURST = 8, P_RATE = 9, P_STOP = 10;
@@ -73,7 +76,7 @@ int cellIndex(ivec3 c) { return c.x + N * (c.y + N * c.z); }
 bool solidCell(ivec3 c) {
     if (!inGrid(c)) return false;
     int i = cellIndex(c);
-    return ((words[pc.base + MASK + (i >> 5)] >> (i & 31)) & 1) != 0;
+    return ((words[pc.base + SOLID + (i >> 5)] >> (i & 31)) & 1) != 0;
 }
 
 bool solidAt(vec3 local) { return solidCell(toCell(local)); }
@@ -85,9 +88,10 @@ int mortonCell(ivec3 p) {
 
 int brickOf(ivec3 c) { ivec3 b = c >> 3; return b.x + 8 * (b.y + 8 * b.z); }
 
+// Writes the color only. EffectBricks.comp rebuilds the occupancy bits.
 void putVoxel(ivec3 c, int rgb) {
     if (!inGrid(c)) return;
-    words[pc.base + BRICKS + brickOf(c) * 512 + mortonCell(c & 7)] = (rgb & 0xFFFFFF) + 1;
+    words[pc.base + BRICKS + brickOf(c) * BRICK + MASK_WORDS + mortonCell(c & 7)] = (rgb & 0xFFFFFF) + 1;
 }
 
 vec3 rgbOf(int c) { return vec3((c >> 16) & 255, (c >> 8) & 255, c & 255); }

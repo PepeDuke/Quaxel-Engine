@@ -66,6 +66,39 @@ each 8×8×8 brick. The X, Y and Z bits occupy positions 3i, 3i+1 and 3i+2.
 A dense brick directory maps coordinates to offsets so an empty brick costs
 one word. Rectangular volumes require no power-of-two padding in that directory.
 
+Each occupied brick stores 528 words. The first 16 hold one occupancy bit per
+cell and the other 512 hold the colors, both indexed by the cell's Morton
+number. Because Morton order keeps a 2×2×2 block's cells together, each byte
+of the mask is one 2×2×2 block, and each pair of words is one 4×4×4 block. The
+trace tests these bits as it walks a brick, jumps over empty 2×2×2 and 4×4×4
+blocks, and reads a color only at the hit.
+Lighting can use the same bits for occlusion and shadow queries.
+
+## Lighting
+
+Voxels are lit by one sun and by ambient sky light, set on the world. These
+are the defaults:
+
+```duck
+world.SunDirection = vec3(-0.35, 0.8, 0.6)   // toward the sun
+world.SunColor = vec3(0.78, 0.74, 0.66)
+world.SkyColor = vec3(0.42, 0.46, 0.54)      // ambient on faces pointing up
+world.GroundColor = vec3(0.24, 0.22, 0.2)    // ambient on faces pointing down
+world.Shadows = true
+```
+
+A face receives sunlight in proportion to how directly it faces the sun, and
+only if no voxel of any volume lies between it and the sun. Shadows have hard
+edges. Every volume that
+is not hidden casts shadows, including volumes off screen. Effects receive
+light but cast no shadows. Ambient light is darkened by occlusion from
+nearby voxels of the same volume, so corners, crevices and the ground under
+overhangs read darker. Occlusion does not yet see across volumes, so faces at
+the edge of a terrain chunk ignore the neighboring chunk's voxels.
+
+The colors multiply voxel colors, so a face that is fully in the sun and open
+to the sky gets about `SunColor + SkyColor` times its color.
+
 Pass a negative color to erase a cell. A zero color creates an opaque black
 voxel. A changed volume uploads on the next rendered frame. Moving a node
 reuses its GPU data. The built-in cube and plane constructors supply a solid

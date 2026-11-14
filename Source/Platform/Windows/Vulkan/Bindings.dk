@@ -605,6 +605,8 @@ Vk
     extern "C" CmdBindPipeline(long commandBuffer, int pipelineBindPoint, long pipeline) = "vkCmdBindPipeline"
     extern "C" GetPhysicalDeviceFormatProperties(long physicalDevice, int vkFormat, void* pFormatProperties) = "vkGetPhysicalDeviceFormatProperties"
     extern "C" GetPhysicalDeviceMemoryProperties(long physicalDevice, void* pMemoryProperties) = "vkGetPhysicalDeviceMemoryProperties"
+    // Fills 55 VkBool32 values in VkPhysicalDeviceFeatures order.
+    extern "C" GetPhysicalDeviceFeatures(long physicalDevice, void* pFeatures) = "vkGetPhysicalDeviceFeatures"
     extern "C" int AllocateMemory(long device, void* pAllocateInfo, void* pAllocator, void* pMemory) = "vkAllocateMemory"
     extern "C" FreeMemory(long device, long memory, void* pAllocator) = "vkFreeMemory"
     extern "C" int MapMemory(long device, long memory, long vkOffset, long vkSize, int vkFlags, void* ppData) = "vkMapMemory"

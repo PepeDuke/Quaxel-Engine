@@ -239,7 +239,7 @@ map needs a map-level layer and is out of scope here.
 ## Chunks
 
 One volume cannot hold a useful map. A flat 256 x 256 unit plain at 1/8-unit
-cells touches 65,536 bricks at 2 KiB each, which alone reaches the 128 MiB
+cells touches 65,536 bricks at about 2 KiB each, which alone reaches the 128 MiB
 per-buffer limit. Terrain is therefore split into chunks.
 
 - A chunk is 16 x 16 units, or 128 x 128 columns, 128 cells tall: one node and

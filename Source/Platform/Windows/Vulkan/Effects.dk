@@ -36,9 +36,9 @@ QuaxelVulkan
     // Slot layout in words. Must match Shaders/EffectCommon.glsl and
     // QuaxelEffectSlot in Source/Core/Effects.dk.
     #int SlotsPerPage = 8
-    #int SlotWords = 287616
-    #int VolumeWords = 262659
-    #int ParamsOffset = 287488
+    #int SlotWords = 295808
+    #int VolumeWords = 270851
+    #int ParamsOffset = 295680
 
     -bool CreateEffectPipelines()
     {
@@ -221,12 +221,12 @@ QuaxelVulkan
         return true
     }
 
-    bool TraceEffect(int slot, void* matrix, float left, float top, float right, float bottom, float lightX, float lightY, float lightZ)
+    bool TraceEffect(int slot, void* matrix, float left, float top, float right, float bottom, void* axes)
     {
         if !FrameOpen { return Device != 0 }
         if !SlotReady(slot) { return false }
         VkStorage page = EffectPages.Items[slot / SlotsPerPage]
-        return Trace(page.Descriptor, SlotBase(slot), matrix, left, top, right, bottom, lightX, lightY, lightZ)
+        return Trace(page.Descriptor, SlotBase(slot), matrix, left, top, right, bottom, axes)
     }
 
     // Copies the first `words` words of a slot to destination, waiting for the
