@@ -2,11 +2,12 @@ QuaxelAssets
 #{
     // Paths are relative to the working directory or any of its nearest parents,
     // so a game finds its assets when run from its build output directory.
-    -bool OpenNearby(file& source, string path)
+    -bool OpenNearby(file& source, string path, string& resolved)
     {
         string prefix = ""
         for level : 0; level <= 6; level++ {
-            if source.Open(prefix + path) { return true }
+            resolved = prefix + path
+            if source.Open(resolved) { return true }
             prefix += "../"
         }
         return false
@@ -17,7 +18,8 @@ QuaxelAssets
     bool Exists(string path)
     {
         file source
-        return OpenNearby(source, path)
+        string resolved = ""
+        return OpenNearby(source, path, resolved)
     }
 
     // Loads a .qvox model into a new volume. Returns its index, or -1 after
@@ -45,13 +47,19 @@ QuaxelAssets
     -bool ReadModel(QuaxelWorld& world, string path, QuaxelVoxelModelParser& parser)
     {
         file source
-        if !OpenNearby(source, path) {
+        string resolved = ""
+        if !OpenNearby(source, path, resolved) {
             Print("Asset not found: " + path)
             return false
         }
+        file cache
+        bool cached = cache.Open(resolved + "c")
+        QuaxelCacheChecksum checksum
+        int first = world.VolumeCount
         uint8 [4096] chunk
         long count = source.Read(chunk)
         while count > 0 && !parser.Failed {
+            if cached { checksum.Add(chunk, (int)count) }
             for i : 0; i < count; i++ { parser.Feed(world, (int)chunk[i]) }
             count = source.Read(chunk)
         }
@@ -59,6 +67,9 @@ QuaxelAssets
         if !parser.Finish(world) {
             Print(path + " line " + QuaxelUi.FormatInt(parser.ErrorLine) + ": " + parser.Error)
             return false
+        }
+        if cached && !ReadFaceCache(cache, checksum.Value(), world, first) {
+            for volume : first; volume < world.VolumeCount; volume++ { world.ClearFaceAo(volume) }
         }
         return true
     }

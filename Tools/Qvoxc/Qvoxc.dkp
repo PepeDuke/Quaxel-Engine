@@ -1,0 +1,11 @@
+version = 1
+references = ["../../Quaxel.Headless.dkp"]
+
+[project]
+name = "Qvoxc"
+entry = "qvoxc"
+build_dir = "../../.duck/qvoxc"
+
+[modules.qvoxc]
+sources = ["Main.dk"]
+depends = ["quaxel_engine", "quaxel_core"]

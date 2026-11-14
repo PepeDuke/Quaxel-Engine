@@ -386,6 +386,12 @@ QuaxelWorld
         VolumeDirty[index] = false
     }
     CopyVolume(int index, void* destination) { Volumes[index].CopyTo(destination) }
+    EnableFaceAo(int index) { Volumes[index].EnableFaceAo() }
+    ClearFaceAo(int index) { Volumes[index].ClearFaceAo() }
+    bool SetFaceAo(int index, int x, int y, int z, int first, int last)
+    {
+        return Volumes[index].SetFaceAo(x, y, z, first, last)
+    }
     int VolumeWords(int index) { return Volumes[index].WordCount }
 
     mat4 VolumeModel(int id)
@@ -645,6 +651,7 @@ QuaxelWorld
 }
 @{
     ActiveCamera: CameraNode
+    VolumeCount: (int)Volumes.Len
     NodeCount: (int)Nodes.Len
     MeshCount: (int)Meshes.Len
 }

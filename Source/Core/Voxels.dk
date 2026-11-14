@@ -24,6 +24,10 @@ QuaxelVoxelVolume
     -int [] OccupiedCounts
     -int [] FreeOffsets
     -QuaxelVoxelSocket [] Sockets
+    // Indexed by the original brick slot. Zero means every exposed corner is bright.
+    -int [] AoOffsets
+    -int [] AoWords
+    -bool CachedAo
     -int PayloadStart
     vec3 Center
     vec3 Size
@@ -36,6 +40,7 @@ QuaxelVoxelVolume
         if width < 1 || height < 1 || depth < 1 || width > 4096 || height > 4096 || depth > 4096 { return false }
         int bricks = ((width + 7) / 8) * ((height + 7) / 8) * ((depth + 7) / 8)
         if bricks > 33554428 { return false }
+        ClearFaceAo()
         Words.Clear()
         OccupiedCounts.Clear()
         FreeOffsets.Clear()
@@ -60,6 +65,36 @@ QuaxelVoxelVolume
         return Configure(width, height, depth)
     }
 
+    ClearFaceAo()
+    {
+        CachedAo = false
+        AoOffsets.Clear()
+        AoWords.Clear()
+    }
+
+    EnableFaceAo() { CachedAo = true }
+
+    // Called while loading a sidecar. Two words hold the six face bytes.
+    bool SetFaceAo(int x, int y, int z, int first, int last)
+    {
+        if GetVoxel(x, y, z) < 0 { return false }
+        int columns = (Words[0] + 7) / 8
+        int rows = (Words[1] + 7) / 8
+        int offset = Words[3 + x / 8 + columns * (y / 8 + rows * (z / 8))]
+        int slot = (offset - PayloadStart) / BrickWords
+        while AoOffsets.Len <= slot { AoOffsets += 0 }
+        if AoOffsets[slot] == 0 {
+            if WordCount > 33554432 - 1024 { return false }
+            AoOffsets[slot] = (int)AoWords.Len + 1
+            for i : 0; i < 1024; i++ { AoWords += 0 }
+        }
+        int morton = Spread(x) | (Spread(y) << 1) | (Spread(z) << 2)
+        int at = AoOffsets[slot] - 1 + 2 * morton
+        AoWords[at] = first
+        AoWords[at + 1] = last
+        return true
+    }
+
     // RGB in the low 24 bits. A negative value erases the cell.
     bool SetVoxel(int x, int y, int z, int rgb)
     {
@@ -68,6 +103,7 @@ QuaxelVoxelVolume
         int rows = (Words[1] + 7) / 8
         int brick = 3 + x / 8 + columns * (y / 8 + rows * (z / 8))
         int offset = Words[brick]
+        if CachedAo && ((rgb >= 0) != (GetVoxel(x, y, z) >= 0)) { ClearFaceAo() }
         if offset == 0 {
             if rgb < 0 { return true }
             // Vulkan 1.0 guarantees a 128 MiB storage buffer range.
@@ -173,13 +209,28 @@ QuaxelVoxelVolume
         int offset = Words[brick]
         upload.Words[brick] = 0
         if offset == 0 { return }
+        int slot = (offset - PayloadStart) / BrickWords
+        bool hasCorners = slot < AoOffsets.Len && AoOffsets[slot] != 0
+        if hasCorners {
+            int start = AoOffsets[slot] - 1
+            for i : 0; i < 1024; i++ { upload.Words[next + i] = AoWords[start + i] }
+            next += 1024
+        }
         upload.Words[brick] = next
         for i : 0; i < BrickWords; i++ { upload.Words[next + i] = Words[offset + i] }
+        if CachedAo {
+            // Tag only occupied color words. The low 24 bits after subtracting
+            // one still contain RGB, including the carry for white.
+            int tag = hasCorners ? 0x2000000 | 0x1000000
+            for i : MaskWords; i < BrickWords; i++ {
+                if Words[offset + i] != 0 { upload.Words[next + i] = Words[offset + i] + tag }
+            }
+        }
         next += BrickWords
     }
 }
 @{
-    WordCount: (int)Words.Len - (int)FreeOffsets.Len * BrickWords
+    WordCount: (int)Words.Len - (int)FreeOffsets.Len * BrickWords + (int)AoWords.Len
 }
 #{
     // One occupancy bit per cell of an 8^3 brick, then 512 color words.

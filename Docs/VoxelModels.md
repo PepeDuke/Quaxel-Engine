@@ -59,6 +59,40 @@ Files larger than about 100 MB load slowly and are better generated in code
 until a compact format exists. Text stores every cell, including empty ones,
 while a volume in memory stores only the occupied 8 x 8 x 8 bricks.
 
+## Compiled model caches
+
+Hellfeather's build compiles each source under `Assets` into an adjacent
+`.qvoxc`. Both Windows and headless builds run this step. The compiler uses the
+engine's model parser and bakes the current contact AO for every exposed face of
+the base pose and each animation frame. All instances sharing a volume share
+its bake. Procedurally generated models use the live shader.
+
+To compile another asset directory or a single model, run from the engine root:
+
+```powershell
+python Tools/Qvoxc/compile.py path/to/assets
+```
+
+The tool uses Python's standard library and builds the Duck baker with the
+sibling Duck toolchain (`--duck-root` overrides its location). It checks source
+contents and cache integrity, skips current files, and atomically replaces each
+finished cache. Generated files are ignored by Git. Ship both the source model
+and its adjacent cache. The source supplies geometry, clips and sockets. A
+missing, stale, unsupported or damaged cache falls back to live contact AO.
+Editing occupancy at runtime invalidates that volume's bake. Recoloring a solid
+voxel preserves it.
+
+**Binary layout.** Integers are little-endian 32-bit words. The header contains
+the four bytes `QVXC`, format version 1, source Adler-32 and section count.
+Each section has a four-byte tag, payload byte length, payload Adler-32 and
+payload. Readers skip unrecognized sections by length. `AO01` stores four-word
+records in source volume order: packed X/Y (12 bits each), Z, and six face
+bytes packed into two words. A record with first word 0xffffffff ends a volume.
+Faces run from minus to plus on X, Y, then Z. Each byte packs four two-bit
+corner occlusion levels in shader interpolation order. Omitted cells have fully
+bright exposed corners. Add future derived data as a separate tagged section;
+bump the cache version when changing bake semantics so existing caches rebuild.
+
 ## Animation
 
 A model can hold named clips. Each clip is a sequence of whole grids shown one

@@ -1,0 +1,70 @@
+// One byte per face, two bits per corner, in the same order as Voxel.comp.
+int FaceCorners(QuaxelWorld& world, int volume, ivec3 air, ivec3 u, ivec3 v)
+{
+    int [9] solid
+    for j : 0; j < 3; j++ {
+        for i : 0; i < 3; i++ {
+            if i == 1 && j == 1 { continue }
+            ivec3 c = air + u * (i - 1) + v * (j - 1)
+            solid[i + 3 * j] = world.GetVoxel(volume, c.X, c.Y, c.Z) >= 0 ? 1 | 0
+        }
+    }
+    int packed = 0
+    for corner : 0; corner < 4; corner++ {
+        int x = (corner & 1) * 2
+        int y = (corner >> 1) * 2
+        int sides = solid[x + 3] + solid[1 + 3 * y]
+        int darkness = sides == 2 ? 3 | sides + solid[x + 3 * y]
+        packed |= darkness << (2 * corner)
+    }
+    return packed
+}
+
+bool Bake(file& outFile, QuaxelWorld& world, int volume)
+{
+    ivec3 size = world.VolumeSize(volume)
+    ivec3 [3] axes = {ivec3(1,0,0), ivec3(0,1,0), ivec3(0,0,1)}
+    int [4] record
+    for z : 0; z < size.Z; z++ {
+        for y : 0; y < size.Y; y++ {
+            for x : 0; x < size.X; x++ {
+                if world.GetVoxel(volume, x, y, z) < 0 { continue }
+                int [2] faces = {0, 0}
+                for axis : 0; axis < 3; axis++ {
+                    for sign : 0; sign < 2; sign++ {
+                        ivec3 air = ivec3(x,y,z) + axes[axis] * (sign * 2 - 1)
+                        if world.GetVoxel(volume, air.X, air.Y, air.Z) >= 0 { continue }
+                        int face = 2 * axis + sign
+                        int corners = FaceCorners(world, volume, air, axes[(axis+1)%3], axes[(axis+2)%3])
+                        faces[face / 4] |= corners << (8 * (face % 4))
+                    }
+                }
+                if (faces[0] | faces[1]) == 0 { continue }
+                record[0] = x | (y << 12)
+                record[1] = z
+                record[2] = faces[0]
+                record[3] = faces[1]
+                if outFile.Write(record) != 4 { return false }
+            }
+        }
+    }
+    record[0] = -1
+    record[1] = 0
+    record[2] = 0
+    record[3] = 0
+    return outFile.Write(record) == 4
+}
+
+Main(string [] args)
+{
+    if args.Len != 2 { return }
+    QuaxelWorld world()
+    if QuaxelAssets.LoadVoxelModel(world, args[0]) < 0 { return }
+    file output
+    if !output.Create(args[1]) { return }
+    for volume : 0; volume < world.VolumeCount; volume++ {
+        if !Bake(output, world, volume) { return }
+    }
+    output.Close()
+    Print("QVOXC complete")
+}

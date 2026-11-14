@@ -1,0 +1,68 @@
+// Adler-32 matches the build tool. Bound each block so the sums fit uint32.
+QuaxelCacheChecksum
+{
+    -uint A = 1
+    -uint B
+    Add(uint8 [4096]& bytes, int count)
+    {
+        for i : 0; i < count; i++ {
+            A += (uint)bytes[i]
+            B += A
+        }
+        A %= (uint)65521
+        B %= (uint)65521
+    }
+    uint Value() { return (B << (uint)16) | A }
+}
+
+QuaxelAssets
+#{
+    -bool ReadFaceCache(file& cache, uint sourceHash, QuaxelWorld& world, int first)
+    {
+        uint [4] header
+        if cache.Read(header) != 4 || header[0] != (uint)0x43585651 || header[1] != (uint)1 || header[2] != sourceHash { return false }
+        bool loaded = false
+        uint8 [4096] bytes
+        for section : (uint)0; section < header[3]; section++ {
+            uint [3] meta
+            if cache.Read(meta) != 3 { return false }
+            bool ao = meta[0] == (uint)0x31304f41 // AO01
+            if ao && (loaded || (meta[1] & (uint)15) != (uint)0) { return false }
+            int volume = first
+            long remaining = (long)meta[1]
+            QuaxelCacheChecksum checksum
+            while remaining > 0 {
+                int count = remaining > 4096 ? 4096 | (int)remaining
+                if cache.Read(&bytes[0], (long)count) != count { return false }
+                checksum.Add(bytes, count)
+                if ao {
+                    for i : 0; i < count; i += 16 {
+                        int [4] record
+                        for j : 0; j < 4; j++ {
+                            int at = i + 4 * j
+                            record[j] = (int)bytes[at] | ((int)bytes[at+1] << 8) | ((int)bytes[at+2] << 16) | ((int)bytes[at+3] << 24)
+                        }
+                        if volume >= world.VolumeCount { return false }
+                        if record[0] == -1 {
+                            volume++
+                        } else {
+                            int x = record[0] & 4095
+                            int y = record[0] >> 12
+                            if !world.SetFaceAo(volume, x, y, record[1], record[2], record[3]) { return false }
+                        }
+                    }
+                }
+                remaining -= count
+            }
+            if checksum.Value() != meta[2] { return false }
+            if ao {
+                if volume != world.VolumeCount { return false }
+                loaded = true
+            }
+        }
+        uint8 trailing = 0
+        if !loaded || cache.Read(trailing) != 0 { return false }
+        for volume : first; volume < world.VolumeCount; volume++ { world.EnableFaceAo(volume) }
+        return true
+    }
+}

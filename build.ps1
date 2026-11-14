@@ -16,5 +16,7 @@ $manifest = switch ($Platform) {
     'windows' { 'Quaxel.Windows.dkp' }
 }
 if ($Platform -eq 'windows') { & (Join-Path $PSScriptRoot 'configure-vulkan.ps1') }
+& python (Join-Path $PSScriptRoot 'Tools/Qvoxc/compile.py') (Join-Path $PSScriptRoot 'Tests/Fixtures') --duck-root $DuckRoot
+if ($LASTEXITCODE) { exit $LASTEXITCODE }
 & $builder build (Join-Path $PSScriptRoot $manifest) --profile $Profile
 exit $LASTEXITCODE

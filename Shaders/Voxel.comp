@@ -144,7 +144,19 @@ void main() {
                     v[va] = 1;
                     ivec3 hit = low + local;
                     vec3 p = origin + t * dir - vec3(hit);
-                    float ao = occlusion(hit, n, u, v, clamp(vec2(p[ua], p[va]), 0.0, 1.0));
+                    vec2 f = clamp(vec2(p[ua], p[va]), 0.0, 1.0);
+                    int aoMode = rgb >> 24; // 0: live, 1: bright brick, 2: baked face corners.
+                    float ao = 1.0;
+                    // A near-plane hit can start inside a solid with an unexposed face.
+                    if (aoMode == 0 || t == 0.0) {
+                        ao = occlusion(hit, n, u, v, f);
+                    } else if (aoMode == 2) {
+                        int side = 2 * face + (n[face] > 0 ? 1 : 0);
+                        int packed = words[brickBase - 1024 + 2 * m + (side >> 2)];
+                        int corners = packed >> (8 * (side & 3));
+                        vec4 light = 1.0 - 0.2 * vec4((ivec4(corners) >> ivec4(0,2,4,6)) & 3);
+                        ao = mix(mix(light.x, light.y, f.x), mix(light.z, light.w, f.x), f.y);
+                    }
                     frame[index] = uint(rgb & 0xFFFFFF) | (uint(clamp(ao, 0.0, 1.0) * 255.0 + 0.5) << 24);
                     frame[depthIndex] = floatBitsToUint(t);
                     frame[normalIndex] = packSnorm4x8(vec4(axis(face) * float(n[face]), 0.0));
