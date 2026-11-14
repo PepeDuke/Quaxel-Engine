@@ -1,5 +1,9 @@
 QuaxelRenderer
 #{
+    bool StartGpuTiming() { return QuaxelPlatformBackend.StartGpuTiming() }
+    bool FinishGpuTiming(double []& samples) { return QuaxelPlatformBackend.FinishGpuTiming(samples) }
+    bool ReadThreadTime(long& ticks) { return QuaxelPlatformBackend.ReadThreadTime(ticks) }
+
     bool Start() { return QuaxelPlatformBackend.StartRenderer() }
 
     // Upload before opening the frame. Pass -1 for new storage or a handle to replace.

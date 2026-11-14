@@ -1,6 +1,8 @@
 // Win32 performance counter bindings.
 QuaxelWindowsNative
 #{
+    extern "C" long GetCurrentThread()
+    extern "C" int GetThreadTimes(long thread, void* created, void* exited, void* kernel, void* user)
     extern "C" int QueryPerformanceFrequency(long& value)
     extern "C" int QueryPerformanceCounter(long& value)
 }

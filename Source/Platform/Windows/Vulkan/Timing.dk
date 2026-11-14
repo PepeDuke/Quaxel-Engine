@@ -1,0 +1,43 @@
+QuaxelVulkan
+#{
+    -int TimestampBits
+    -float TimestampPeriod
+    -long TimingPool
+    -bool TimingPending
+    -double [] GpuTimes
+
+    bool StartGpuTiming()
+    {
+        if Device == 0 || FrameOpen || TimingPool != 0 || TimestampBits == 0 { return false }
+        VkTimestampProperties properties
+        Vk.GetPhysicalDeviceProperties(Physical, &properties)
+        TimestampPeriod = properties.timestampPeriod
+        VkQueryPoolCreateInfo info
+        GpuTimes.Clear()
+        return Vk.CreateQueryPool(Device, &info, null, &TimingPool) == 0
+    }
+
+    // Called after the ordinary frame fence. Only the last sample needs a drain.
+    -bool CollectGpuTime()
+    {
+        long [2] ticks
+        if Vk.GetQueryPoolResults(Device, TimingPool, 0, 2, 16, &ticks[0], 8, 1) != 0 { return false }
+        long delta = ticks[1] - ticks[0]
+        if TimestampBits < 64 { delta = delta & (((long)1 << TimestampBits) - 1) }
+        GpuTimes += (double)delta * (double)TimestampPeriod / 1000000.0
+        TimingPending = false
+        return true
+    }
+
+    bool FinishGpuTiming(double []& samples)
+    {
+        if TimingPool == 0 || FrameOpen { return false }
+        if TimingPending {
+            if Vk.WaitForFences(Device, 1, &FrameFence, 1, -1) != 0 || !CollectGpuTime() { return false }
+        }
+        for ms : GpuTimes { samples += ms }
+        Vk.DestroyQueryPool(Device, TimingPool, null)
+        TimingPool = 0
+        return true
+    }
+}

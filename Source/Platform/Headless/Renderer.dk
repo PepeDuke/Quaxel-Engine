@@ -1,5 +1,9 @@
 QuaxelPlatformBackend
 #{
+    bool StartGpuTiming() { return false }
+    bool FinishGpuTiming(double []& samples) { return false }
+    bool ReadThreadTime(long& ticks) { return false }
+
     bool StartRenderer() { return false }
     int MapVolume(int previous, int words, void*& mapped) { return -1 }
     UnmapVolume(int handle) {  }

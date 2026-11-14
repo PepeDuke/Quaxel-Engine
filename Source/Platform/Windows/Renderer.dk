@@ -1,5 +1,18 @@
 QuaxelPlatformBackend
 #{
+    bool StartGpuTiming() { return QuaxelVulkan.StartGpuTiming() }
+    bool FinishGpuTiming(double []& samples) { return QuaxelVulkan.FinishGpuTiming(samples) }
+    bool ReadThreadTime(long& ticks)
+    {
+        long created = 0
+        long exited = 0
+        long kernel = 0
+        long user = 0
+        if QuaxelWindowsNative.GetThreadTimes(QuaxelWindowsNative.GetCurrentThread(), &created, &exited, &kernel, &user) == 0 { return false }
+        ticks = kernel + user
+        return true
+    }
+
     bool StartRenderer() { return QuaxelVulkan.Start(Instance, Window) }
 
     int MapVolume(int previous, int words, void*& mapped) { return QuaxelVulkan.MapVolume(previous, words, mapped) }

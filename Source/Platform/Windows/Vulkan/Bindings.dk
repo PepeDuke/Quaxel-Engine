@@ -566,8 +566,32 @@ VkPipelineDepthStencilStateCreateInfo
     float maxDepthBounds
 }
 
+VkQueryPoolCreateInfo
+{
+    int sType = 11
+    void* pNext
+    int flags
+    int queryType = 2 // TIMESTAMP
+    int queryCount = 2
+    int pipelineStatistics
+}
+
+// VkPhysicalDeviceProperties, Windows x64 ABI (824 bytes).
+VkTimestampProperties
+{
+    long [90] beforePeriod
+    float timestampPeriod
+    int [25] remaining
+}
+
 Vk
 #{
+    extern "C" GetPhysicalDeviceProperties(long physical, void* properties) = "vkGetPhysicalDeviceProperties"
+    extern "C" int CreateQueryPool(long device, void* info, void* allocator, void* pool) = "vkCreateQueryPool"
+    extern "C" DestroyQueryPool(long device, long pool, void* allocator) = "vkDestroyQueryPool"
+    extern "C" CmdResetQueryPool(long cmd, long pool, int first, int count) = "vkCmdResetQueryPool"
+    extern "C" CmdWriteTimestamp(long cmd, int stage, long pool, int query) = "vkCmdWriteTimestamp"
+    extern "C" int GetQueryPoolResults(long device, long pool, int first, int count, long bytes, void* data, long stride, int flags) = "vkGetQueryPoolResults"
     extern "C" int CreateInstance(void* pCreateInfo, void* pAllocator, void* pInstance) = "vkCreateInstance"
     extern "C" DestroyInstance(long instance, void* pAllocator) = "vkDestroyInstance"
     extern "C" int CreateWin32SurfaceKHR(long instance, void* pCreateInfo, void* pAllocator, void* pSurface) = "vkCreateWin32SurfaceKHR"

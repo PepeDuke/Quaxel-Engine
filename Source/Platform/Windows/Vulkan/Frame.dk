@@ -5,6 +5,10 @@ QuaxelVulkan
         if Vk.ResetCommandBuffer(Command, 0) != 0 { return false }
         VkCommandBufferBeginInfo beginInfo
         if Vk.BeginCommandBuffer(Command, &beginInfo) != 0 { return false }
+        if TimingPool != 0 {
+            Vk.CmdResetQueryPool(Command, TimingPool, 0, 2)
+            Vk.CmdWriteTimestamp(Command, 1, TimingPool, 0) // TOP_OF_PIPE
+        }
         if ComputeFrame {
             ClearVoxelFrame()
             return true
@@ -38,6 +42,7 @@ QuaxelVulkan
             if Chain == 0 { return true }
         }
         if Vk.WaitForFences(Device, 1, &FrameFence, 1, -1) != 0 { return false }
+        if TimingPending && !CollectGpuTime() { return false }
         int acquiredResult = Vk.AcquireNextImageKHR(Device, Chain, -1, Acquired, 0, &FrameImage)
         #int outOfDate = -1000001004
         #int suboptimal = 1000001003
@@ -69,6 +74,7 @@ QuaxelVulkan
         if !FrameOpen { return Device != 0 }
         FrameOpen = false
         if ComputeFrame { CopyVoxelFrame() } else { Vk.CmdEndRenderPass(Command) }
+        if TimingPool != 0 { Vk.CmdWriteTimestamp(Command, 0x2000, TimingPool, 1) } // BOTTOM_OF_PIPE
         if Vk.EndCommandBuffer(Command) != 0 { return false }
         int colorOutput = ComputeFrame ? 0x1000 | 0x400
         VkSubmitInfo submit
@@ -81,6 +87,7 @@ QuaxelVulkan
         submit.pSignalSemaphores = &Images.Finished[FrameImage]
         if Vk.ResetFences(Device, 1, &FrameFence) != 0 { return false }
         if Vk.QueueSubmit(GraphicsQueue, 1, &submit, FrameFence) != 0 { return false }
+        TimingPending = TimingPool != 0
         VkPresentInfoKHR present
         present.waitSemaphoreCount = 1
         present.pWaitSemaphores = &Images.Finished[FrameImage]

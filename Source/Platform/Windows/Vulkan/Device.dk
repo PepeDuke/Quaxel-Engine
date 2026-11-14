@@ -80,6 +80,7 @@ QuaxelVulkan
                     info.ppEnabledExtensionNames = &extension
                     if Vk.CreateDevice(adapters[i], &info, null, &Device) == 0 {
                         Physical = adapters[i]
+                        TimestampBits = families[j].timestampValidBits
                         Family = j
                         Vk.GetDeviceQueue(Device, Family, 0, &GraphicsQueue)
                         return true
@@ -132,6 +133,9 @@ QuaxelVulkan
     {
         if Device != 0 {
             Vk.DeviceWaitIdle(Device)
+            if TimingPool != 0 { Vk.DestroyQueryPool(Device, TimingPool, null) }
+            TimingPool = 0
+            TimingPending = false
             ReleaseMeshes()
             ReleaseTargets()
             ReleaseCompute()
