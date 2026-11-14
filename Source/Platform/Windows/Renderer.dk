@@ -1,5 +1,7 @@
 QuaxelPlatformBackend
 #{
+    PreferUncappedPresentation() { QuaxelVulkan.PreferUncappedPresentation() }
+    string PresentationMode() { return QuaxelVulkan.PresentationMode() }
     bool StartGpuTiming() { return QuaxelVulkan.StartGpuTiming() }
     bool FinishGpuTiming(double []& samples) { return QuaxelVulkan.FinishGpuTiming(samples) }
     bool ReadThreadTime(long& ticks)

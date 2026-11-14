@@ -43,25 +43,11 @@ float solid(ivec3 c) {
     return float((words[at + (m >> 5)] >> (m & 31)) & 1);
 }
 
-// Share of solid cells in the 2^3 block holding c: one byte of the mask.
-float density2(ivec3 c) {
-    int at = brickAt(c);
-    if (at == 0) return 0.0;
-    int m = mortonCell(c & 7);
-    return float(bitCount((words[at + (m >> 5)] >> (m & 24)) & 255)) / 8.0;
-}
-
-// Share of solid cells in the 4^3 block holding c: a pair of mask words.
-float density4(ivec3 c) {
-    int at = brickAt(c);
-    if (at == 0) return 0.0;
-    int w = (mortonCell(c & 7) >> 5) & ~1;
-    return float(bitCount(words[at + w]) + bitCount(words[at + w + 1])) / 64.0;
-}
-
-// Occlusion of the face of `hit` that faces `n`, at `f` across the face.
-// Corner occlusion reads the eight cells around the air cell in front of the
-// face. Wider occlusion reads 2^3 and 4^3 densities further out.
+// Interpolate corner AO from the eight neighbors of the air cell in front of the face.
+// AO sees only this volume. The old probes 3-5 voxels out from the face
+// could darken nearby geometry in the same volume. Contact-only AO can leave
+// those narrow gaps too bright. Separate volumes (e.g. globe rim and liquid)
+// cannot occlude each other with either method, even where they touch.
 float occlusion(ivec3 hit, ivec3 n, ivec3 u, ivec3 v, vec2 f) {
     ivec3 air = hit + n;
     float s[9];
@@ -74,13 +60,7 @@ float occlusion(ivec3 hit, ivec3 n, ivec3 u, ivec3 v, vec2 f) {
     corner.z = s[7] + s[3] > 1.5 ? 3.0 : s[7] + s[3] + s[6];
     corner.w = s[7] + s[5] > 1.5 ? 3.0 : s[7] + s[5] + s[8];
     corner = 1.0 - 0.2 * corner;
-    float contact = mix(mix(corner.x, corner.y, f.x), mix(corner.z, corner.w, f.x), f.y);
-    ivec3 out2 = air + 2 * n;
-    float near = (density2(out2) + density2(out2 + 2 * u) + density2(out2 - 2 * u)
-                + density2(out2 + 2 * v) + density2(out2 - 2 * v)) / 5.0;
-    float far = density4(air + 4 * n);
-    float wide = 1.0 - 0.5 * (0.65 * near + 0.35 * far);
-    return contact * wide;
+    return mix(mix(corner.x, corner.y, f.x), mix(corner.z, corner.w, f.x), f.y);
 }
 
 vec3 axis(int a) { return vec3(pc.axes[3 * a], pc.axes[3 * a + 1], pc.axes[3 * a + 2]); }

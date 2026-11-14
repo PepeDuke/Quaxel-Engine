@@ -103,6 +103,32 @@ QuaxelVulkan
         return Vk.CreateImageView(Device, &view, null, &DepthView) == 0
     }
 
+    -bool PreferImmediate
+    -int PresentMode = 2
+
+    PreferUncappedPresentation() { PreferImmediate = true }
+    string PresentationMode()
+    {
+        if PresentMode == 0 { return "Immediate" }
+        if PresentMode == 1 { return "Mailbox" }
+        return "FIFO (refresh-paced)"
+    }
+
+    -int SelectPresentMode()
+    {
+        if !PreferImmediate { return 2 }
+        int [32] modes
+        int count = (int)modes.Len
+        int result = Vk.GetPhysicalDeviceSurfacePresentModesKHR(Physical, Surface, &count, &modes[0])
+        if result != 0 && result != 5 { return 2 }
+        int selected = 2
+        for i : 0; i < count; i++ {
+            if modes[i] == 0 { return 0 } // IMMEDIATE
+            if modes[i] == 1 { selected = 1 } // MAILBOX
+        }
+        return selected
+    }
+
     -bool CreateTargets(int width, int height)
     {
         VkSurfaceCapabilitiesKHR caps
@@ -132,7 +158,8 @@ QuaxelVulkan
         if (caps.supportedUsageFlags & info.imageUsage) == 0 { return false }
         info.preTransform = caps.currentTransform
         info.compositeAlpha = caps.supportedCompositeAlpha & (0 - caps.supportedCompositeAlpha)
-        info.presentMode = 2 // FIFO
+        PresentMode = SelectPresentMode()
+        info.presentMode = PresentMode
         info.clipped = 1
         int result = Vk.CreateSwapchainKHR(Device, &info, null, &Chain)
         if result == -1000001004 { return true } // Surface changed again during resize.

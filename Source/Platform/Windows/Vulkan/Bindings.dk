@@ -600,6 +600,7 @@ Vk
     extern "C" GetPhysicalDeviceQueueFamilyProperties(long physicalDevice, void* pQueueFamilyPropertyCount, void* pQueueFamilyProperties) = "vkGetPhysicalDeviceQueueFamilyProperties"
     extern "C" int GetPhysicalDeviceSurfaceSupportKHR(long physicalDevice, int queueFamilyIndex, long surface, void* pSupported) = "vkGetPhysicalDeviceSurfaceSupportKHR"
     extern "C" int GetPhysicalDeviceSurfaceCapabilitiesKHR(long physicalDevice, long surface, void* pSurfaceCapabilities) = "vkGetPhysicalDeviceSurfaceCapabilitiesKHR"
+    extern "C" int GetPhysicalDeviceSurfacePresentModesKHR(long physicalDevice, long surface, void* count, void* modes) = "vkGetPhysicalDeviceSurfacePresentModesKHR"
     extern "C" int GetPhysicalDeviceSurfaceFormatsKHR(long physicalDevice, long surface, void* pSurfaceFormatCount, void* pSurfaceFormats) = "vkGetPhysicalDeviceSurfaceFormatsKHR"
     extern "C" int CreateDevice(long physicalDevice, void* pCreateInfo, void* pAllocator, void* pDevice) = "vkCreateDevice"
     extern "C" DestroyDevice(long device, void* pAllocator) = "vkDestroyDevice"

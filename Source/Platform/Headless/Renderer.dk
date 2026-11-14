@@ -1,5 +1,7 @@
 QuaxelPlatformBackend
 #{
+    PreferUncappedPresentation() {  }
+    string PresentationMode() { return "Headless" }
     bool StartGpuTiming() { return false }
     bool FinishGpuTiming(double []& samples) { return false }
     bool ReadThreadTime(long& ticks) { return false }

@@ -149,6 +149,7 @@ QuaxelVulkan
             Vk.DestroyInstance(Instance, null)
         }
         FrameOpen = false
+        PreferImmediate = false
         DepthFormat = 0
         FrameFence = 0
         Acquired = 0
