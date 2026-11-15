@@ -26,6 +26,10 @@ QuaxelRenderer
     // floats. Lighting points at 16 floats: the unit direction toward the sun,
     // then the sun, sky and ground colors, each followed by one unused float.
     bool AddPointLight(void* data) { return QuaxelPlatformBackend.AddPointLight(data) }
+    bool AddBoundedShadowCaster(int handle, void* boxFromWorld, void* bounds)
+    {
+        return QuaxelPlatformBackend.AddBoundedShadowCaster(handle, boxFromWorld, bounds)
+    }
     bool AddShadowCaster(int handle, void* boxFromWorld) { return QuaxelPlatformBackend.AddShadowCaster(handle, boxFromWorld) }
     bool LightVoxels(void* worldFromClip, void* lighting) { return QuaxelPlatformBackend.LightVoxels(worldFromClip, lighting) }
 

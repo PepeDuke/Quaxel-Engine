@@ -37,11 +37,11 @@ VkLightParams
     int Lights
 }
 
-// The Scene buffer of Shaders/VoxelLight.comp: 16 words of sun and sky, 32 point lights of 8 words,
-// colors, then 20 words per caster (its world-to-box matrix and first word).
+// The Scene buffer of Shaders/VoxelLight.comp: 16 words of sun and sky, 32 point lights of 16 words
+// (position, color and a 256-bit caster mask), then 20 words per caster (its world-to-box matrix and first word).
 VkLightScene
 {
-    int [5392] Words
+    int [5648] Words
 }
 
 VkUiParams
@@ -79,6 +79,8 @@ QuaxelVulkan
     -bool LightBound
     -VkStorage SceneStorage
     -VkLightScene Scene
+    -float [1536] CasterBounds // Center XYZ then half-extents for each world AABB.
+    -float [128] LightSpheres
     -long [256] CasterBuffers
     -int LightCount
     -int CasterCount
@@ -370,7 +372,8 @@ QuaxelVulkan
         if !FrameOpen { return Device != 0 }
         if !ComputeFrame { return false }
         if LightCount < 32 {
-            memcpy(&Scene.Words[16 + LightCount * 8], data, 32)
+            memcpy(&Scene.Words[16 + LightCount * 16], data, 32)
+            memcpy(&LightSpheres[4 * LightCount], data, 16)
             LightCount++
         }
         return true
@@ -381,15 +384,47 @@ QuaxelVulkan
     // volume's unit box. Casters past MaxCasters are ignored.
     bool AddShadowCaster(int handle, void* boxFromWorld)
     {
+        return AddBoundedShadowCaster(handle, boxFromWorld, null)
+    }
+
+    bool AddBoundedShadowCaster(int handle, void* boxFromWorld, void* bounds)
+    {
         if !FrameOpen { return Device != 0 }
         if !ComputeFrame || handle < 0 || handle >= Volumes.Count { return false }
         if CasterCount >= MaxCasters { return true }
-        int at = 272 + CasterCount * 20
+        int b = 6 * CasterCount
+        if bounds != null { memcpy(&CasterBounds[b], bounds, 24) }
+        else { CasterBounds[b + 3] = -1.0 } // Low-level callers without bounds always qualify.
+        int at = 528 + CasterCount * 20
         memcpy(&Scene.Words[at], boxFromWorld, 64)
         for i : 16; i < 20; i++ { Scene.Words[at + i] = 0 }
         CasterBuffers[CasterCount] = Volumes.Items[handle].Buffer
         CasterCount++
         return true
+    }
+
+    // One bit per submitted caster, in descriptor order. Build after both lists
+    // are complete so callers can submit lights and volumes in either order.
+    -BuildPointCasterLists()
+    {
+        for light : 0; light < LightCount; light++ {
+            int mask = 16 + light * 16 + 8
+            for word : 0; word < 8; word++ { Scene.Words[mask + word] = 0 }
+            if Scene.Words[mask - 1] == 0 { continue }
+            int sphere = 4 * light
+            float radius = LightSpheres[sphere + 3] + 0.002 // Include the shader's shadow-ray origin bias.
+            for caster : 0; caster < CasterCount; caster++ {
+                int b = caster * 6
+                float distance2 = 0.0
+                if CasterBounds[b + 3] >= 0.0 {
+                    for axis : 0; axis < 3; axis++ {
+                        float gap = Math.Max(0.0, Math.Abs(LightSpheres[sphere + axis] - CasterBounds[b + axis]) - CasterBounds[b + 3 + axis])
+                        distance2 += gap * gap
+                    }
+                }
+                if distance2 <= radius * radius { Scene.Words[mask + (caster >> 5)] |= 1 << (caster & 31) }
+            }
+        }
     }
 
     // Turns the traced albedo, occlusion, depth and normals into lit color.
@@ -412,7 +447,8 @@ QuaxelVulkan
         write.descriptorCount = MaxCasters
         write.pBufferInfo = &infos[0]
         Vk.UpdateDescriptorSets(Device, 1, &write, 0, null)
-        Vk.CmdUpdateBuffer(Command, SceneStorage.Buffer, 0, (long)(272 + CasterCount * 20) * 4, &Scene.Words[0])
+        BuildPointCasterLists()
+        Vk.CmdUpdateBuffer(Command, SceneStorage.Buffer, 0, (long)(528 + CasterCount * 20) * 4, &Scene.Words[0])
         MemoryBarrier(0x1000, 0x1000, 0x800, 0x20) // transfer write -> compute read
         VkLightParams params
         memcpy(&params.Matrix[0], worldFromClip, 64)

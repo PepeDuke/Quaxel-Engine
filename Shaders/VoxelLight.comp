@@ -17,7 +17,7 @@ struct Caster {
     mat4 boxFromWorld;  // World to the volume's unit box, centred on 0.
     ivec4 info;         // x: first word of the volume in its buffer.
 };
-struct PointLight { vec4 positionRadius; vec4 color; };
+struct PointLight { vec4 positionRadius; vec4 color; uvec4 casterMask[2]; };
 layout(set=1,binding=0,std430) readonly buffer Scene {
     vec4 sunDirection;  // Toward the sun, unit length.
     vec4 sunColor;
@@ -162,8 +162,13 @@ void main() {
             vec3 segment = lights[i].positionRadius.xyz - start;
             bool shadow = false;
             if (dot(segment, n) > 0.0) {
-                for (int g = 0; g < pc.casters; ++g) {
-                    if (blocked(g, start, segment, 1.0)) { shadow = true; break; }
+                for (int w = 0; w * 32 < pc.casters && !shadow; ++w) {
+                    uint mask = lights[i].casterMask[w >> 2][w & 3];
+                    while (mask != 0u) {
+                        int g = w * 32 + findLSB(mask);
+                        if (blocked(g, start, segment, 1.0)) { shadow = true; break; }
+                        mask &= mask - 1u;
+                    }
                 }
             }
             if (shadow) continue;

@@ -213,7 +213,13 @@ T{
             T.IsTrue(BeginFrame(128, 128, null))
             at[0] = RowAt(4.0)
             T.IsTrue(TraceVolume(receiver, &matrix[0], 0.0, 0.0, 1.0, 1.0, &axes[0]))
-            T.IsTrue(AddShadowCaster(caster, &box[0]))
+            // Keep the real blocker beyond bit 31 to exercise sparse mask traversal.
+            float [16] distant = box
+            distant[12] = -20.0
+            float [6] farBounds = {20.0, 0.0, 0.0, 0.5, 0.5, 0.5}
+            for i : 0; i < 32; i++ { T.IsTrue(AddBoundedShadowCaster(caster, &distant[0], &farBounds[0])) }
+            float [6] bounds = {0.0, 0.0, 0.0, 0.5, 0.5, 0.5}
+            T.IsTrue(AddBoundedShadowCaster(caster, &box[0], &bounds[0]))
             // Wall at .375; blocker spans [0,.125). Move light across blocker.
             float [8] light = {0.0, 0.0, -0.125, 1.0, 0.0, 1.0, 0.0, 1.0}
             if trial == 1 { light[2] = 0.25 }

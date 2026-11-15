@@ -16,6 +16,10 @@ QuaxelPlatformBackend
         return false
     }
     bool AddPointLight(void* data) { return false }
+    bool AddBoundedShadowCaster(int handle, void* boxFromWorld, void* bounds)
+    {
+        return false
+    }
     bool AddShadowCaster(int handle, void* boxFromWorld) { return false }
     bool LightVoxels(void* worldFromClip, void* lighting) { return false }
 

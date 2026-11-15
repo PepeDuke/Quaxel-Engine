@@ -4,6 +4,8 @@ QuaxelTraceItem
 {
     mat4 Clip
     mat4 BoxFromWorld
+    vec3 BoundsCenter
+    vec3 BoundsHalf
     int Handle
     int Slot
     float Near
@@ -212,6 +214,10 @@ QuaxelEngine
             QuaxelTraceItem item
             item.Clip = viewProjection * model
             item.BoxFromWorld = model.Inverse()
+            item.BoundsCenter = vec3(model[3])
+            for axis : 0; axis < 3; axis++ {
+                item.BoundsHalf[axis] = 0.5 * (Math.Abs(model[0][axis]) + Math.Abs(model[1][axis]) + Math.Abs(model[2][axis]))
+            }
             item.Handle = world.VolumeHandle(world.VolumeOf(id))
             item.Slot = -1
             item.Near = NearDepth(item.Clip)
@@ -239,7 +245,9 @@ QuaxelEngine
             for item : TraceOrder {
                 if item.Handle < 0 { continue }
                 mat4 boxFromWorld = item.BoxFromWorld
-                if !QuaxelRenderer.AddShadowCaster(item.Handle, &boxFromWorld) { return false }
+                float [6] bounds = {item.BoundsCenter.X, item.BoundsCenter.Y, item.BoundsCenter.Z,
+                    item.BoundsHalf.X, item.BoundsHalf.Y, item.BoundsHalf.Z}
+                if !QuaxelRenderer.AddBoundedShadowCaster(item.Handle, &boxFromWorld, &bounds[0]) { return false }
             }
         }
         if !Light(world, viewProjection) { return false }

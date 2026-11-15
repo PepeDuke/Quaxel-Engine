@@ -26,6 +26,10 @@ QuaxelPlatformBackend
         return QuaxelVulkan.TraceVolume(handle, boxFromClip, left, top, right, bottom, axes)
     }
     bool AddPointLight(void* data) { return QuaxelVulkan.AddPointLight(data) }
+    bool AddBoundedShadowCaster(int handle, void* boxFromWorld, void* bounds)
+    {
+        return QuaxelVulkan.AddBoundedShadowCaster(handle, boxFromWorld, bounds)
+    }
     bool AddShadowCaster(int handle, void* boxFromWorld) { return QuaxelVulkan.AddShadowCaster(handle, boxFromWorld) }
     bool LightVoxels(void* worldFromClip, void* lighting) { return QuaxelVulkan.LightVoxels(worldFromClip, lighting) }
 
