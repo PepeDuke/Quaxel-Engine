@@ -49,27 +49,30 @@ ivec3 enteringCell(vec3 position, vec3 direction) {
 // The index is the same for every invocation that reaches a call, so it is
 // dynamically uniform.
 bool blocked(int g, vec3 start, vec3 toward, float rayEnd) {
+    // Clip in unit-box space before accessing this caster's voxel buffer.
+    mat4 boxFromWorld = casters[g].boxFromWorld;
+    vec3 boxOrigin = (boxFromWorld * vec4(start, 1.0)).xyz + 0.5;
+    vec3 boxDir = mat3(boxFromWorld) * toward;
+    bvec3 parallel = equal(boxDir, vec3(0));
+    vec3 invBoxDir = 1.0 / mix(boxDir, vec3(1.0), parallel);
+    vec3 first = -boxOrigin * invBoxDir;
+    vec3 last = (1.0 - boxOrigin) * invBoxDir;
+    vec3 near = mix(min(first, last), vec3(0.0), parallel);
+    vec3 far = mix(max(first, last), vec3(rayEnd), parallel);
+    float t = max(0.0, max(near.x, max(near.y, near.z)));
+    float end = min(rayEnd, min(far.x, min(far.y, far.z)));
+    vec3 parallelOrigin = mix(vec3(0.0), boxOrigin, parallel);
+    if (t >= end || any(lessThan(parallelOrigin, vec3(0.0))) ||
+                    any(greaterThanEqual(parallelOrigin, vec3(1.0)))) return false;
+
     int base = casters[g].info.x;
     ivec3 dims = ivec3(grids[g].words[base], grids[g].words[base + 1], grids[g].words[base + 2]);
     ivec3 bricks = (dims + 7) / 8;
-    mat4 boxFromWorld = casters[g].boxFromWorld;
-    vec3 origin = ((boxFromWorld * vec4(start, 1.0)).xyz + 0.5) * vec3(dims);
-    vec3 dir = (mat3(boxFromWorld) * toward) * vec3(dims);
-    ivec3 stepDir = ivec3(sign(dir));
-    bvec3 parallel = equal(stepDir, ivec3(0));
+    vec3 origin = boxOrigin * vec3(dims);
+    vec3 dir = boxDir * vec3(dims);
     vec3 invDir = 1.0 / mix(dir, vec3(1.0), parallel);
+    ivec3 stepDir = ivec3(sign(dir));
     ivec3 positive = max(stepDir, ivec3(0));
-    float t = 0.0, end = rayEnd;
-    for (int a = 0; a < 3; ++a) {
-        if (stepDir[a] == 0) {
-            if (origin[a] < 0.0 || origin[a] >= float(dims[a])) return false;
-        } else {
-            float t0 = -origin[a] * invDir[a], t1 = (float(dims[a]) - origin[a]) * invDir[a];
-            t = max(t, min(t0, t1));
-            end = min(end, max(t0, t1));
-        }
-    }
-    if (t >= end) return false;
     ivec3 cell = clamp(enteringCell(origin + t * dir, dir), ivec3(0), dims - 1);
     int steps = 0;
     while (all(greaterThanEqual(cell, ivec3(0))) && all(lessThan(cell, dims)) && steps < MAX_STEPS) {
