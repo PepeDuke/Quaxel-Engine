@@ -4,6 +4,10 @@ QuaxelVulkan
     -float TimestampPeriod
     -long TimingPool
     -bool TimingPending
+    -bool LightingTimed
+    -double LightingTotal
+    -int LightingSamples
+    double MeanLightingMs() { return LightingSamples > 0 ? LightingTotal / (double)LightingSamples | 0.0 }
     -double [] GpuTimes
 
     bool StartGpuTiming()
@@ -13,6 +17,9 @@ QuaxelVulkan
         Vk.GetPhysicalDeviceProperties(Physical, &properties)
         TimestampPeriod = properties.timestampPeriod
         VkQueryPoolCreateInfo info
+        info.queryCount = 4
+        LightingTotal = 0.0
+        LightingSamples = 0
         GpuTimes.Clear()
         return Vk.CreateQueryPool(Device, &info, null, &TimingPool) == 0
     }
@@ -20,13 +27,22 @@ QuaxelVulkan
     // Called after the ordinary frame fence. Only the last sample needs a drain.
     -bool CollectGpuTime()
     {
-        long [2] ticks
-        if Vk.GetQueryPoolResults(Device, TimingPool, 0, 2, 16, &ticks[0], 8, 1) != 0 { return false }
-        long delta = ticks[1] - ticks[0]
-        if TimestampBits < 64 { delta = delta & (((long)1 << TimestampBits) - 1) }
-        GpuTimes += (double)delta * (double)TimestampPeriod / 1000000.0
+        long [4] ticks
+        int count = LightingTimed ? 4 | 2
+        if Vk.GetQueryPoolResults(Device, TimingPool, 0, count, 32, &ticks[0], 8, 1) != 0 { return false }
+        GpuTimes += TimestampMs(ticks[1] - ticks[0])
+        if LightingTimed {
+            LightingTotal += TimestampMs(ticks[3] - ticks[2])
+            LightingSamples++
+        }
         TimingPending = false
         return true
+    }
+
+    -double TimestampMs(long delta)
+    {
+        if TimestampBits < 64 { delta = delta & (((long)1 << TimestampBits) - 1) }
+        return (double)delta * (double)TimestampPeriod / 1000000.0
     }
 
     bool FinishGpuTiming(double []& samples)

@@ -3,6 +3,7 @@ QuaxelRenderer
     PreferUncappedPresentation() { QuaxelPlatformBackend.PreferUncappedPresentation() }
     string PresentationMode() { return QuaxelPlatformBackend.PresentationMode() }
     bool StartGpuTiming() { return QuaxelPlatformBackend.StartGpuTiming() }
+    double MeanLightingMs() { return QuaxelPlatformBackend.MeanLightingMs() }
     bool FinishGpuTiming(double []& samples) { return QuaxelPlatformBackend.FinishGpuTiming(samples) }
     bool ReadThreadTime(long& ticks) { return QuaxelPlatformBackend.ReadThreadTime(ticks) }
 
@@ -24,6 +25,7 @@ QuaxelRenderer
     // frame once before drawing UI. BoxFromWorld and worldFromClip point at 16
     // floats. Lighting points at 16 floats: the unit direction toward the sun,
     // then the sun, sky and ground colors, each followed by one unused float.
+    bool AddPointLight(void* data) { return QuaxelPlatformBackend.AddPointLight(data) }
     bool AddShadowCaster(int handle, void* boxFromWorld) { return QuaxelPlatformBackend.AddShadowCaster(handle, boxFromWorld) }
     bool LightVoxels(void* worldFromClip, void* lighting) { return QuaxelPlatformBackend.LightVoxels(worldFromClip, lighting) }
 

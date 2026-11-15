@@ -6,7 +6,8 @@ QuaxelVulkan
         VkCommandBufferBeginInfo beginInfo
         if Vk.BeginCommandBuffer(Command, &beginInfo) != 0 { return false }
         if TimingPool != 0 {
-            Vk.CmdResetQueryPool(Command, TimingPool, 0, 2)
+            LightingTimed = false
+            Vk.CmdResetQueryPool(Command, TimingPool, 0, 4)
             Vk.CmdWriteTimestamp(Command, 1, TimingPool, 0) // TOP_OF_PIPE
         }
         if ComputeFrame {

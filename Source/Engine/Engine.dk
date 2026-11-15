@@ -293,6 +293,25 @@ QuaxelEngine
         lighting[12] = world.GroundColor.X
         lighting[13] = world.GroundColor.Y
         lighting[14] = world.GroundColor.Z
+        int mask = QuaxelComponents.Transform | QuaxelComponents.PointLight
+        for id : world.NextWith(0, mask); id != 0; id = world.NextWith(id, mask) {
+            QuaxelPointLight light = world.GetPointLight(id)
+            if light.Intensity <= 0.0 || world.IsHidden(id) { continue }
+            vec4 position = world.ModelMatrix(id) * vec4(light.Offset, 1.0)
+            vec4 clip = viewProjection * position
+            // Project the sphere onto each axis of the orthographic view.
+            bool outside = false
+            for axis : 0; axis < 3; axis++ {
+                vec3 row = vec3(viewProjection[0][axis], viewProjection[1][axis], viewProjection[2][axis])
+                float reach = light.Radius * row.Length()
+                float low = axis == 2 ? 0.0 | -1.0
+                if clip[axis] + reach < low || clip[axis] - reach > 1.0 { outside = true }
+            }
+            if outside { continue }
+            float [8] data = {position.X, position.Y, position.Z, light.Radius,
+                light.Color.X * light.Intensity, light.Color.Y * light.Intensity, light.Color.Z * light.Intensity, light.CastShadows ? 1.0 | 0.0}
+            if !QuaxelRenderer.AddPointLight(&data[0]) { return false }
+        }
         return QuaxelRenderer.LightVoxels(&worldFromClip, &lighting[0])
     }
 

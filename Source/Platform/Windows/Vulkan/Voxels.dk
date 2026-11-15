@@ -34,13 +34,14 @@ VkLightParams
     int Srgb
     int Bgra
     int Casters
+    int Lights
 }
 
-// The Scene buffer of Shaders/VoxelLight.comp: 16 words of sun and sky
+// The Scene buffer of Shaders/VoxelLight.comp: 16 words of sun and sky, 32 point lights of 8 words,
 // colors, then 20 words per caster (its world-to-box matrix and first word).
 VkLightScene
 {
-    int [5136] Words
+    int [5392] Words
 }
 
 VkUiParams
@@ -79,6 +80,7 @@ QuaxelVulkan
     -VkStorage SceneStorage
     -VkLightScene Scene
     -long [256] CasterBuffers
+    -int LightCount
     -int CasterCount
     #int MaxCasters = 256
 
@@ -133,7 +135,7 @@ QuaxelVulkan
         long [3] sets = {StorageLayout, StorageLayout, CasterLayout}
         VkPushConstantRange params
         params.stageFlags = 32
-        params.vkSize = 84
+        params.vkSize = 88
         VkPipelineLayoutCreateInfo layout
         layout.setLayoutCount = 3
         layout.pSetLayouts = &sets[0]
@@ -204,6 +206,7 @@ QuaxelVulkan
         CasterPool = 0
         CasterSet = 0
         CasterLayout = 0
+        LightCount = 0
         CasterCount = 0
         for i : 0; i < Volumes.Count; i++ {
             VkStorage storage = Volumes.Items[i]
@@ -319,6 +322,7 @@ QuaxelVulkan
         UiBound = false
         EffectBound = false
         LightBound = false
+        LightCount = 0
         CasterCount = 0
         Vk.CmdBindPipeline(Command, 1, ComputePipeline)
         Vk.CmdBindDescriptorSets(Command, 1, ComputeLayout, 0, 1, &Output.Descriptor, 0, null)
@@ -360,6 +364,18 @@ QuaxelVulkan
         return true
     }
 
+    // Submit up to 32 visible light spheres in scene order.
+    bool AddPointLight(void* data)
+    {
+        if !FrameOpen { return Device != 0 }
+        if !ComputeFrame { return false }
+        if LightCount < 32 {
+            memcpy(&Scene.Words[16 + LightCount * 8], data, 32)
+            LightCount++
+        }
+        return true
+    }
+
     // Adds a volume whose voxels block sunlight in this frame's LightVoxels.
     // BoxFromWorld points at 16 floats mapping world positions to the
     // volume's unit box. Casters past MaxCasters are ignored.
@@ -368,7 +384,7 @@ QuaxelVulkan
         if !FrameOpen { return Device != 0 }
         if !ComputeFrame || handle < 0 || handle >= Volumes.Count { return false }
         if CasterCount >= MaxCasters { return true }
-        int at = 16 + CasterCount * 20
+        int at = 272 + CasterCount * 20
         memcpy(&Scene.Words[at], boxFromWorld, 64)
         for i : 16; i < 20; i++ { Scene.Words[at + i] = 0 }
         CasterBuffers[CasterCount] = Volumes.Items[handle].Buffer
@@ -396,7 +412,7 @@ QuaxelVulkan
         write.descriptorCount = MaxCasters
         write.pBufferInfo = &infos[0]
         Vk.UpdateDescriptorSets(Device, 1, &write, 0, null)
-        Vk.CmdUpdateBuffer(Command, SceneStorage.Buffer, 0, (long)(16 + CasterCount * 20) * 4, &Scene.Words[0])
+        Vk.CmdUpdateBuffer(Command, SceneStorage.Buffer, 0, (long)(272 + CasterCount * 20) * 4, &Scene.Words[0])
         MemoryBarrier(0x1000, 0x1000, 0x800, 0x20) // transfer write -> compute read
         VkLightParams params
         memcpy(&params.Matrix[0], worldFromClip, 64)
@@ -404,6 +420,7 @@ QuaxelVulkan
         params.Height = Extent.height
         params.Srgb = Format == 50 || Format == 43 ? 1 | 0
         params.Bgra = Format == 50 || Format == 44 ? 1 | 0
+        params.Lights = LightCount
         params.Casters = CasterCount
         UiBound = false
         EffectBound = false
@@ -411,9 +428,15 @@ QuaxelVulkan
         Vk.CmdBindPipeline(Command, 1, LightPipeline)
         long [3] sets = {Output.Descriptor, SceneStorage.Descriptor, CasterSet}
         Vk.CmdBindDescriptorSets(Command, 1, LightLayout, 0, 3, &sets[0], 0, null)
-        Vk.CmdPushConstants(Command, LightLayout, 32, 0, 84, &params)
+        Vk.CmdPushConstants(Command, LightLayout, 32, 0, 88, &params)
+        if TimingPool != 0 { Vk.CmdWriteTimestamp(Command, 0x800, TimingPool, 2) }
         Vk.CmdDispatch(Command, (Extent.width + 7) / 8, (Extent.height + 7) / 8, 1)
+        if TimingPool != 0 {
+            Vk.CmdWriteTimestamp(Command, 0x800, TimingPool, 3)
+            LightingTimed = true
+        }
         MemoryBarrier(0x800, 0x40, 0x800, 0x60) // UI blends over the lit frame
+        LightCount = 0
         CasterCount = 0
         return true
     }

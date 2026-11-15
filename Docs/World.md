@@ -105,6 +105,27 @@ reuses its GPU data. The built-in cube and plane constructors supply a solid
 voxel and a thin ground slab respectively. Custom world geometry uses the
 volume API.
 
+### Point lights
+
+Attach a point light to any transformed node. The offset follows the node's local
+transform. Radius is measured in world units and intensity scales linear RGB.
+
+```c++
+QuaxelPointLight torch
+torch.Offset = vec3(0.0, 1.5, 0.0)
+torch.Color = vec3(1.0, 0.38, 0.10)
+torch.Intensity = 3.0
+torch.CastShadows = true
+torch.Radius = 4.0
+world.SetPointLight(node, torch)
+```
+
+Call `SetPointLight` again to update it or `RemovePointLight(node)` to turn it
+off. The voxel lighting pass accepts the first 32 visible light spheres in node
+order, including spheres reaching the view from off screen. Lights have smooth range falloff. Enable
+`CastShadows` to test the segment from a lit surface to the emitter against the
+voxel casters. The global `world.Shadows` switch controls both sun and point-light shadows.
+
 ## Lifecycle
 
 1. **Start.** The game's entry point hands control to the engine. The engine

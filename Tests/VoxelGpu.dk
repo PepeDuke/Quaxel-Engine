@@ -167,6 +167,68 @@ T{
         T.AreEqual(read[3], 0x00000081)
     }
 
+    PointLightFadesToZeroAtItsRadius()
+    {
+        T.IsTrue(QuaxelPlatformBackend.OpenWindow("Point light", 128, 128, false))
+        T.IsTrue(QuaxelPlatformBackend.StartRenderer())
+        QuaxelTestBrick brick = EmptyBrick()
+        for x : 0...7 | y : 0...7 { SetTestCell(brick, x, y, 7, 0xffffff) }
+        int handle = UploadTestBrick(brick)
+        T.IsTrue(BeginFrame(128, 128, null))
+        float [16] matrix = {0.5, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, -0.5, 1.0}
+        float [9] axes = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0}
+        T.IsTrue(TraceVolume(handle, &matrix[0], 0.0, 0.0, 1.0, 1.0, &axes[0]))
+        float [8] light = {0.0, 0.0, 0.25, 0.375, 0.0, 1.0, 0.0, 0.0}
+        T.IsTrue(AddPointLight(&light[0]))
+        float [16] dark
+        T.IsTrue(LightVoxels(&matrix[0], &dark[0]))
+        long [4] at = {RowAt(4.0), RowAt(6.0), RowAt(7.5), 0}
+        uint [4] pixels
+        T.IsTrue(ReadFrameWords(at, 3, pixels))
+        Stop()
+        QuaxelPlatformBackend.CloseWindow()
+        T.IsTrue(Green(pixels[0]) > Green(pixels[1]))
+        T.IsTrue(Green(pixels[1]) > 0.0)
+        T.AreEqual(Green(pixels[2]), 0.0)
+    }
+
+    PointShadowStopsAtEmitter()
+    {
+        T.IsTrue(QuaxelPlatformBackend.OpenWindow("Point shadows", 128, 128, false))
+        T.IsTrue(QuaxelPlatformBackend.StartRenderer())
+        QuaxelTestBrick wall = EmptyBrick()
+        QuaxelTestBrick blocker = EmptyBrick()
+        for x : 0...7 | y : 0...7 {
+            SetTestCell(wall, x, y, 7, 0xffffff)
+            SetTestCell(blocker, x, y, 4, 0xffffff)
+        }
+        int receiver = UploadTestBrick(wall)
+        int caster = UploadTestBrick(blocker)
+        float [16] matrix = {0.5, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, -0.5, 1.0}
+        float [16] box = {1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0}
+        float [9] axes = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0}
+        float [16] dark
+        long [4] at
+        for trial : 0; trial < 3; trial++ {
+            T.IsTrue(BeginFrame(128, 128, null))
+            at[0] = RowAt(4.0)
+            T.IsTrue(TraceVolume(receiver, &matrix[0], 0.0, 0.0, 1.0, 1.0, &axes[0]))
+            T.IsTrue(AddShadowCaster(caster, &box[0]))
+            // Wall at .375; blocker spans [0,.125). Move light across blocker.
+            float [8] light = {0.0, 0.0, -0.125, 1.0, 0.0, 1.0, 0.0, 1.0}
+            if trial == 1 { light[2] = 0.25 }
+            if trial == 2 { light[7] = 0.0 }
+            T.IsTrue(AddPointLight(&light[0]))
+            T.IsTrue(LightVoxels(&matrix[0], &dark[0]))
+            uint [4] pixels
+            T.IsTrue(ReadFrameWords(at, 1, pixels))
+            if trial == 0 { T.AreEqual(Green(pixels[0]), 0.0) }
+            else { T.IsTrue(Green(pixels[0]) > 30.0) }
+        }
+        Stop()
+        QuaxelPlatformBackend.CloseWindow()
+    }
+
     SunLightsFacesAndBlockersCastShadows()
     {
         T.IsTrue(QuaxelPlatformBackend.OpenWindow("Voxel shadows", 128, 128, false))

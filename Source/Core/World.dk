@@ -6,7 +6,18 @@ QuaxelComponents : int
     Camera: 1 << 2,
     Voxels: 1 << 3,
     Animator: 1 << 4,
-    SocketFollower: 1 << 5
+    SocketFollower: 1 << 5,
+    PointLight: 1 << 6
+}
+
+// Offset is node-local. Radius is in world units and intensity scales linear RGB.
+QuaxelPointLight
+{
+    vec3 Offset
+    vec3 Color
+    float Radius
+    float Intensity
+    bool CastShadows
 }
 
 QuaxelTransform
@@ -132,6 +143,7 @@ QuaxelNode
     bool PendingDestroy
     QuaxelTransform Transform
     int Volume
+    QuaxelPointLight PointLight
     QuaxelMeshRenderer MeshRenderer
     QuaxelCamera Camera
     QuaxelAnimator Animator
@@ -164,10 +176,25 @@ QuaxelWorld
     vec3 SunColor = vec3(0.78, 0.74, 0.66)
     vec3 SkyColor = vec3(0.42, 0.46, 0.54)
     vec3 GroundColor = vec3(0.24, 0.22, 0.2)
-    // When false, nothing blocks sunlight.
+    // Global switch for sunlight and point-light shadows.
     bool Shadows = true
 
     bool Exists(int id) { return id >= 1 && id <= Nodes.Len && Nodes[id - 1].Alive }
+
+    bool SetPointLight(int id, QuaxelPointLight light)
+    {
+        if !Has(id, QuaxelComponents.Transform) || light.Radius <= 0.0 || light.Intensity < 0.0 { return false }
+        Nodes[id - 1].PointLight = light
+        Nodes[id - 1].Mask |= QuaxelComponents.PointLight
+        return true
+    }
+
+    QuaxelPointLight GetPointLight(int id) { return Nodes[id - 1].PointLight }
+
+    RemovePointLight(int id)
+    {
+        if Exists(id) { Nodes[id - 1].Mask &= ~(int)QuaxelComponents.PointLight }
+    }
 
     bool IsActive(int id) { return Exists(id) && Nodes[id - 1].Active }
 

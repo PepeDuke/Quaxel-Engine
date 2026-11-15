@@ -3,6 +3,7 @@ QuaxelPlatformBackend
     PreferUncappedPresentation() { QuaxelVulkan.PreferUncappedPresentation() }
     string PresentationMode() { return QuaxelVulkan.PresentationMode() }
     bool StartGpuTiming() { return QuaxelVulkan.StartGpuTiming() }
+    double MeanLightingMs() { return QuaxelVulkan.MeanLightingMs() }
     bool FinishGpuTiming(double []& samples) { return QuaxelVulkan.FinishGpuTiming(samples) }
     bool ReadThreadTime(long& ticks)
     {
@@ -24,6 +25,7 @@ QuaxelPlatformBackend
     {
         return QuaxelVulkan.TraceVolume(handle, boxFromClip, left, top, right, bottom, axes)
     }
+    bool AddPointLight(void* data) { return QuaxelVulkan.AddPointLight(data) }
     bool AddShadowCaster(int handle, void* boxFromWorld) { return QuaxelVulkan.AddShadowCaster(handle, boxFromWorld) }
     bool LightVoxels(void* worldFromClip, void* lighting) { return QuaxelVulkan.LightVoxels(worldFromClip, lighting) }
 

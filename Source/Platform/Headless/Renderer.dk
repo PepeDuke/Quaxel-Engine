@@ -3,6 +3,7 @@ QuaxelPlatformBackend
     PreferUncappedPresentation() {  }
     string PresentationMode() { return "Headless" }
     bool StartGpuTiming() { return false }
+    double MeanLightingMs() { return 0.0 }
     bool FinishGpuTiming(double []& samples) { return false }
     bool ReadThreadTime(long& ticks) { return false }
 
@@ -14,6 +15,7 @@ QuaxelPlatformBackend
     {
         return false
     }
+    bool AddPointLight(void* data) { return false }
     bool AddShadowCaster(int handle, void* boxFromWorld) { return false }
     bool LightVoxels(void* worldFromClip, void* lighting) { return false }
 
