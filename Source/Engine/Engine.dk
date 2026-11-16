@@ -235,10 +235,10 @@ QuaxelEngine
             item.Near = NearDepth(item.Clip)
             TraceOrder += item
         }
-        SortByNear(TraceOrder)
-        for item : TraceOrder {
-            if !Trace(item.Clip, item.BoxFromWorld, item.Handle, item.Slot) { return false }
-        }
+        // Stable caster slots keep camera and actor depth-order changes out of the shadow cache.
+        // Preserve the nearest-first selection when the renderer might hit its 256-caster cap.
+        bool sortBeforeCasters = TraceOrder.Len > 256
+        if sortBeforeCasters { SortByNear(TraceOrder) }
         // Every volume blocks sunlight, including those off screen. Effects
         // receive light but cast no shadows.
         if world.Shadows {
@@ -249,6 +249,10 @@ QuaxelEngine
                     item.BoundsHalf.X, item.BoundsHalf.Y, item.BoundsHalf.Z}
                 if !QuaxelRenderer.AddBoundedShadowCaster(item.Handle, &boxFromWorld, &bounds[0]) { return false }
             }
+        }
+        if !sortBeforeCasters { SortByNear(TraceOrder) }
+        for item : TraceOrder {
+            if !Trace(item.Clip, item.BoxFromWorld, item.Handle, item.Slot) { return false }
         }
         if !Light(world, viewProjection) { return false }
         for i : 0; i < ui.CommandCount; i++ {

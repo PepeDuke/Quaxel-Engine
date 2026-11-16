@@ -1,0 +1,27 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "VoxelShadowCommon.glsl"
+
+layout(local_size_x=8,local_size_y=8) in;
+layout(push_constant) uniform Params { int light; int wedge; int casterCount; } pc;
+layout(set=3,binding=0,std430) writeonly buffer ShadowAtlas { float depthAtlas[]; };
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    vec2 uv = (vec2(p) + 0.5) / WEDGE_SIZE;
+    float y = 1.0 - uv.x - uv.y;
+    vec2 xz = y < 0.0 ? 1.0 - uv.yx : uv;
+    vec3 dir = normalize(vec3((pc.wedge & 1) == 0 ? xz.x : -xz.x, y,
+                              (pc.wedge & 2) == 0 ? xz.y : -xz.y));
+    vec4 sphere = lights[pc.light].positionRadius;
+    float limit = sphere.w + SHADOW_OFFSET;
+    float nearest = limit;
+    for (int w = 0; w * 32 < pc.casterCount; ++w) {
+        uint mask = lights[pc.light].casterMask[w >> 2][w & 3];
+        while (mask != 0u) {
+            nearest = firstHit(w * 32 + findLSB(mask), sphere.xyz, dir, nearest);
+            mask &= mask - 1u;
+        }
+    }
+    depthAtlas[shadowTexel(pc.light, pc.wedge, p)] = nearest < limit ? nearest : FAR;
+}

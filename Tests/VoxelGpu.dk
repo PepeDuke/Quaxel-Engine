@@ -209,27 +209,44 @@ T{
         float [9] axes = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0}
         float [16] dark
         long [4] at
-        for trial : 0; trial < 3; trial++ {
+        for trial : 0; trial < 10; trial++ {
+            if trial == 9 {
+                // A new voxel payload at the same model handle must invalidate both wedges.
+                QuaxelTestBrick empty = EmptyBrick()
+                void* mapped = null
+                T.AreEqual(MapVolume(caster, 532, mapped), caster)
+                memcpy(mapped, &empty.Words[0], 2128)
+                UnmapVolume(caster)
+            }
             T.IsTrue(BeginFrame(128, 128, null))
-            at[0] = RowAt(4.0)
+            at[0] = RowAt(4.0) - 8
+            at[1] = RowAt(4.0) + 8
             T.IsTrue(TraceVolume(receiver, &matrix[0], 0.0, 0.0, 1.0, 1.0, &axes[0]))
             // Keep the real blocker beyond bit 31 to exercise sparse mask traversal.
             float [16] distant = box
             distant[12] = -20.0
             float [6] farBounds = {20.0, 0.0, 0.0, 0.5, 0.5, 0.5}
             for i : 0; i < 32; i++ { T.IsTrue(AddBoundedShadowCaster(caster, &distant[0], &farBounds[0])) }
-            float [6] bounds = {0.0, 0.0, 0.0, 0.5, 0.5, 0.5}
-            T.IsTrue(AddBoundedShadowCaster(caster, &box[0], &bounds[0]))
-            // Wall at .375; blocker spans [0,.125). Move light across blocker.
+            // The blocker spans both X wedges and stays on the positive-Z side of the first light.
+            box[10] = 8.0
+            box[12] = trial == 4 || trial == 5 ? -0.75 | 0.0
+            float [6] bounds = {-box[12], 0.0, 0.0, 0.5, 0.5, 0.0625}
+            if trial != 7 { T.IsTrue(AddBoundedShadowCaster(caster, &box[0], &bounds[0])) }
+            // Wall at .375; blocker spans [0,.015625). Move light across blocker.
             float [8] light = {0.0, 0.0, -0.125, 1.0, 0.0, 1.0, 0.0, 1.0}
             if trial == 1 { light[2] = 0.25 }
             if trial == 2 { light[7] = 0.0 }
             T.IsTrue(AddPointLight(&light[0]))
             T.IsTrue(LightVoxels(&matrix[0], &dark[0]))
+            if trial == 4 || trial >= 6 { T.AreEqual(DirtyWedges[0], 3) }
+            if trial == 5 { T.AreEqual(DirtyWedges[0], 0) }
+            if trial == 1 || trial == 3 { T.AreEqual(DirtyWedges[0], 15) }
             uint [4] pixels
-            T.IsTrue(ReadFrameWords(at, 1, pixels))
-            if trial == 0 { T.AreEqual(Green(pixels[0]), 0.0) }
-            else { T.IsTrue(Green(pixels[0]) > 30.0) }
+            T.IsTrue(ReadFrameWords(at, 2, pixels))
+            for i : 0; i < 2; i++ {
+                if trial == 0 || trial == 3 || trial == 6 || trial == 8 { T.AreEqual(Green(pixels[i]), 0.0) }
+                else { T.IsTrue(Green(pixels[i]) > 30.0) }
+            }
         }
         Stop()
         QuaxelPlatformBackend.CloseWindow()
@@ -273,6 +290,42 @@ T{
         // The ledge's own face is in front of everything, so it is lit.
         T.IsTrue(ledge > shaded + 60.0)
         T.IsTrue(shaded > 0.0)
+    }
+
+    SunChunkTracksDistantBlockerAndClearsOldShadow()
+    {
+        T.IsTrue(QuaxelPlatformBackend.OpenWindow("Sun chunk", 128, 128, false))
+        T.IsTrue(QuaxelPlatformBackend.StartRenderer())
+        QuaxelTestBrick wall = EmptyBrick()
+        for x : 0...7 | y : 0...7 { SetTestCell(wall, x, y, 7, 0xffffff) }
+        int handle = UploadTestBrick(wall)
+        float [16] matrix = {0.5, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, -0.5, 1.0}
+        float [9] axes = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0}
+        float [16] sun = {0.0, 0.70710678, -0.70710678, 0.0, 1.0, 1.0, 1.0, 0.0, 0.1, 0.1, 0.1, 0.0, 0.1, 0.1, 0.1, 0.0}
+        float [16] box = {1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, -32.0, 32.0, 1.0}
+        float [6] bounds = {0.0, 32.0, -32.0, 0.5, 0.5, 0.5}
+        uint reference = 0
+        for trial : 0; trial < 6; trial++ {
+            T.IsTrue(BeginFrame(128, 128, null))
+            T.IsTrue(TraceVolume(handle, &matrix[0], 0.0, 0.0, 1.0, 1.0, &axes[0]))
+            if trial == 3 { bounds[0] = 17.0 }
+            if trial == 4 { bounds[0] = 0.0 }
+            if trial == 5 { sun[0] = 0.70710678 }
+            box[12] = -bounds[0]
+            if trial == 0 { T.IsTrue(AddShadowCaster(handle, &box[0])) }
+            else { T.IsTrue(AddBoundedShadowCaster(handle, &box[0], &bounds[0])) }
+            T.IsTrue(LightVoxels(&matrix[0], &sun[0]))
+            if trial == 2 { T.IsFalse(SunDirty[0]) }
+            if trial >= 3 { T.IsTrue(SunDirty[0]) }
+            long [4] at = {RowAt(4.0) + 16, 0, 0, 0}
+            uint [4] read
+            T.IsTrue(ReadFrameWords(at, 1, read))
+            if trial == 0 { reference = read[0] }
+            if trial == 3 || trial == 5 { T.IsTrue(Green(read[0]) > Green(reference) + 60.0) }
+            else { T.AreEqual(read[0], reference) }
+        }
+        Stop()
+        QuaxelPlatformBackend.CloseWindow()
     }
 
     FacesBesideACornerAreOccluded()

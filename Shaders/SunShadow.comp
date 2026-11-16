@@ -1,0 +1,24 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "VoxelShadowCommon.glsl"
+layout(local_size_x=8,local_size_y=8) in;
+layout(push_constant) uniform Params { ivec2 chunk; int casterCount; } pc;
+layout(set=3,binding=0,std430) writeonly buffer Atlas { float depths[]; };
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    int slot = sunSlot(pc.chunk);
+    vec3 sun = sunDirection.xyz;
+    vec2 ground = (vec2(pc.chunk) + (vec2(p) + 0.5) / SUN_SIZE) * SUN_CHUNK;
+    float top = chunkTops[slot >> 2][slot & 3];
+    vec3 start = vec3(ground.x, 0, ground.y) + sun * (top / abs(sun.y));
+    float nearest = FAR;
+    for (int w = 0; w * 32 < pc.casterCount; ++w) {
+        uint mask = sunMask(slot, w);
+        while (mask != 0u) {
+            nearest = firstHit(w * 32 + findLSB(mask), start, -sun, nearest);
+            mask &= mask - 1u;
+        }
+    }
+    depths[sunTexel(slot, p)] = nearest == FAR ? -FAR : top - nearest * abs(sun.y);
+}

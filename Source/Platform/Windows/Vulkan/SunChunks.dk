@@ -1,0 +1,101 @@
+// An 8x8 rolling window aligned with the terrain's 16-world-unit XZ chunks.
+// Project caster bounds onto Y=0 along sunlight, including offscreen casters.
+QuaxelVulkan
+#{
+    #int SunHeader = 5648
+    #int SunMasks = 5652
+    #int SunHeights = 6164
+    -int [512] LastSunMasks
+    -int [3] LastSunDirection
+    -int [64] SunX
+    -int [64] SunZ
+    -float [64] SunTop
+    -bool [64] SunDirty
+    -bool SunValid
+
+    -UpdateSunChunks(void* worldFromClip, void* lighting)
+    {
+        float [16] camera
+        float [4] sun
+        memcpy(&camera[0], worldFromClip, 64)
+        memcpy(&sun[0], lighting, 16)
+        // Grazing sunlight and callers without world bounds use the exact global trace.
+        bool usable = CasterCount > 0 && Math.Abs(sun[1]) >= 0.125
+        for c : 0; c < CasterCount; c++ {
+            if CasterBounds[c * 6 + 3] < 0.0 { usable = false }
+        }
+        Scene.Words[SunHeader + 3] = usable ? 1 | 0
+        if !usable {
+            SunValid = false
+            return
+        }
+        float dx = sun[0] / sun[1]
+        float dz = sun[2] / sun[1]
+        float side = sun[1] > 0.0 ? 1.0 | -1.0
+        // Centre the residency window on the camera centre ray near the ground.
+        float t = Math.Abs(camera[9]) > 0.0001 ? Math.Clamp(-camera[13] / camera[9], 0.0, 1.0) | 0.5
+        float y = camera[13] + t * camera[9]
+        int left = (int)Math.Floor((camera[12] + t * camera[8] - dx * y) / 16.0) - 4
+        int back = (int)Math.Floor((camera[14] + t * camera[10] - dz * y) / 16.0) - 4
+        Scene.Words[SunHeader] = left
+        Scene.Words[SunHeader + 1] = back
+        bool reset = !SunValid
+        for k : 0; k < 3; k++ {
+            if LastSunDirection[k] != Scene.Words[k] { reset = true }
+            LastSunDirection[k] = Scene.Words[k]
+        }
+        for z : back; z < back + 8; z++ {
+            for x : left; x < left + 8; x++ {
+                int slot = (x & 7) + 8 * (z & 7)
+                SunDirty[slot] = reset || SunX[slot] != x || SunZ[slot] != z
+                SunX[slot] = x
+                SunZ[slot] = z
+                SunTop[slot] = -1.0e30
+            }
+        }
+        for w : 0; w < 512; w++ { Scene.Words[SunMasks + w] = 0 }
+        for c : 0; c < CasterCount; c++ {
+            int b = 6 * c
+            float u = CasterBounds[b] - dx * CasterBounds[b + 1]
+            float v = CasterBounds[b + 2] - dz * CasterBounds[b + 1]
+            float du = CasterBounds[b + 3] + Math.Abs(dx) * CasterBounds[b + 4] + 0.002
+            float dv = CasterBounds[b + 5] + Math.Abs(dz) * CasterBounds[b + 4] + 0.002
+            int x0 = Math.Max(left, (int)Math.Floor((u - du) / 16.0))
+            int x1 = Math.Min(left + 7, (int)Math.Floor((u + du) / 16.0))
+            int z0 = Math.Max(back, (int)Math.Floor((v - dv) / 16.0))
+            int z1 = Math.Min(back + 7, (int)Math.Floor((v + dv) / 16.0))
+            float top = side * CasterBounds[b + 1] + CasterBounds[b + 4] + 1.0
+            for z : z0; z <= z1; z++ {
+                for x : x0; x <= x1; x++ {
+                    int slot = (x & 7) + 8 * (z & 7)
+                    Scene.Words[SunMasks + 8 * slot + (c >> 5)] |= 1 << (c & 31)
+                    SunTop[slot] = Math.Max(SunTop[slot], top)
+                    if ChangedCasters[c] { SunDirty[slot] = true }
+                }
+            }
+        }
+        for w : 0; w < 512; w++ {
+            int current = Scene.Words[SunMasks + w]
+            if LastSunMasks[w] != current { SunDirty[w >> 3] = true }
+            LastSunMasks[w] = current
+        }
+        memcpy(&Scene.Words[SunHeights], &SunTop[0], 256)
+        SunValid = true
+    }
+
+    -RebuildSunChunks()
+    {
+        if !SunValid { return }
+        bool bound = false
+        for slot : 0; slot < 64; slot++ {
+            if !SunDirty[slot] || SunTop[slot] < -1.0e29 { continue }
+            if !bound {
+                Vk.CmdBindPipeline(Command, 1, SunPipeline)
+                bound = true
+            }
+            int [3] args = {SunX[slot], SunZ[slot], CasterCount}
+            Vk.CmdPushConstants(Command, LightLayout, 32, 0, 12, &args[0])
+            Vk.CmdDispatch(Command, 16, 16, 1)
+        }
+    }
+}

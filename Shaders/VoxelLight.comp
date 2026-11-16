@@ -1,7 +1,7 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 // Lights the frame that Voxel.comp traced. Each pixel holds albedo with
-// ambient occlusion, depth and a world normal. Sunlight is tested with a
-// shadow ray through every caster volume; ambient light blends from ground
+// ambient occlusion, depth and a world normal. Sunlight uses world-chunk shadow depths; ambient light blends from ground
 // to sky with the normal and is darkened by the occlusion.
 layout(local_size_x=8,local_size_y=8) in;
 layout(push_constant) uniform Params {
@@ -13,113 +13,37 @@ layout(push_constant) uniform Params {
     int lights;
 } pc;
 layout(set=0,binding=0,std430) buffer Output { uint frame[]; };
-struct Caster {
-    mat4 boxFromWorld;  // World to the volume's unit box, centred on 0.
-    ivec4 info;         // x: first word of the volume in its buffer.
-};
-struct PointLight { vec4 positionRadius; vec4 color; uvec4 casterMask[2]; };
-layout(set=1,binding=0,std430) readonly buffer Scene {
-    vec4 sunDirection;  // Toward the sun, unit length.
-    vec4 sunColor;
-    vec4 skyColor;
-    vec4 groundColor;
-    PointLight lights[32];
-    Caster casters[];
-};
-const int MAX_CASTERS = 256;
-layout(set=2,binding=0,std430) readonly buffer Grid { int words[]; } grids[MAX_CASTERS];
-
-const int MASK_WORDS = 16;
-const float FAR = 1e30;
-// World units the shadow ray starts in front of the surface.
-const float SHADOW_OFFSET = 0.002;
-// Bounds the walk if rounding ever stalls it.
-const int MAX_STEPS = 1024;
-
-int mortonCell(ivec3 p) {
-    ivec3 bits = (p & 1) | ((p & 2) << 2) | ((p & 4) << 4);
-    return bits.x | (bits.y << 1) | (bits.z << 2);
-}
-
-ivec3 enteringCell(vec3 position, vec3 direction) {
-    return ivec3(mix(floor(position), ceil(position) - 1.0, lessThan(direction, vec3(0))));
-}
-
-// True when the ray from `start` along `toward` meets a solid cell of caster g.
-// The index is the same for every invocation that reaches a call, so it is
-// dynamically uniform.
-bool blocked(int g, vec3 start, vec3 toward, float rayEnd) {
-    // Clip in unit-box space before accessing this caster's voxel buffer.
-    mat4 boxFromWorld = casters[g].boxFromWorld;
-    vec3 boxOrigin = (boxFromWorld * vec4(start, 1.0)).xyz + 0.5;
-    vec3 boxDir = mat3(boxFromWorld) * toward;
-    bvec3 parallel = equal(boxDir, vec3(0));
-    vec3 invBoxDir = 1.0 / mix(boxDir, vec3(1.0), parallel);
-    vec3 first = -boxOrigin * invBoxDir;
-    vec3 last = (1.0 - boxOrigin) * invBoxDir;
-    vec3 near = mix(min(first, last), vec3(0.0), parallel);
-    vec3 far = mix(max(first, last), vec3(rayEnd), parallel);
-    float t = max(0.0, max(near.x, max(near.y, near.z)));
-    float end = min(rayEnd, min(far.x, min(far.y, far.z)));
-    vec3 parallelOrigin = mix(vec3(0.0), boxOrigin, parallel);
-    if (t >= end || any(lessThan(parallelOrigin, vec3(0.0))) ||
-                    any(greaterThanEqual(parallelOrigin, vec3(1.0)))) return false;
-
-    int base = casters[g].info.x;
-    ivec3 dims = ivec3(grids[g].words[base], grids[g].words[base + 1], grids[g].words[base + 2]);
-    ivec3 bricks = (dims + 7) / 8;
-    vec3 origin = boxOrigin * vec3(dims);
-    vec3 dir = boxDir * vec3(dims);
-    vec3 invDir = 1.0 / mix(dir, vec3(1.0), parallel);
-    ivec3 stepDir = ivec3(sign(dir));
-    ivec3 positive = max(stepDir, ivec3(0));
-    ivec3 cell = clamp(enteringCell(origin + t * dir, dir), ivec3(0), dims - 1);
-    int steps = 0;
-    while (all(greaterThanEqual(cell, ivec3(0))) && all(lessThan(cell, dims)) && steps < MAX_STEPS) {
-        ivec3 brick = cell >> 3;
-        int offset = grids[g].words[base + 3 + brick.x + bricks.x * (brick.y + bricks.y * brick.z)];
-        ivec3 low = brick * 8;
-        ivec3 edge = low + positive * 8;
-        vec3 next = mix((vec3(edge) - origin) * invDir, vec3(FAR), parallel);
-        float brickExit = min(next.x, min(next.y, next.z));
-        if (offset != 0) {
-            int at = base + offset;
-            float stop = min(end, brickExit);
-            vec3 tDelta = abs(invDir);
-            vec3 tMax = mix((vec3(cell + positive) - origin) * invDir, vec3(FAR), parallel);
-            ivec3 local = cell - low;
-            while (all(greaterThanEqual(local, ivec3(0))) && all(lessThan(local, ivec3(8))) && steps < MAX_STEPS) {
-                ++steps;
-                int m = mortonCell(local);
-                int word = grids[g].words[at + (m >> 5)];
-                if (((word >> (m & 31)) & 1) != 0) return true;
-                int size = 1;
-                if (((word >> (m & 24)) & 255) == 0)
-                    size = (word | grids[g].words[at + ((m >> 5) ^ 1)]) == 0 ? 4 : 2;
-                if (size > 1) {
-                    ivec3 blockLow = low + (local & ~(size - 1));
-                    ivec3 blockEdge = blockLow + positive * size;
-                    vec3 exits = mix((vec3(blockEdge) - origin) * invDir, vec3(FAR), parallel);
-                    t = min(exits.x, min(exits.y, exits.z));
-                    if (t >= stop) break;
-                    ivec3 entered = clamp(enteringCell(origin + t * dir, dir), blockLow, blockLow + size - 1);
-                    entered = mix(entered, blockEdge + min(stepDir, ivec3(0)), equal(exits, vec3(t)));
-                    local = entered - low;
-                    tMax = mix((vec3(entered + positive) - origin) * invDir, vec3(FAR), parallel);
-                    continue;
-                }
-                t = min(tMax.x, min(tMax.y, tMax.z));
-                if (t >= stop) break;
-                bvec3 crossedCell = equal(tMax, vec3(t));
-                local += mix(ivec3(0), stepDir, crossedCell);
-                tMax += mix(vec3(0.0), tDelta, crossedCell);
+#include "VoxelShadowCommon.glsl"
+layout(set=3,binding=0,std430) readonly buffer ShadowAtlas { float depthAtlas[]; };
+bool sunBlocked(vec3 start, vec3 sun) {
+    int slot = -1;
+    if (sunWindow.w != 0) {
+        vec2 ground = (start.xz - start.y * (sun.xz / sun.y)) / SUN_CHUNK;
+        ivec2 chunk = ivec2(floor(ground));
+        ivec2 offset = chunk - sunWindow.xy;
+        if (all(greaterThanEqual(offset, ivec2(0))) && all(lessThan(offset, ivec2(8)))) {
+            slot = sunSlot(chunk);
+            if (chunkTops[slot >> 2][slot & 3] < -1e29) return false;
+            vec2 local = fract(ground) * SUN_SIZE - 0.5;
+            ivec2 p = ivec2(floor(local));
+            if (all(greaterThanEqual(p, ivec2(0))) && all(lessThan(p, ivec2(SUN_SIZE - 1)))) {
+                int at = sunTexel(slot, p);
+                vec2 a = vec2(depthAtlas[at], depthAtlas[at + 1]);
+                vec2 b = vec2(depthAtlas[at + SUN_SIZE], depthAtlas[at + SUN_SIZE + 1]);
+                float h = start.y * sign(sun.y);
+                float tolerance = SUN_CHUNK / SUN_SIZE;
+                if (h > max(max(a.x, a.y), max(b.x, b.y)) + tolerance) return false;
+                if (h < min(min(a.x, a.y), min(b.x, b.y)) - tolerance) return true;
             }
         }
-        ++steps;
-        t = brickExit;
-        if (t >= end) break;
-        cell = clamp(enteringCell(origin + t * dir, dir), low, low + 7);
-        cell = mix(cell, edge + min(stepDir, ivec3(0)), equal(next, vec3(t)));
+    }
+    // Keep descriptor indices uniform even where adjacent pixels use different chunks.
+    for (int w = 0; w * 32 < pc.casters; ++w) {
+        uint mask = slot < 0 ? ~0u : sunMask(slot, w);
+        if (mask == 0u) continue;
+        for (int bit = 0; bit < 32 && w * 32 + bit < pc.casters; ++bit) {
+            if ((mask & (1u << bit)) != 0u && firstHit(w * 32 + bit, start, sun, FAR) < FAR) return true;
+        }
     }
     return false;
 }
@@ -145,9 +69,7 @@ void main() {
     if (lambert > 0.0) {
         lit = 1.0;
         vec3 start = world + n * SHADOW_OFFSET;
-        for (int g = 0; g < pc.casters; ++g) {
-            if (blocked(g, start, sun, FAR)) { lit = 0.0; break; }
-        }
+        if (sunBlocked(start, sun)) lit = 0.0;
     }
     vec3 ambient = mix(groundColor.rgb, skyColor.rgb, n.y * 0.5 + 0.5);
     vec3 light = sunColor.rgb * (lambert * lit * mix(1.0, ao, 0.35)) + ambient * ao;
@@ -165,12 +87,34 @@ void main() {
             vec3 segment = lights[i].positionRadius.xyz - start;
             bool shadow = false;
             if (dot(segment, n) > 0.0) {
-                for (int w = 0; w * 32 < pc.casters && !shadow; ++w) {
-                    uint mask = lights[i].casterMask[w >> 2][w & 3];
-                    while (mask != 0u) {
-                        int g = w * 32 + findLSB(mask);
-                        if (blocked(g, start, segment, 1.0)) { shadow = true; break; }
-                        mask &= mask - 1u;
+                vec3 fromLight = -segment;
+                vec2 uv = abs(fromLight.xz) / dot(abs(fromLight), vec3(1.0));
+                if (fromLight.y < 0.0) uv = 1.0 - uv.yx;
+                int wedge = (fromLight.x < 0.0 ? 1 : 0) + (fromLight.z < 0.0 ? 2 : 0);
+                vec2 center = uv * WEDGE_SIZE - 0.5;
+                ivec2 p = ivec2(floor(center));
+                float distance = length(segment);
+                // At wedge seams, silhouettes and near-coincident surfaces resolve the actual segment.
+                bool resolve = any(lessThan(p, ivec2(0))) || any(greaterThanEqual(p, ivec2(WEDGE_SIZE - 1)));
+                if (!resolve) {
+                    int at = shadowTexel(i, wedge, p);
+                    vec2 a = vec2(depthAtlas[at], depthAtlas[at + 1]);
+                    vec2 b = vec2(depthAtlas[at + WEDGE_SIZE], depthAtlas[at + WEDGE_SIZE + 1]);
+                    float closest = min(min(a.x, a.y), min(b.x, b.y));
+                    float farthest = max(max(a.x, a.y), max(b.x, b.y));
+                    float tolerance = distance * (4.0 / WEDGE_SIZE) + SHADOW_OFFSET;
+                    resolve = distance >= closest - tolerance && distance <= farthest + tolerance;
+                    shadow = distance > farthest;
+                }
+                if (resolve) {
+                    shadow = false;
+                    for (int w = 0; w * 32 < pc.casters && !shadow; ++w) {
+                        uint mask = lights[i].casterMask[w >> 2][w & 3];
+                        while (mask != 0u) {
+                            int g = w * 32 + findLSB(mask);
+                            if (firstHit(g, start, segment, 1.0) < 1.0) { shadow = true; break; }
+                            mask &= mask - 1u;
+                        }
                     }
                 }
             }

@@ -41,7 +41,7 @@ VkLightParams
 // (position, color and a 256-bit caster mask), then 20 words per caster (its world-to-box matrix and first word).
 VkLightScene
 {
-    int [5648] Words
+    int [6228] Words // Followed after the fixed caster array by the sun window, masks and heights.
 }
 
 VkUiParams
@@ -76,6 +76,20 @@ QuaxelVulkan
     -long CasterSet
     -long LightLayout
     -long LightPipeline
+    -long SunPipeline
+    -long ShadowPipeline
+    -VkStorage ShadowAtlas
+    -int [4096] VolumeRevision
+    -int [256] CasterRevisions
+    -int [256] PreviousRevisions
+    -int [4096] PreviousMatrices
+    -long [256] PreviousBuffers
+    -bool [256] ChangedCasters
+    -int [8192] PreviousWedges // Per light slot and caster slot.
+    -float [128] PreviousSpheres
+    -int [32] DirtyWedges
+    -int PreviousLights
+    -int PreviousCasters
     -bool LightBound
     -VkStorage SceneStorage
     -VkLightScene Scene
@@ -134,12 +148,15 @@ QuaxelVulkan
         VkStorage scene
         if !CreateStorage((long)Scene.Words.Len * 4, 2, 1, scene) { return false }
         SceneStorage = scene
-        long [3] sets = {StorageLayout, StorageLayout, CasterLayout}
+        VkStorage atlas
+        if !CreateStorage((32 * 4 + 64) * 128 * 128 * 4, 0, 1, atlas) { return false }
+        ShadowAtlas = atlas
+        long [4] sets = {StorageLayout, StorageLayout, CasterLayout, StorageLayout}
         VkPushConstantRange params
         params.stageFlags = 32
         params.vkSize = 88
         VkPipelineLayoutCreateInfo layout
-        layout.setLayoutCount = 3
+        layout.setLayoutCount = 4
         layout.pSetLayouts = &sets[0]
         layout.pushConstantRangeCount = 1
         layout.pPushConstantRanges = &params
@@ -152,6 +169,18 @@ QuaxelVulkan
         info.vkStage.pName = "main"
         info.vkLayout = LightLayout
         int result = Vk.CreateComputePipelines(Device, 0, 1, &info, null, &LightPipeline)
+        Vk.DestroyShaderModule(Device, shader, null)
+        if result != 0 { return false }
+        shader = VoxelShadowShaders.Compute(Device)
+        if shader == 0 { return false }
+        info.vkStage.vkModule = shader
+        result = Vk.CreateComputePipelines(Device, 0, 1, &info, null, &ShadowPipeline)
+        Vk.DestroyShaderModule(Device, shader, null)
+        if result != 0 { return false }
+        shader = SunShadowShaders.Compute(Device)
+        if shader == 0 { return false }
+        info.vkStage.vkModule = shader
+        result = Vk.CreateComputePipelines(Device, 0, 1, &info, null, &SunPipeline)
         Vk.DestroyShaderModule(Device, shader, null)
         return result == 0
     }
@@ -199,6 +228,16 @@ QuaxelVulkan
         VkStorage scene = SceneStorage
         ReleaseStorage(scene)
         SceneStorage = scene
+        VkStorage shadow = ShadowAtlas
+        ReleaseStorage(shadow)
+        ShadowAtlas = shadow
+        Vk.DestroyPipeline(Device, ShadowPipeline, null)
+        ShadowPipeline = 0
+        Vk.DestroyPipeline(Device, SunPipeline, null)
+        SunPipeline = 0
+        SunValid = false
+        PreviousLights = 0
+        PreviousCasters = 0
         Vk.DestroyPipeline(Device, LightPipeline, null)
         Vk.DestroyPipelineLayout(Device, LightLayout, null)
         Vk.DestroyDescriptorPool(Device, CasterPool, null)
@@ -286,7 +325,11 @@ QuaxelVulkan
         return previous
     }
 
-    UnmapVolume(int handle) { Vk.UnmapMemory(Device, Volumes.Items[handle].Memory) }
+    UnmapVolume(int handle)
+    {
+        Vk.UnmapMemory(Device, Volumes.Items[handle].Memory)
+        VolumeRevision[handle]++
+    }
 
     // Called before recording a frame. Replaces the atlas once the previous
     // frame has finished reading it.
@@ -398,6 +441,7 @@ QuaxelVulkan
         int at = 528 + CasterCount * 20
         memcpy(&Scene.Words[at], boxFromWorld, 64)
         for i : 16; i < 20; i++ { Scene.Words[at + i] = 0 }
+        CasterRevisions[CasterCount] = VolumeRevision[handle]
         CasterBuffers[CasterCount] = Volumes.Items[handle].Buffer
         CasterCount++
         return true
@@ -427,6 +471,84 @@ QuaxelVulkan
         }
     }
 
+    // Two vertical planes through the light divide its atlas into four wedges.
+    -int OverlappingWedges(int sphere, int b)
+    {
+        if CasterBounds[b + 3] < 0.0 { return 15 }
+        float x = CasterBounds[b] - LightSpheres[sphere]
+        float z = CasterBounds[b + 2] - LightSpheres[sphere + 2]
+        int sidesX = 0
+        int sidesZ = 0
+        if x >= -CasterBounds[b + 3] { sidesX |= 5 }
+        if x <= CasterBounds[b + 3] { sidesX |= 10 }
+        if z >= -CasterBounds[b + 5] { sidesZ |= 3 }
+        if z <= CasterBounds[b + 5] { sidesZ |= 12 }
+        return sidesX & sidesZ
+    }
+
+    -UpdateShadowWedges()
+    {
+        for c : 0; c < CasterCount; c++ {
+            bool changed = c >= PreviousCasters || PreviousBuffers[c] != CasterBuffers[c] || PreviousRevisions[c] != CasterRevisions[c]
+            int at = 528 + c * 20
+            for k : 0; k < 16; k++ {
+                if PreviousMatrices[c * 16 + k] != Scene.Words[at + k] { changed = true }
+            }
+            memcpy(&PreviousMatrices[c * 16], &Scene.Words[at], 64)
+            PreviousBuffers[c] = CasterBuffers[c]
+            PreviousRevisions[c] = CasterRevisions[c]
+            ChangedCasters[c] = changed
+        }
+        for light : 0; light < LightCount; light++ {
+            int sphere = light * 4
+            int mask = 24 + light * 16
+            int dirty = light >= PreviousLights ? 15 | 0
+            for k : 0; k < 4; k++ {
+                if PreviousSpheres[sphere + k] != LightSpheres[sphere + k] { dirty = 15 }
+                PreviousSpheres[sphere + k] = LightSpheres[sphere + k]
+            }
+            // Compare both footprints so removed casters and section crossings clear old depths.
+            for c : 0; c < CasterCount || c < PreviousCasters; c++ {
+                int slot = light * MaxCasters + c
+                int old = PreviousWedges[slot]
+                int current = 0
+                if c < CasterCount && (Scene.Words[mask + (c >> 5)] & (1 << (c & 31))) != 0 {
+                    current = OverlappingWedges(sphere, c * 6)
+                }
+                if current != old || ChangedCasters[c] { dirty |= current | old }
+                PreviousWedges[slot] = current
+            }
+            // A disabled slot can be enabled again at the same position.
+            if Scene.Words[mask - 1] == 0 {
+                PreviousSpheres[sphere + 3] = -1.0
+                dirty = 0
+            }
+            DirtyWedges[light] = dirty
+        }
+        PreviousLights = LightCount
+        PreviousCasters = CasterCount
+    }
+
+    -RebuildShadowWedges()
+    {
+        bool rebuilding = false
+        for light : 0; light < LightCount; light++ {
+            if DirtyWedges[light] == 0 { continue }
+            if !rebuilding {
+                Vk.CmdBindPipeline(Command, 1, ShadowPipeline)
+                rebuilding = true
+            }
+            for wedge : 0; wedge < 4; wedge++ {
+                if (DirtyWedges[light] & (1 << wedge)) == 0 { continue }
+                int [3] args = {light, wedge, CasterCount}
+                Vk.CmdPushConstants(Command, LightLayout, 32, 0, 12, &args[0])
+                Vk.CmdDispatch(Command, 16, 16, 1)
+            }
+        }
+        // Publish the atlas even on cache hits, which may read an earlier submission's writes.
+        MemoryBarrier(0x800, 0x40, 0x800, 0x20)
+    }
+
     // Turns the traced albedo, occlusion, depth and normals into lit color.
     // WorldFromClip points at 16 floats. Lighting points at 16 floats: the
     // direction toward the sun, then sun, sky and ground colors, each padded
@@ -448,7 +570,9 @@ QuaxelVulkan
         write.pBufferInfo = &infos[0]
         Vk.UpdateDescriptorSets(Device, 1, &write, 0, null)
         BuildPointCasterLists()
-        Vk.CmdUpdateBuffer(Command, SceneStorage.Buffer, 0, (long)(528 + CasterCount * 20) * 4, &Scene.Words[0])
+        UpdateShadowWedges()
+        UpdateSunChunks(worldFromClip, lighting)
+        Vk.CmdUpdateBuffer(Command, SceneStorage.Buffer, 0, (long)Scene.Words.Len * 4, &Scene.Words[0])
         MemoryBarrier(0x1000, 0x1000, 0x800, 0x20) // transfer write -> compute read
         VkLightParams params
         memcpy(&params.Matrix[0], worldFromClip, 64)
@@ -461,11 +585,13 @@ QuaxelVulkan
         UiBound = false
         EffectBound = false
         LightBound = true
-        Vk.CmdBindPipeline(Command, 1, LightPipeline)
-        long [3] sets = {Output.Descriptor, SceneStorage.Descriptor, CasterSet}
-        Vk.CmdBindDescriptorSets(Command, 1, LightLayout, 0, 3, &sets[0], 0, null)
-        Vk.CmdPushConstants(Command, LightLayout, 32, 0, 88, &params)
+        long [4] sets = {Output.Descriptor, SceneStorage.Descriptor, CasterSet, ShadowAtlas.Descriptor}
+        Vk.CmdBindDescriptorSets(Command, 1, LightLayout, 0, 4, &sets[0], 0, null)
         if TimingPool != 0 { Vk.CmdWriteTimestamp(Command, 0x800, TimingPool, 2) }
+        RebuildSunChunks()
+        RebuildShadowWedges()
+        Vk.CmdBindPipeline(Command, 1, LightPipeline)
+        Vk.CmdPushConstants(Command, LightLayout, 32, 0, 88, &params)
         Vk.CmdDispatch(Command, (Extent.width + 7) / 8, (Extent.height + 7) / 8, 1)
         if TimingPool != 0 {
             Vk.CmdWriteTimestamp(Command, 0x800, TimingPool, 3)
