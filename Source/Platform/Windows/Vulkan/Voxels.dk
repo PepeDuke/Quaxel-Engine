@@ -35,6 +35,7 @@ VkLightParams
     int Bgra
     int Casters
     int Lights
+    int Gi
 }
 
 // The Scene buffer of Shaders/VoxelLight.comp: 16 words of sun and sky, 32 point lights of 16 words
@@ -149,12 +150,12 @@ QuaxelVulkan
         if !CreateStorage((long)Scene.Words.Len * 4, 2, 1, scene) { return false }
         SceneStorage = scene
         VkStorage atlas
-        if !CreateStorage((32 * 4 + 64) * 128 * 128 * 4, 0, 1, atlas) { return false }
+        if !CreateStorage(GiAtlasBytes, 2, 1, atlas) { return false }
         ShadowAtlas = atlas
         long [4] sets = {StorageLayout, StorageLayout, CasterLayout, StorageLayout}
         VkPushConstantRange params
         params.stageFlags = 32
-        params.vkSize = 88
+        params.vkSize = 92
         VkPipelineLayoutCreateInfo layout
         layout.setLayoutCount = 4
         layout.pSetLayouts = &sets[0]
@@ -182,7 +183,7 @@ QuaxelVulkan
         info.vkStage.vkModule = shader
         result = Vk.CreateComputePipelines(Device, 0, 1, &info, null, &SunPipeline)
         Vk.DestroyShaderModule(Device, shader, null)
-        return result == 0
+        return result == 0 && CreateProbePipelines()
     }
 
     -bool CreateUiPipeline()
@@ -236,6 +237,7 @@ QuaxelVulkan
         Vk.DestroyPipeline(Device, SunPipeline, null)
         SunPipeline = 0
         SunValid = false
+        ReleaseProbes()
         PreviousLights = 0
         PreviousCasters = 0
         Vk.DestroyPipeline(Device, LightPipeline, null)
@@ -360,6 +362,7 @@ QuaxelVulkan
 
     -ClearVoxelFrame()
     {
+        GiEnabled = false
         long bytes = (long)Extent.width * Extent.height * 4
         Vk.CmdFillBuffer(Command, Output.Buffer, 0, bytes, (int)0xff182030)
         Vk.CmdFillBuffer(Command, Output.Buffer, bytes, bytes, 0x3f800000) // far depth = 1
@@ -590,8 +593,12 @@ QuaxelVulkan
         if TimingPool != 0 { Vk.CmdWriteTimestamp(Command, 0x800, TimingPool, 2) }
         RebuildSunChunks()
         RebuildShadowWedges()
+        if GiEnabled {
+            UpdateProbes(params)
+            params.Gi = 1
+        }
         Vk.CmdBindPipeline(Command, 1, LightPipeline)
-        Vk.CmdPushConstants(Command, LightLayout, 32, 0, 88, &params)
+        Vk.CmdPushConstants(Command, LightLayout, 32, 0, 92, &params)
         Vk.CmdDispatch(Command, (Extent.width + 7) / 8, (Extent.height + 7) / 8, 1)
         if TimingPool != 0 {
             Vk.CmdWriteTimestamp(Command, 0x800, TimingPool, 3)

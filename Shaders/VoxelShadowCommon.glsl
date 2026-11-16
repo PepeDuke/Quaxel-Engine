@@ -36,7 +36,11 @@ ivec3 enteringCell(vec3 position, vec3 direction) {
 // Returns the first occupied-cell entry parameter, or rayEnd on a miss.
 // The index is the same for every invocation that reaches a call, so it is
 // dynamically uniform.
+#ifdef PROBE_TRACE
+float probeHit(int g, vec3 start, vec3 toward, float rayEnd, out vec3 hitNormal, out vec3 hitColor) {
+#else
 float firstHit(int g, vec3 start, vec3 toward, float rayEnd) {
+#endif
     // Clip in unit-box space before accessing this caster's voxel buffer.
     mat4 boxFromWorld = casters[g].boxFromWorld;
     vec3 boxOrigin = (boxFromWorld * vec4(start, 1.0)).xyz + 0.5;
@@ -80,7 +84,19 @@ float firstHit(int g, vec3 start, vec3 toward, float rayEnd) {
                 ++steps;
                 int m = mortonCell(local);
                 int word = grids[g].words[at + (m >> 5)];
-                if (((word >> (m & 31)) & 1) != 0) return t;
+                if (((word >> (m & 31)) & 1) != 0) {
+#ifdef PROBE_TRACE
+                    ivec3 entered = low + local;
+                    vec3 entry = mix((vec3(entered + max(-stepDir, ivec3(0))) - origin) * invDir, vec3(-FAR), parallel);
+                    int axis = entry.x >= max(entry.y, entry.z) ? 0 : (entry.y >= entry.z ? 1 : 2);
+                    vec3 normal = vec3(0);
+                    normal[axis] = -float(stepDir[axis]);
+                    hitNormal = normalize(transpose(mat3(boxFromWorld)) * normal);
+                    uint color = uint(grids[g].words[at + MASK_WORDS + m] - 1);
+                    hitColor = vec3((color >> 16) & 255u, (color >> 8) & 255u, color & 255u) / 255.0;
+#endif
+                    return t;
+                }
                 int size = 1;
                 if (((word >> (m & 24)) & 255) == 0)
                     size = (word | grids[g].words[at + ((m >> 5) ^ 1)]) == 0 ? 4 : 2;

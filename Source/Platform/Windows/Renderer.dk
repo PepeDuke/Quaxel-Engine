@@ -25,6 +25,9 @@ QuaxelPlatformBackend
     {
         return QuaxelVulkan.TraceVolume(handle, boxFromClip, left, top, right, bottom, axes)
     }
+    int BeginProbeField(bool uniformUpdates) { return QuaxelVulkan.BeginProbeField(uniformUpdates) }
+    WriteProbeRoot(int slot, int count, void* cells, void* positions) { QuaxelVulkan.WriteProbeRoot(slot,count,cells,positions) }
+    WriteProbeWindow(void* roots) { QuaxelVulkan.WriteProbeWindow(roots) }
     bool AddPointLight(void* data) { return QuaxelVulkan.AddPointLight(data) }
     bool AddBoundedShadowCaster(int handle, void* boxFromWorld, void* bounds)
     {

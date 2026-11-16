@@ -1,0 +1,146 @@
+// Byte offsets match the std430 fields of Shaders/ProbeField.glsl.
+VkProbeParams
+{
+    float [16] Matrix
+    int Width
+    int Height
+    int UniformUpdates
+    int Reserved
+    int Casters
+    int Lights
+    int Tick
+}
+
+VkProbePositions
+{
+    float [2048] Values
+}
+
+QuaxelVulkan
+#{
+    #int GiRoots = 12582912
+    #int GiLookup = 12591120
+    #int GiPositions = 13639696
+    #int GiHistory = 17834000
+    #int GiAtlasBytes = 43006992
+    -float [1048576] LastProbePositions
+    -int [512] ProbePositionEpoch
+    -long GiTrace
+    -long GiBlend
+    -int GiEpoch
+    -int GiFrame
+    -bool GiUniform
+    -bool GiEnabled
+
+    -bool CreateProbePipeline(long shader, long& pipeline)
+    {
+        if shader == 0 { return false }
+        VkComputePipelineCreateInfo info
+        info.vkStage.vkStage = 32
+        info.vkStage.vkModule = shader
+        info.vkStage.pName = "main"
+        info.vkLayout = LightLayout
+        int result = Vk.CreateComputePipelines(Device,0,1,&info,null,&pipeline)
+        Vk.DestroyShaderModule(Device,shader,null)
+        return result == 0
+    }
+
+    -bool CreateProbePipelines()
+    {
+        GiEpoch++
+        return CreateProbePipeline(ProbeTraceShaders.Compute(Device),GiTrace) && CreateProbePipeline(ProbeBlendShaders.Compute(Device),GiBlend)
+    }
+
+    -ReleaseProbes()
+    {
+        Vk.DestroyPipeline(Device,GiTrace,null)
+        Vk.DestroyPipeline(Device,GiBlend,null)
+        GiTrace = 0
+        GiBlend = 0
+        GiEnabled = false
+        GiFrame = 0
+    }
+
+    int BeginProbeField(bool uniformUpdates)
+    {
+        if !FrameOpen || !ComputeFrame { return 0 }
+        GiUniform = uniformUpdates
+        GiEnabled = true
+        return GiEpoch
+    }
+
+    WriteProbeRoot(int slot, int count, void* cells, void* positions)
+    {
+        if !GiEnabled || slot < 0 || slot >= 512 || count < 0 || count > 512 { return }
+        if count == 0 {
+            ProbePositionEpoch[slot] = 0
+            return
+        }
+        Vk.CmdUpdateBuffer(Command,ShadowAtlas.Buffer,GiLookup + slot * 2048,2048,cells)
+        Vk.CmdUpdateBuffer(Command,ShadowAtlas.Buffer,GiPositions + slot * 8192,count * 16,positions)
+        // Rebuilding a root must preserve irradiance for unchanged leaf centers.
+        VkProbePositions* incoming = (VkProbePositions*)positions
+        bool [512] reset
+        bool [512] present
+        bool fresh = ProbePositionEpoch[slot] != GiEpoch
+        ProbePositionEpoch[slot] = GiEpoch
+        if fresh {
+            Vk.CmdFillBuffer(Command,ShadowAtlas.Buffer,GiHistory + slot * 49152,49152,0)
+            for i : 0; i < 512; i++ { LastProbePositions[(slot*512+i)*4+3] = 0.0 }
+        }
+        float inverseCell = slot < 256 ? 4.0 | 1.0
+        for i : 0; i < count; i++ {
+            int v = i*4
+            int x = (int)Math.Floor(incoming.Values[v]*inverseCell) & 7
+            int y = (int)Math.Floor(incoming.Values[v+1]*inverseCell) & 7
+            int z = (int)Math.Floor(incoming.Values[v+2]*inverseCell) & 7
+            int cell = x + 8*y + 64*z
+            present[cell] = true
+            int at = (slot*512+cell)*4
+            for k : 0; k < 4; k++ {
+                if LastProbePositions[at+k] (0.0)!= incoming.Values[v+k] { reset[cell] = true }
+                LastProbePositions[at+k] = incoming.Values[v+k]
+            }
+        }
+        if fresh { return }
+        int cell = 0
+        while cell < 512 {
+            if !reset[cell] {
+                // A leaf covered by the actor can return at the exact same
+                // center after a step. Its old lighting is no longer current.
+                if !present[cell] { LastProbePositions[(slot*512+cell)*4+3] = 0.0 }
+                cell++
+                continue
+            }
+            int first = cell
+            while cell < 512 && reset[cell] { cell++ }
+            Vk.CmdFillBuffer(Command,ShadowAtlas.Buffer,GiHistory + (slot*512+first)*96,(cell-first)*96,0)
+        }
+    }
+
+    WriteProbeWindow(void* roots)
+    {
+        if GiEnabled { Vk.CmdUpdateBuffer(Command,ShadowAtlas.Buffer,GiRoots,8208,roots) }
+    }
+
+    -UpdateProbes(VkLightParams& params)
+    {
+        VkProbeParams trace
+        memcpy(&trace.Matrix[0],&params.Matrix[0],64)
+        trace.Width = params.Width
+        trace.Height = params.Height
+        trace.UniformUpdates = GiUniform ? 1 | 0
+        trace.Casters = params.Casters
+        trace.Lights = params.Lights
+        trace.Tick = GiFrame
+        GiFrame++
+        MemoryBarrier(0x1800,0x1040,0x800,0x60)
+        Vk.CmdBindPipeline(Command,1,GiTrace)
+        Vk.CmdPushConstants(Command,LightLayout,32,0,92,&trace)
+        Vk.CmdDispatch(Command,64,1,1)
+        MemoryBarrier(0x800,0x40,0x800,0x60)
+        Vk.CmdBindPipeline(Command,1,GiBlend)
+        Vk.CmdDispatch(Command,64,1,1)
+        MemoryBarrier(0x800,0x40,0x800,0x20)
+    }
+}

@@ -25,6 +25,9 @@ QuaxelRenderer
     // frame once before drawing UI. BoxFromWorld and worldFromClip point at 16
     // floats. Lighting points at 16 floats: the unit direction toward the sun,
     // then the sun, sky and ground colors, each followed by one unused float.
+    int BeginProbeField(bool uniformUpdates) { return QuaxelPlatformBackend.BeginProbeField(uniformUpdates) }
+    WriteProbeRoot(int slot, int count, void* cells, void* positions) { QuaxelPlatformBackend.WriteProbeRoot(slot,count,cells,positions) }
+    WriteProbeWindow(void* roots) { QuaxelPlatformBackend.WriteProbeWindow(roots) }
     bool AddPointLight(void* data) { return QuaxelPlatformBackend.AddPointLight(data) }
     bool AddBoundedShadowCaster(int handle, void* boxFromWorld, void* bounds)
     {

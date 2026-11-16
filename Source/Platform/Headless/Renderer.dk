@@ -15,6 +15,9 @@ QuaxelPlatformBackend
     {
         return false
     }
+    int BeginProbeField(bool uniformUpdates) { return 0 }
+    WriteProbeRoot(int slot, int count, void* cells, void* positions) {  }
+    WriteProbeWindow(void* roots) {  }
     bool AddPointLight(void* data) { return false }
     bool AddBoundedShadowCaster(int handle, void* boxFromWorld, void* bounds)
     {

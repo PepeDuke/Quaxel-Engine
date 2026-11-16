@@ -7,6 +7,7 @@ QuaxelTraceItem
     vec3 BoundsCenter
     vec3 BoundsHalf
     int Handle
+    int Node
     int Slot
     float Near
 }
@@ -218,6 +219,7 @@ QuaxelEngine
             for axis : 0; axis < 3; axis++ {
                 item.BoundsHalf[axis] = 0.5 * (Math.Abs(model[0][axis]) + Math.Abs(model[1][axis]) + Math.Abs(model[2][axis]))
             }
+            item.Node = id
             item.Handle = world.VolumeHandle(world.VolumeOf(id))
             item.Slot = -1
             item.Near = NearDepth(item.Clip)
@@ -235,6 +237,8 @@ QuaxelEngine
             item.Near = NearDepth(item.Clip)
             TraceOrder += item
         }
+        // Hash placement inputs in stable node order, independent of camera depth.
+        if world.Ddgi && world.Shadows { PrepareProbes(world, viewProjection) }
         // Stable caster slots keep camera and actor depth-order changes out of the shadow cache.
         // Preserve the nearest-first selection when the renderer might hit its 256-caster cap.
         bool sortBeforeCasters = TraceOrder.Len > 256

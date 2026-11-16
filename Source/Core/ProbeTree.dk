@@ -1,0 +1,411 @@
+// Each world-aligned root has 16 placement cells per axis. Each cell spans
+// one terrain voxel near the player and four per axis in the distant field.
+QuaxelProbeCell
+{
+    ivec3 Origin
+    int Side
+    int FirstChild = -1
+    bool Occupied
+    int Probe = -1
+}
+
+QuaxelProbeTree
+{
+    QuaxelProbeCell [] Cells
+    vec3 [] Probes
+    uint8 [4096] Occupancy
+    -vec3 Base
+    -float Pitch = QuaxelTerrain.Cell
+
+    Begin(ivec3 root)
+    {
+        BeginLevel(root,1)
+    }
+
+    BeginLevel(ivec3 root,int scale)
+    {
+        Pitch = QuaxelTerrain.Cell * (float)scale
+        Base = vec3((float)root.X, (float)root.Y, (float)root.Z) * (16.0 * Pitch)
+        Cells.Clear()
+        Probes.Clear()
+        for i : 0; i < 4096; i++ { Occupancy[i] = 0 }
+    }
+
+    // Voxel/voxel intersection uses all separating axes of the transformed
+    // source parallelepiped and the world grid cube (including shear).
+    -bool BoxAxis(vec3 d, vec3 axis, vec3 a, vec3 b, vec3 c)
+    {
+        if axis.Dot(axis) == 0.0 { return true }
+        float reach = Math.Abs(a.Dot(axis)) + Math.Abs(b.Dot(axis)) + Math.Abs(c.Dot(axis))
+        reach += 0.5 * (Math.Abs(axis.X) + Math.Abs(axis.Y) + Math.Abs(axis.Z))
+        return Math.Abs(d.Dot(axis)) < reach
+    }
+
+    -bool BoxOverlap(vec3 d, vec3 a, vec3 b, vec3 c)
+    {
+        if !BoxAxis(d, a.Cross(b), a, b, c) || !BoxAxis(d, b.Cross(c), a, b, c) || !BoxAxis(d, c.Cross(a), a, b, c) { return false }
+        for k : 0; k < 3; k++ {
+            vec3 e
+            e[k] = 1.0
+            if !BoxAxis(d, e.Cross(a), a, b, c) || !BoxAxis(d, e.Cross(b), a, b, c) || !BoxAxis(d, e.Cross(c), a, b, c) { return false }
+        }
+        return true
+    }
+
+    -MarkBox(vec3 center, vec3 half, vec3 a, vec3 b, vec3 c, bool aligned)
+    {
+        ivec3 low
+        ivec3 high
+        for k : 0; k < 3; k++ {
+            low[k] = (int)Math.Clamp(Math.Floor(center[k] - half[k]), 0.0, 16.0)
+            high[k] = (int)Math.Clamp(Math.Ceil(center[k] + half[k]), 0.0, 16.0)
+        }
+        for z : low.Z; z < high.Z; z++ | y : low.Y; y < high.Y; y++ | x : low.X; x < high.X; x++ {
+            int at = x + 16 * y + 256 * z
+            vec3 d = vec3((float)x + 0.5, (float)y + 0.5, (float)z + 0.5) - center
+            if Occupancy[at] == 0 && (aligned || BoxOverlap(d, a, b, c)) { Occupancy[at] = 1 }
+        }
+    }
+
+    -RasterBlock(QuaxelWorld& world, int volume, ivec3 p, int size, vec3 center, vec3 half, vec3 a, vec3 b, vec3 c, bool aligned)
+    {
+        int state = world.VolumeBlockOccupancy(volume,p.X,p.Y,p.Z,size)
+        if state == 0 { return }
+        ivec3 cell
+        bool one = true
+        for k : 0; k < 3; k++ {
+            float lo = center[k] - half[k]
+            float hi = center[k] + half[k]
+            if hi <= 0.0 || lo >= 16.0 { return }
+            cell[k] = (int)Math.Floor(lo)
+            if cell[k] < 0 || hi > (float)(cell[k]+1) { one = false }
+        }
+        // Any occupied source voxel suffices when the whole source block fits
+        // in a single destination voxel, even for rotated or sheared geometry.
+        if one {
+            Occupancy[cell.X + 16*cell.Y + 256*cell.Z] = 1
+            return
+        }
+        if state == 2 {
+            MarkBox(center,half,a,b,c,aligned)
+            return
+        }
+        int childSize = size / 2
+        for j : 0; j < 8; j++ {
+            int x = j & 1
+            int y = (j >> 1) & 1
+            int z = (j >> 2) & 1
+            vec3 offset = a*(float)(2*x-1) + b*(float)(2*y-1) + c*(float)(2*z-1)
+            RasterBlock(world,volume,ivec3(p.X+x*childSize,p.Y+y*childSize,p.Z+z*childSize),childSize,center+offset*0.5,half*0.5,a*0.5,b*0.5,c*0.5,aligned)
+        }
+    }
+
+    AddVolume(QuaxelWorld& world, int id)
+    {
+        int index = world.VolumeOf(id)
+        ivec3 dims = world.VolumeCells(index)
+        mat4 model = world.VolumeModel(id)
+        if model.Determinant() (0.0)== 0.0 { return }
+        mat4 inverse = model.Inverse()
+        vec3 local = vec3(inverse * vec4(Base + vec3(1.0, 1.0, 1.0) * (8.0 * Pitch), 1.0))
+        ivec3 low
+        ivec3 high
+        for k : 0; k < 3; k++ {
+            float reach = (Math.Abs(inverse[0][k]) + Math.Abs(inverse[1][k]) + Math.Abs(inverse[2][k])) * (8.0 * Pitch)
+            low[k] = (int)Math.Clamp(Math.Floor((local[k] + 0.5 - reach) * (float)dims[k]), 0.0, (float)dims[k])
+            high[k] = (int)Math.Clamp(Math.Ceil((local[k] + 0.5 + reach) * (float)dims[k]), 0.0, (float)dims[k])
+            if low[k] >= high[k] { return }
+        }
+        vec3 a = vec3(model[0]) * (0.5 / (Pitch * (float)dims.X))
+        vec3 b = vec3(model[1]) * (0.5 / (Pitch * (float)dims.Y))
+        vec3 c = vec3(model[2]) * (0.5 / (Pitch * (float)dims.Z))
+        vec3 half
+        for k : 0; k < 3; k++ { half[k] = Math.Abs(a[k]) + Math.Abs(b[k]) + Math.Abs(c[k]) }
+        bool aligned = a.Y == 0.0 && a.Z == 0.0 && b.X == 0.0 && b.Z == 0.0 && c.X == 0.0 && c.Y == 0.0
+        vec3 origin = (vec3(model[3]) - Base) * (1.0 / Pitch)
+        // Terrain voxels already coincide with the world occupancy grid.
+        // Copy this root's cells directly, without testing boxes individually.
+        vec3 gridBase = origin - vec3((float)dims.X,(float)dims.Y,(float)dims.Z)*0.5
+        bool samePitch = aligned && a.X (0.0)== 0.5 && b.Y (0.0)== 0.5 && c.Z (0.0)== 0.5
+        if samePitch && gridBase.X (0.0)== Math.Floor(gridBase.X) && gridBase.Y (0.0)== Math.Floor(gridBase.Y) && gridBase.Z (0.0)== Math.Floor(gridBase.Z) {
+            int ox = (int)gridBase.X
+            int oy = (int)gridBase.Y
+            int oz = (int)gridBase.Z
+            for z : Math.Max(0,-oz); z < Math.Min(dims.Z,16-oz); z++ | y : Math.Max(0,-oy); y < Math.Min(dims.Y,16-oy); y++ | x : Math.Max(0,-ox); x < Math.Min(dims.X,16-ox); x++ {
+                if world.GetVoxel(index,x,y,z) >= 0 { Occupancy[x+ox + 16*(y+oy) + 256*(z+oz)] = 1 }
+            }
+            return
+        }
+        // Each distant placement cell covers an aligned 4-cubed terrain block.
+        // Its two Morton mask words already answer whether any voxel is filled.
+        if aligned && a.X (0.0)== 0.125 && b.Y (0.0)== 0.125 && c.Z (0.0)== 0.125 {
+            vec3 start = origin - vec3((float)dims.X,(float)dims.Y,(float)dims.Z)*0.125
+            if start.X (0.0)== Math.Floor(start.X) && start.Y (0.0)== Math.Floor(start.Y) && start.Z (0.0)== Math.Floor(start.Z) {
+                ivec3 offset = ivec3((int)start.X,(int)start.Y,(int)start.Z)
+                for z : low.Z & -4; z < high.Z; z+=4 | y : low.Y & -4; y < high.Y; y+=4 | x : low.X & -4; x < high.X; x+=4 {
+                    int tx = offset.X+x/4
+                    int ty = offset.Y+y/4
+                    int tz = offset.Z+z/4
+                    if tx < 0 || ty < 0 || tz < 0 || tx >= 16 || ty >= 16 || tz >= 16 { continue }
+                    if world.VolumeBlockOccupancy(index,x,y,z,4) != 0 { Occupancy[tx+16*ty+256*tz] = 1 }
+                }
+                return
+            }
+        }
+        for z : low.Z & -8; z < high.Z; z+=8 | y : low.Y & -8; y < high.Y; y+=8 | x : low.X & -8; x < high.X; x+=8 {
+            vec3 center = origin + a*(float)(2*x+8-dims.X) + b*(float)(2*y+8-dims.Y) + c*(float)(2*z+8-dims.Z)
+            RasterBlock(world,index,ivec3(x,y,z),8,center,half*8.0,a*8.0,b*8.0,c*8.0,aligned)
+        }
+    }
+
+    -bool TriangleAxis(vec3 axis, vec3 a, vec3 b, vec3 c)
+    {
+        float radius = 0.5 * (Math.Abs(axis.X) + Math.Abs(axis.Y) + Math.Abs(axis.Z))
+        float u = a.Dot(axis)
+        float v = b.Dot(axis)
+        float w = c.Dot(axis)
+        return Math.Min(u, Math.Min(v,w)) <= radius && Math.Max(u, Math.Max(v,w)) >= -radius
+    }
+
+    -bool TriangleOverlap(vec3 a, vec3 b, vec3 c)
+    {
+        vec3 ab = b - a
+        vec3 bc = c - b
+        vec3 ca = a - c
+        if !TriangleAxis(ab.Cross(bc), a, b, c) { return false }
+        for k : 0; k < 3; k++ {
+            vec3 e
+            e[k] = 1.0
+            if !TriangleAxis(e,a,b,c) || !TriangleAxis(e.Cross(ab),a,b,c) || !TriangleAxis(e.Cross(bc),a,b,c) || !TriangleAxis(e.Cross(ca),a,b,c) { return false }
+        }
+        return true
+    }
+
+    -bool SamePosition(QuaxelVertex a, QuaxelVertex b)
+    {
+        return a.X (0.0)== b.X && a.Y (0.0)== b.Y && a.Z (0.0)== b.Z
+    }
+
+    -bool ClosedMesh(QuaxelMeshData& mesh)
+    {
+        // Faces can have separate vertices at the same position (e.g. the cube).
+        for edge : 0; edge < mesh.IndexCount; edge++ {
+            int next = edge - edge % 3 + (edge + 1) % 3
+            QuaxelVertex a = mesh.Vertices[mesh.Indices[edge]]
+            QuaxelVertex b = mesh.Vertices[mesh.Indices[next]]
+            bool paired = false
+            for j : 0; j < mesh.IndexCount; j++ {
+                int k = j - j % 3 + (j + 1) % 3
+                if SamePosition(a, mesh.Vertices[mesh.Indices[k]]) && SamePosition(b, mesh.Vertices[mesh.Indices[j]]) {
+                    paired = true
+                    break
+                }
+            }
+            if !paired { return false }
+        }
+        return true
+    }
+
+    // For indexed meshes, voxelize triangles and use their signed solid angles
+    // to also exclude the interior of a consistently wound closed mesh.
+    AddMesh(QuaxelMeshData& mesh, mat4 model)
+    {
+        if mesh.VertexCount <= 0 || mesh.VertexCount > mesh.Vertices.Len || mesh.IndexCount < 3 || mesh.IndexCount % 3 != 0 || mesh.IndexCount > mesh.Indices.Len { return }
+        vec3 [24] points
+        vec3 low
+        vec3 high
+        for i : 0; i < mesh.VertexCount; i++ {
+            QuaxelVertex v = mesh.Vertices[i]
+            points[i] = (vec3(model * vec4(v.X, v.Y, v.Z, 1.0)) - Base) * (1.0 / Pitch)
+            for k : 0; k < 3; k++ {
+                if i == 0 || points[i][k] < low[k] { low[k] = points[i][k] }
+                if i == 0 || points[i][k] > high[k] { high[k] = points[i][k] }
+            }
+        }
+        ivec3 begin
+        ivec3 end
+        for k : 0; k < 3; k++ {
+            begin[k] = (int)Math.Clamp(Math.Floor(low[k]), 0.0, 16.0)
+            end[k] = (int)Math.Clamp(Math.Floor(high[k]) + 1.0, 0.0, 16.0)
+        }
+        if begin.X >= end.X || begin.Y >= end.Y || begin.Z >= end.Z { return }
+        for i : 0; i < mesh.IndexCount; i++ { if mesh.Indices[i] >= (uint)mesh.VertexCount { return } }
+        bool closed = ClosedMesh(mesh)
+        for z : begin.Z; z < end.Z; z++ | y : begin.Y; y < end.Y; y++ | x : begin.X; x < end.X; x++ {
+            int at = x + 16*y + 256*z
+            if Occupancy[at] != 0 { continue }
+            vec3 center = vec3((float)x + 0.5, (float)y + 0.5, (float)z + 0.5)
+            float angle = 0.0
+            for i : 0; i + 2 < mesh.IndexCount; i += 3 {
+                vec3 a = points[mesh.Indices[i]] - center
+                vec3 b = points[mesh.Indices[i+1]] - center
+                vec3 c = points[mesh.Indices[i+2]] - center
+                if TriangleOverlap(a,b,c) {
+                    Occupancy[at] = 1
+                    break
+                }
+                if !closed { continue }
+                float la = a.Length()
+                float lb = b.Length()
+                float lc = c.Length()
+                angle += Math.Atan2(a.Dot(b.Cross(c)), la*lb*lc + a.Dot(b)*lc + b.Dot(c)*la + c.Dot(a)*lb)
+            }
+            if Math.Abs(angle) > 3.141593 { Occupancy[at] = 1 }
+        }
+    }
+
+    // Appending to the same array we read is a FIFO. Copy the current node
+    // before appending: growth may relocate the array. Child X is the low bit.
+    Finish(float minClearance) { FinishTree(minClearance,false) }
+
+    FinishTree(float minClearance,bool probesOnly)
+    {
+        Cells.Clear()
+        Probes.Clear()
+        QuaxelProbeCell root
+        root.Side = 16
+        Cells += root
+        for i : 0; i < Cells.Len; i++ {
+            QuaxelProbeCell node = Cells[i]
+            int size = node.Side
+            ivec3 p = node.Origin
+            int filled = 0
+            for z : p.Z; z < p.Z + size; z++ | y : p.Y; y < p.Y + size; y++ | x : p.X; x < p.X + size; x++ {
+                filled += Occupancy[x + 16*y + 256*z]
+            }
+            if filled == 0 {
+                float radius = 0.5 * (float)size * Pitch
+                if radius >= minClearance {
+                    Cells[i].Probe = (int)Probes.Len
+                    Probes += Base + vec3((float)p.X, (float)p.Y, (float)p.Z) * Pitch + vec3(radius,radius,radius)
+                }
+            } else if filled == size*size*size {
+                Cells[i].Occupied = true
+            } else {
+                if probesOnly && 0.25*(float)size*Pitch < minClearance { continue }
+                Cells[i].FirstChild = (int)Cells.Len
+                int half = size / 2
+                for child : 0; child < 8; child++ {
+                    QuaxelProbeCell next
+                    next.Side = half
+                    next.Origin = ivec3(p.X + half*(child & 1), p.Y + half*((child >> 1) & 1), p.Z + half*((child >> 2) & 1))
+                    Cells += next
+                }
+            }
+        }
+    }
+
+    AddWorld(QuaxelWorld& world)
+    {
+        int transform = QuaxelComponents.Transform
+        for id : world.NextWith(0, transform); id != 0; id = world.NextWith(id, transform) {
+            if world.IsHidden(id) { continue }
+            if world.Has(id, QuaxelComponents.Voxels) { AddVolume(world,id) }
+            if world.Has(id, QuaxelComponents.MeshRenderer) {
+                QuaxelMeshData mesh = world.GetMesh(world.MeshOf(id))
+                if mesh.VoxelPrimitive == 0 { AddMesh(mesh, world.ModelMatrix(id)) }
+            }
+        }
+    }
+
+    Build(QuaxelWorld& world, ivec3 root, float minClearance)
+    {
+        Begin(root)
+        AddWorld(world)
+        Finish(minClearance)
+    }
+}
+T{
+    ProbeTreeBuildsSiblingsInBreadthFirstOrder()
+    {
+        QuaxelWorld world()
+        int volume = world.CreateVolume(16, 16, 16)
+        T.IsTrue(world.SetVoxel(volume, 0, 0, 0, 0xffffff))
+        int node = world.CreateNode()
+        T.IsTrue(world.AttachTransform(node, QuaxelTransform.Make(vec3(1,1,1), vec3(0.125,0.125,0.125))))
+        T.IsTrue(world.AttachVoxels(node, volume))
+        QuaxelProbeTree tree()
+        tree.Build(world, ivec3(0,0,0), 0.0625)
+        T.AreEqual((int)tree.Cells.Len, 33)
+        T.AreEqual((int)tree.Probes.Len, 28)
+        int parent = 0
+        for level : 0; level < 4; level++ {
+            int first = 1 + level * 8
+            T.AreEqual(tree.Cells[parent].FirstChild, first)
+            for j : first; j < first + 8; j++ { T.AreEqual(tree.Cells[j].Side, 8 >> level) }
+            parent = first
+        }
+        T.IsTrue(tree.Cells[parent].Occupied)
+        tree.Finish(0.125)
+        T.AreEqual((int)tree.Probes.Len, 21)
+        // A neighboring instance occupies an entire formerly empty child.
+        int cube = world.CreateVolume(1,1,1)
+        T.IsTrue(world.SetVoxel(cube,0,0,0,1))
+        int wall = world.CreateNode()
+        T.IsTrue(world.AttachVoxels(wall,cube))
+        T.IsTrue(world.AttachTransform(wall,QuaxelTransform.Make(vec3(1.5,0.5,0.5),vec3(1,1,1))))
+        tree.Build(world,ivec3(0,0,0),0.0625)
+        T.IsTrue(tree.Cells[2].Occupied)
+        T.AreEqual((int)tree.Probes.Len,27)
+        world.SetTransform(wall,QuaxelTransform.Make(vec3(-0.5,0.5,0.5),vec3(1,1,1)))
+        tree.Build(world,ivec3(-1,0,0),0.0625)
+        T.IsTrue(tree.Cells[2].Occupied)
+        tree.Build(world,ivec3(0,0,0),0.0625)
+        T.AreEqual((int)tree.Probes.Len,28)
+        T.IsTrue(world.SetVoxel(volume,15,15,15,1))
+        tree.Build(world,ivec3(0,0,0),0.0625)
+        // Both mixed siblings allocate their children before any grandchild expands.
+        T.AreEqual(tree.Cells[1].FirstChild,9)
+        T.AreEqual(tree.Cells[8].FirstChild,17)
+        T.AreEqual(tree.Cells[9].FirstChild,25)
+    }
+
+    DistantRootMarksOnlyOccupiedBlocksAcrossRootBoundary()
+    {
+        QuaxelWorld world()
+        int volume = world.CreateVolume(16,16,16)
+        T.IsTrue(world.SetVoxel(volume,3,0,0,1))
+        T.IsTrue(world.SetVoxel(volume,15,15,15,1))
+        int id = world.CreateNode()
+        T.IsTrue(world.AttachTransform(id,QuaxelTransform.Make(vec3(0,1,1),vec3(0.125,0.125,0.125))))
+        T.IsTrue(world.AttachVoxels(id,volume))
+        QuaxelProbeTree tree()
+        for rx : -1; rx <= 0; rx++ {
+            tree.BeginLevel(ivec3(rx,0,0),4)
+            tree.AddVolume(world,id)
+            int expected = rx < 0 ? 14 | 1 + 3*16 + 3*256
+            for i : 0; i < 4096; i++ {
+                T.AreEqual((int)tree.Occupancy[i],i == expected ? 1 | 0)
+            }
+            tree.FinishTree(0.5,true)
+            T.AreEqual((int)tree.Probes.Len,21)
+        }
+    }
+
+    ProbeTreeRejectsClosedMeshInteriorAndKeepsOpenAir()
+    {
+        QuaxelWorld world()
+        QuaxelMeshData mesh = QuaxelMeshData.Cube(vec3(1,1,1))
+        mesh.VoxelPrimitive = 0
+        QuaxelMeshRenderer renderer
+        renderer.Mesh = world.AddMesh(mesh)
+        int id = world.CreateNode()
+        T.IsTrue(world.AttachTransform(id,QuaxelTransform.Make(vec3(1,1,1), vec3(4,4,4))))
+        T.IsTrue(world.AttachMeshRenderer(id,renderer))
+        QuaxelProbeTree tree()
+        tree.Build(world,ivec3(0,0,0),0.0625)
+        T.AreEqual((int)tree.Cells.Len,1)
+        T.IsTrue(tree.Cells[0].Occupied)
+        T.AreEqual((int)tree.Probes.Len,0)
+        tree.Build(world,ivec3(-2,0,0),0.0625)
+        T.AreEqual((int)tree.Probes.Len,1)
+        T.AreEqual(tree.Probes[0].X,-3.0)
+        mesh = QuaxelMeshData.Plane(vec3(1,1,1))
+        mesh.VoxelPrimitive = 0
+        renderer.Mesh = world.AddMesh(mesh)
+        T.IsTrue(world.AttachMeshRenderer(id,renderer))
+        tree.Build(world,ivec3(0,0,0),0.125)
+        T.IsTrue(tree.Probes.Len > 1)
+        for p : tree.Probes { T.IsTrue(Math.Abs(p.Y - 1.0) >= 0.125) }
+    }
+}

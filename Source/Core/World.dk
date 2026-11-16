@@ -160,6 +160,7 @@ QuaxelWorld
     -QuaxelNode [] Nodes
     -QuaxelMeshData [] Meshes
     -QuaxelVoxelVolume [] Volumes
+    -int [] UploadRevisions
     -int [] VolumeHandles
     -bool [] VolumeDirty
     -int [] MeshVolumes
@@ -177,6 +178,9 @@ QuaxelWorld
     vec3 SkyColor = vec3(0.42, 0.46, 0.54)
     vec3 GroundColor = vec3(0.24, 0.22, 0.2)
     // Global switch for sunlight and point-light shadows.
+    // Experimental probe-based indirect lighting. Worlds opt in explicitly.
+    bool Ddgi = false
+    bool UniformProbeUpdates
     bool Shadows = true
 
     bool Exists(int id) { return id >= 1 && id <= Nodes.Len && Nodes[id - 1].Alive }
@@ -299,7 +303,17 @@ QuaxelWorld
     bool AttachMeshRenderer(int id, QuaxelMeshRenderer renderer)
     {
         if !Exists(id) || renderer.Mesh < 0 || renderer.Mesh >= MeshVolumes.Len { return false }
-        if !AttachVoxels(id, MeshVolumes[renderer.Mesh]) { return false }
+        int proxy = MeshVolumes[renderer.Mesh]
+        if proxy >= 0 {
+            if !AttachVoxels(id, proxy) { return false }
+        } else if Has(id, QuaxelComponents.MeshRenderer) && Has(id, QuaxelComponents.Voxels) {
+            // Drop only the voxel proxy owned by the mesh being replaced.
+            int oldProxy = MeshVolumes[MeshOf(id)]
+            if oldProxy >= 0 && VolumeOf(id) == oldProxy {
+                Nodes[id - 1].Mask &= ~(int)QuaxelComponents.Voxels
+                Nodes[id - 1].Volume = -1
+            }
+        }
         Nodes[id - 1].MeshRenderer = renderer
         Nodes[id - 1].Mask |= QuaxelComponents.MeshRenderer
         return true
@@ -361,6 +375,7 @@ QuaxelWorld
             Volumes--
             return -1
         }
+        UploadRevisions += 0
         VolumeHandles += -1
         VolumeDirty += true
         return index
@@ -389,6 +404,17 @@ QuaxelWorld
         return ivec3((int)size.X, (int)size.Y, (int)size.Z)
     }
 
+    ivec3 VolumeCells(int index)
+    {
+        if index < 0 || index >= Volumes.Len { return ivec3(0, 0, 0) }
+        return ivec3(Volumes[index].Cells(0), Volumes[index].Cells(1), Volumes[index].Cells(2))
+    }
+
+    int VolumeBlockOccupancy(int index,int x,int y,int z,int side)
+    {
+        return Volumes[index].BlockOccupancy(x,y,z,side)
+    }
+
     int GetVoxel(int index, int x, int y, int z)
     {
         if index < 0 || index >= Volumes.Len { return -1 }
@@ -406,9 +432,11 @@ QuaxelWorld
     }
 
     int VolumeOf(int id) { return Nodes[id - 1].Volume }
+    int VolumeUploadRevision(int index) { return UploadRevisions[index] }
     int VolumeHandle(int index) { return VolumeHandles[index] }
     SetVolumeHandle(int index, int handle)
     {
+        UploadRevisions[index]++
         VolumeHandles[index] = handle
         VolumeDirty[index] = false
     }
@@ -664,6 +692,7 @@ QuaxelWorld
         Meshes.Clear()
         MeshVolumes.Clear()
         Volumes.Clear()
+        UploadRevisions.Clear()
         VolumeHandles.Clear()
         VolumeDirty.Clear()
         Animations.Clear()

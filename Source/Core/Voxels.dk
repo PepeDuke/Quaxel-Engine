@@ -180,6 +180,27 @@ QuaxelVoxelVolume
         return Words[offset + MaskWords + (Spread(x) | (Spread(y) << 1) | (Spread(z) << 2))] - 1
     }
 
+    // Aligned Morton blocks of 1, 2, 4 or 8 voxels. Values: empty, mixed, solid.
+    int BlockOccupancy(int x, int y, int z, int side)
+    {
+        int columns = (Words[0] + 7) / 8
+        int rows = (Words[1] + 7) / 8
+        int offset = Words[3 + x/8 + columns*(y/8 + rows*(z/8))]
+        if offset == 0 { return 0 }
+        if side == 8 { return OccupiedCounts[(offset-PayloadStart)/BrickWords] == 512 ? 2 | 1 }
+        int m = Spread(x) | (Spread(y) << 1) | (Spread(z) << 2)
+        int word = Words[offset + (m >> 5)]
+        if side == 4 {
+            int other = Words[offset + (m >> 5) + 1]
+            if (word | other) == 0 { return 0 }
+            return (word & other) == -1 ? 2 | 1
+        }
+        int mask = side == 2 ? 255 | 1
+        int bits = (word >> (m & 31)) & mask
+        if bits == 0 { return 0 }
+        return bits == mask ? 2 | 1
+    }
+
     CopyTo(void* destination)
     {
         QuaxelVoxelUpload* upload = (QuaxelVoxelUpload*)destination
@@ -238,6 +259,26 @@ QuaxelVoxelVolume
     #int BrickWords = 528
 }
 T{
+    PlacementBlockOccupancyMatchesIndividualVoxels()
+    {
+        QuaxelVoxelVolume volume()
+        T.IsTrue(volume.Configure(13,8,8))
+        for z : 0; z < 8; z++ | y : 0; y < 8; y++ | x : 0; x < 13; x++ {
+            if (x < 4 && z < 4) || (x > 8 && x == y+z) { volume.SetVoxel(x,y,z,1) }
+        }
+        for side : 1; side <= 8; side *= 2 {
+            for z : 0; z < 8; z+=side | y : 0; y < 8; y+=side | x : 0; x < 16; x+=side {
+                int count = 0
+                for k : z; k < z+side; k++ | j : y; j < y+side; j++ | i : x; i < x+side; i++ {
+                    if volume.GetVoxel(i,j,k) >= 0 { count++ }
+                }
+                int expected = count == 0 ? 0 | 1
+                if count == side*side*side { expected = 2 }
+                T.AreEqual(volume.BlockOccupancy(x,y,z,side),expected)
+            }
+        }
+    }
+
     UploadPacksMortonBricksAndCellsRegardlessOfWriteOrder()
     {
         QuaxelVoxelVolume volume()
