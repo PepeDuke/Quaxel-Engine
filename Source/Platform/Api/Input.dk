@@ -15,4 +15,8 @@ QuaxelPlatform
 
     // Reports the right button, which is also released when the window loses focus.
     bool IsRightMouseButtonDown() { return QuaxelPlatformBackend.IsRightMouseButtonDown() }
+
+    // Whole mouse wheel notches turned since the last call: positive away from
+    // the user, negative toward. Headless builds report none.
+    int TakeWheelNotches() { return QuaxelPlatformBackend.TakeWheelNotches() }
 }

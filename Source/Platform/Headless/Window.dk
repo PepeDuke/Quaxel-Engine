@@ -11,6 +11,7 @@ QuaxelPlatformBackend
     bool IsKeyDown(int key) { return false }
     bool IsMouseButtonDown() { return false }
     bool IsRightMouseButtonDown() { return false }
+    int TakeWheelNotches() { return 0 }
 
     bool GetMousePosition(int& x, int& y)
     {

@@ -77,6 +77,8 @@ QuaxelPlatformBackend
     -int MouseY
     -bool MouseDown
     -bool RightMouseDown
+    // Wheel travel not yet taken, in Windows units of 120 per notch.
+    -int WheelDelta
     -QuaxelWinKeys Keys
     -QuaxelWinRedraw Redraw
     -uint Style = 0x00CF0000 // WS_OVERLAPPEDWINDOW
@@ -96,6 +98,22 @@ QuaxelPlatformBackend
     bool IsMouseButtonDown() { return MouseDown }
 
     bool IsRightMouseButtonDown() { return RightMouseDown }
+
+    // The signed high word of a wheel message's wParam. Decoded by hand, since a
+    // cast to short traps on the negative half instead of wrapping.
+    -int WheelTravel(uint64 wParam)
+    {
+        int word = (int)((wParam >> 16) & (uint64)0xFFFF)
+        return word >= 32768 ? word - 65536 | word
+    }
+
+    // Whole notches turned since the last call, away from the user positive.
+    int TakeWheelNotches()
+    {
+        int notches = WheelDelta / 120
+        WheelDelta -= notches * 120
+        return notches
+    }
 
     bool GetMousePosition(int& x, int& y)
     {
@@ -128,10 +146,12 @@ QuaxelPlatformBackend
             if message == 0x0101 || message == 0x0105 { SetKey(wParam, false) } // WM_KEYUP, WM_SYSKEYUP
             if message == 0x0008 { // WM_KILLFOCUS
                 ClearKeys()
+                WheelDelta = 0
                 MouseDown = false
                 RightMouseDown = false
             }
             if message == 0x0200 { TrackMouse(lParam) } // WM_MOUSEMOVE
+            if message == 0x020A { WheelDelta += WheelTravel(wParam) } // WM_MOUSEWHEEL
             if message == 0x0201 { // WM_LBUTTONDOWN
                 TrackMouse(lParam)
                 MouseDown = true
