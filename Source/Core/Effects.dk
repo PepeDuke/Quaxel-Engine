@@ -345,7 +345,7 @@ QuaxelWorld
 
     // Starts an effect at a world position. Direction aims the particles: up for
     // fire, the hit direction for blood. Returns an ID for the other effect
-    // calls, or 0 if the style is invalid or 64 effects are already playing.
+    // calls, or 0 if the style is invalid or 128 effects are already playing.
     int StartEffect(QuaxelEffectStyle style, vec3 origin, vec3 direction)
     {
         return StartEffectIgnoring(style, origin, direction, 0)
@@ -651,7 +651,10 @@ QuaxelWorld
     // Cells along each side of a slot, slots per page and the most pages.
     #int EffectCells = 64
     #int EffectSlotsPerPage = 8
-    #int MaxEffectPages = 8
+    // 128 effects. Each slot is about 1.2 MB of VRAM, so all 16 pages are about
+    // 150 MB; pages are only made as more effects play at once. The Vulkan
+    // backend's MaxEffectPages must match.
+    #int MaxEffectPages = 16
 }
 
 QuaxelEffectMath
@@ -752,12 +755,12 @@ T{
         T.IsFalse(world.IsEffectPlaying(ids[3]))
     }
 
-    SixtyFourEffectsAtMost()
+    OneHundredTwentyEightEffectsAtMost()
     {
         QuaxelWorld world()
-        for i : 0; i < 64; i++ { T.IsTrue(world.StartEffect(QuaxelEffectStyle.Fire(), vec3(0.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0)) > 0) }
+        for i : 0; i < 128; i++ { T.IsTrue(world.StartEffect(QuaxelEffectStyle.Fire(), vec3(0.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0)) > 0) }
         T.AreEqual(world.StartEffect(QuaxelEffectStyle.Fire(), vec3(0.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0)), 0)
-        T.AreEqual(world.EffectPageCount(), 8)
+        T.AreEqual(world.EffectPageCount(), 16)
     }
 
     BakeFindsTheGroundUnderAnEffect()

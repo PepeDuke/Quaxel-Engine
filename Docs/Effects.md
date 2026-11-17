@@ -23,7 +23,7 @@ world.StopEffect(flames)
 
 | Call | Effect |
 | --- | --- |
-| `StartEffect(style, origin, direction)` | Starts an effect and returns its ID. Returns 0 if the style is invalid or 64 effects are already playing. `direction` aims the particles. |
+| `StartEffect(style, origin, direction)` | Starts an effect and returns its ID. Returns 0 if the style is invalid or 128 effects are already playing. `direction` aims the particles. |
 | `StartEffectIgnoring(style, origin, direction, node)` | The same, but the node and its descendants let the particles through. |
 | `StopEffect(id)` | Stops emitting. Particles and stains already out play to their end. |
 | `EndEffect(id)` | Removes the effect at once, stains included. |
@@ -49,8 +49,8 @@ lives in a **page**, which is a persistent storage buffer of 8 slots on the
 GPU, about 9 MB.
 
 - **Pages grow as needed.** The first page is made with the first effect. When
-  every slot is busy, another page of the same size is added, up to 8 pages
-  (64 effects). Pages are kept until the world is released.
+  every slot is busy, another page of the same size is added, up to 16 pages
+  (128 effects, about 150 MB). Pages are kept until the world is released.
 - **Slots are reused.** A new effect takes a free slot before a new page is
   added.
 

@@ -13,7 +13,8 @@ VkEffectParams
 
 VkEffectPages
 {
-    VkStorage [8] Items
+    // MaxEffectPages of them.
+    VkStorage [16] Items
     int Count
 }
 
@@ -36,6 +37,8 @@ QuaxelVulkan
     // Slot layout in words. Must match Shaders/EffectCommon.glsl and
     // QuaxelEffectSlot in Source/Core/Effects.dk.
     #int SlotsPerPage = 8
+    // Matches QuaxelWorld.MaxEffectPages in Source/Core/Effects.dk, for 128 effects.
+    #int MaxEffectPages = 16
     #int SlotWords = 295808
     #int VolumeWords = 270851
     #int ParamsOffset = 295680
@@ -99,7 +102,7 @@ QuaxelVulkan
     // Creates pages, device-local, until there are `count`. Call outside a frame.
     bool EnsureEffectPages(int count)
     {
-        if Device == 0 || count > 8 { return false }
+        if Device == 0 || count > MaxEffectPages { return false }
         while EffectPages.Count < count {
             VkStorage storage
             long bytes = (long)SlotsPerPage * SlotWords * 4
