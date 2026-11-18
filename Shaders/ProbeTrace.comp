@@ -9,13 +9,13 @@ layout(push_constant) uniform Params {
     mat4 worldFromClip;
     ivec2 extent;
     int uniformUpdates;
-    layout(offset=80) int casters;
+    int selecting;
+    int casters;
     int lights;
     int tick;
 } pc;
-shared int selected;
 shared int candidates[64];
-shared float scores[64];
+shared uint casterMask[8];
 shared vec3 directions[64], radiance[64];
 shared float distances[64];
 uint hash(uint n) {
@@ -25,12 +25,20 @@ int selectProbe(uint group) {
     uint seed = hash(group + uint(pc.tick)*64u);
     if (pc.uniformUpdates != 0) {
         int count = 0;
-        for (int s=0; s<ROOTS; ++s) count += roots[s].w;
+        for (int s=0; s<ROOTS; ++s) count += (roots[s].w & 1023);
         if (count == 0) return -1;
         int rank = int(seed % uint(count));
         for (int s=0; s<ROOTS; ++s) {
-            if (rank < roots[s].w) return s*512 + rank;
-            rank -= roots[s].w;
+            if (rank < (roots[s].w & 1023)) return s*512 + rank;
+            rank -= (roots[s].w & 1023);
+        }
+    }
+    // Reserve eight of the existing batches for roots an actor entered or left.
+    if (group < 8u) {
+        for (int k=0; k<ROOTS; ++k) {
+            int s = (int(seed & 511u) + k) & 511;
+            if ((roots[s].w & 1024) != 0)
+                return s*512 + int(hash(seed+1u)%uint(roots[s].w & 1023));
         }
     }
     // Sample the current G-buffer: larger visible surfaces receive more batches.
@@ -62,25 +70,24 @@ int selectProbe(uint group) {
     uint first = group >= 56u ? uint(pc.tick)*8u + group-56u : seed;
     for (int k=0; k<ROOTS; ++k) {
         int slot = (int(first & 511u) + k) & 511;
-        if (roots[slot].w > 0) {
+        if ((roots[slot].w & 1023) > 0) {
             uint ordinal = group >= 56u ? uint(pc.tick)/64u + hash(uint(slot)) : hash(seed+1u);
-            return slot*512 + int(ordinal%uint(roots[slot].w));
+            return slot*512 + int(ordinal%uint((roots[slot].w & 1023)));
         }
     }
     return -1;
 }
+float firstHit(int g, vec3 start, vec3 dir, float limit) {
+    vec3 normal,color;
+    return probeHit(g,start,dir,limit,normal,color);
+}
+#include "SunVisibility.glsl"
+
 vec3 shadeHit(vec3 p, vec3 n, vec3 color) {
     vec3 sun = sunDirection.xyz;
     vec3 start = p + n*SHADOW_OFFSET;
     float lit = max(dot(n,sun),0.0);
-    if (lit > 0.0 && sunWindow.w != 0) {
-        vec2 ground = (start.xz - start.y*(sun.xz/sun.y))/SUN_CHUNK;
-        ivec2 chunk = ivec2(floor(ground));
-        if (all(greaterThanEqual(chunk,sunWindow.xy)) && all(lessThan(chunk,sunWindow.xy+8))) {
-            int s = sunSlot(chunk);
-            if (chunkTops[s>>2][s&3] > -1e29 && depthAtlas[sunTexel(s,ivec2(fract(ground)*SUN_SIZE))] > start.y*sign(sun.y)+0.125) lit=0.0;
-        }
-    }
+    if (lit > 0.0 && sunBlocked(start,sun,pc.casters)) lit=0.0;
     vec3 light = sunColor.rgb*lit;
     for (int i=0; i<pc.lights; ++i) {
         vec3 delta = lights[i].positionRadius.xyz - start;
@@ -100,43 +107,30 @@ vec3 shadeHit(vec3 p, vec3 n, vec3 color) {
 }
 void main() {
     int lane=int(gl_LocalInvocationID.x), group=int(gl_WorkGroupID.x);
-    bool localGroup = group < 4 && pc.uniformUpdates == 0;
-    if (localGroup) {
-        // Search the fine receiver grid around the feet, one XZ quadrant per
-        // batch. Classify by leaf center so a large leaf can only win once.
-        vec3 anchor = focus.xyz - vec3(0,0.375,0);
-        vec2 side = vec2((group & 1)*2-1, (group >> 1)*2-1);
-        vec2 first = floor(anchor.xz*2.0-0.5) + step(vec2(0),side);
-        vec2 xz = (first + side*vec2(lane & 3,(lane >> 2) & 3) + 0.5)*0.5;
-        float y = (floor(anchor.y*2.0-0.5) + float(lane >> 4) - 0.5)*0.5;
-        int id = probeAt(vec3(xz.x,y,xz.y),0);
+    if (pc.selecting != 0) {
+        int id = selectProbe(uint(lane));
         candidates[lane] = id;
-        scores[lane] = 1e30;
-        if (id >= 0) {
-            vec3 d = positions[id].xyz-anchor;
-            if (all(equal(greaterThanEqual(d.xz,vec2(0)),greaterThan(side,vec2(0))))) {
-                // Favor probes at ground level over probes above the character.
-                d.y *= 2.0;
-                scores[lane] = dot(d,d);
-            }
-        }
         barrier();
-        if (lane == 0) {
-            selected = -1;
-            float best = 1e30;
-            for (int i=0; i<64; ++i) {
-                if (scores[i] < best) { best = scores[i]; selected = candidates[i]; }
-            }
-            batches[group].target.y = int(selected >= 0);
-            if (selected < 0) selected = selectProbe(uint(group));
+        for (int i=0; i<lane; ++i) {
+            if (candidates[i] == id) { id = -1; break; }
         }
-    } else if (lane == 0) {
-        selected = selectProbe(uint(group));
-        batches[group].target.y = 0;
+        batches[lane].target.x = id;
+        return;
+    }
+    int selected = batches[group].target.x;
+    if (selected < 0) return;
+    vec3 start = positions[selected].xyz;
+    if (lane < 8) casterMask[lane] = 0u;
+    barrier();
+    for (int g=lane; g<pc.casters; g+=64) {
+        int b=g*6;
+        vec3 center=vec3(casterBounds[b],casterBounds[b+1],casterBounds[b+2]);
+        vec3 halfSize=vec3(casterBounds[b+3],casterBounds[b+4],casterBounds[b+5]);
+        vec3 gap=max(abs(start-center)-halfSize,vec3(0));
+        if (halfSize.x < 0.0 || dot(gap,gap) <= 256.0)
+            atomicOr(casterMask[g>>5],1u << (g&31));
     }
     barrier();
-    if (lane==0) batches[group].target.x = selected;
-    if (selected<0) return;
     // Deterministic quadrature at each world-space probe. A stationary scene
     // returns the same irradiance whenever the scheduler revisits this probe.
     ivec3 key = ivec3(round(positions[selected].xyz * 8.0));
@@ -146,13 +140,23 @@ void main() {
     float radius=sqrt(max(0.0,1.0-y*y));
     vec3 dir=vec3(radius*cos(phi),y,radius*sin(phi));
     if ((seed&65536u)!=0u) dir=dir.yzx;
-    vec3 start=positions[selected].xyz;
+    // A character crossing a probe can cover its entire hemisphere for one
+    // update. That sample would darken every receiver sharing the probe.
+    float spacing = selected < 256*512 ? 0.5 : 2.0;
+    float actorGuard = max(spacing,0.5*positions[selected].w);
     float nearest=16.0;
     vec3 normal=vec3(0), color=vec3(0);
-    for(int g=0;g<pc.casters;++g) {
-        vec3 n,c;
-        float t=probeHit(g,start,dir,nearest,n,c);
-        if(t<nearest) {nearest=t;normal=n;color=c;}
+    for (int word=0; word*32<pc.casters; ++word) {
+        uint mask = casterMask[word];
+        while (mask != 0u) {
+            int g = word*32+findLSB(mask);
+            vec3 n,c;
+            float t=probeHit(g,start,dir,nearest,n,c);
+            if (t < nearest && (casters[g].info.y == 0 || t >= actorGuard)) {
+                nearest=t; normal=n; color=c;
+            }
+            mask &= mask-1u;
+        }
     }
     directions[lane]=dir; distances[lane]=nearest;
     radiance[lane]=nearest<16.0 ? shadeHit(start+nearest*dir,normal,color) : mix(groundColor.rgb,skyColor.rgb,dir.y*0.5+0.5);
@@ -164,6 +168,7 @@ void main() {
             sum+=c*radiance[k]; w+=c;
             float v=c*c*c*c, d=distances[k]; m+=v*vec2(d,d*d); wm+=v;
         }
-        batches[group].faces[lane]=vec4(sum/w,packMoments(m/wm));
+        // Rays from inside an occupied voxel all hit at zero distance.
+        batches[group].faces[lane]=m.y == 0.0 ? vec4(0) : vec4(sum/w,packMoments(m/wm));
     }
 }

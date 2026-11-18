@@ -180,6 +180,9 @@ QuaxelWorld
     // Global switch for sunlight and point-light shadows.
     // Experimental probe-based indirect lighting. Worlds opt in explicitly.
     bool Ddgi = false
+    bool DebugProbeWeights
+    bool DebugProbePositions
+    bool DebugProbeCoverage // Grayscale fraction of ambient fallback in the DDGI resolve.
     bool UniformProbeUpdates
     bool Shadows = true
 
@@ -1012,6 +1015,10 @@ QuaxelGameInstance
 
     int WindowHeight() { return 540 }
 
+    // A .ico file for the window's title bar and taskbar button, relative to
+    // the working directory. Empty keeps the system's default icon.
+    string WindowIcon() { return "" }
+
     // Steps to simulate when no window is available, as there is nothing to close.
     int HeadlessSteps() { return 3 }
 
@@ -1020,6 +1027,10 @@ QuaxelGameInstance
 
     // Runs once per fixed simulation step.
     FixedStep(QuaxelWorld& world, QuaxelInputState& input, float deltaSeconds) {}
+
+    // While true the engine holds animations and effects still. FixedStep
+    // still runs, so the game can read the keys that unpause it.
+    bool WorldPaused() { return false }
 
     // Builds the UI once at startup, using Duck markup. The engine owns the result.
     markup BuildUi()
@@ -1036,4 +1047,9 @@ QuaxelGameInstance
 
     // Runs after the world has been released.
     Stopped() {}
+
+    // True ends the run after the frame it turns true, keeping the window
+    // open: the caller runs another game in it, as when a game rebuilds its
+    // world from scratch. QuaxelEngine.Run returns as usual.
+    bool Restarting() { return false }
 }

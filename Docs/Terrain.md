@@ -211,10 +211,13 @@ accept, in order of preference:
   a building with finer voxels. `sight` is the height used for its sight strip,
   so one slim tower does not clear a huge area behind the building.
 - `placer.OfferProp(group, volume, x, z, half, height, voxelSize)` for a tree,
-  rock or banner. A prop blocks only its footprint and has no sight strip.
+  rock or banner. A prop blocks only its footprint and has no sight strip, and
+  not where it lies lower than `FlatProp` (a sixteenth of a unit), so a rug or
+  scattered feathers can be walked over.
 
 `placer.AddLight(offsetX, offsetZ, radius)` bakes warm firelight into the ground
-around the latest offer. For each group, the generator takes the first offer
+around the latest offer. A surface colored pure black (0x000000) takes no light,
+so a game can leave a void dark, such as the space beyond a room's walls. For each group, the generator takes the first offer
 that passes these steps. Props skip steps 4 and 5, and models in one clearing
 keep clear of each other:
 
@@ -223,9 +226,16 @@ keep clear of each other:
 2. Keep the footprint rigid in world space so it matches the model.
 3. Refuse if the footprint is not open ground, if the footprint comes within 1
    unit of a reserved path, or if the sight strip touches one.
-4. Block the footprint and flatten it to the anchor's floor height.
-5. Block the **sight strip**, the columns toward -X -Z the model would hide, and
-   give it a low yard surface. Height `H` needs `H - lip + 2` diagonal cells.
+4. Flatten the `half` square to the anchor's floor height, and block only the
+   columns the model covers seen from above. The ground plan is read from the
+   model's voxels the first time the terrain streams, once per volume, so a
+   building blocks up to its walls rather than its whole square. A prop blocks
+   only what it covers inside its square, and a model with no voxels blocks
+   the whole square.
+5. Block the **sight strip**, the columns toward -X -Z the model would hide.
+   Each covered column hides `H - lip + 2` diagonal cells for its own height
+   `H`, at most what the offer's `sight` allows, so a low porch hides little
+   and a tower only a narrow strip behind itself.
 
 If every offer is refused the clearing stays a plain valley, which happened for
 2 of 77 houses in the prototype. Placements are resolved once at startup. The

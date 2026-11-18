@@ -4,12 +4,13 @@ const int ROOTS = 512, LEAVES = 512, BATCHES = 64;
 struct ProbeBatch { ivec4 target; vec4 faces[6]; };
 layout(set=3,binding=0,std430) buffer Field {
     float depthAtlas[3145728];
-    ivec4 roots[ROOTS];          // world root coordinate, populated probe count
+    ivec4 roots[ROOTS];          // world root coordinate, count in low 10 bits, motion update flag in bit 10
     vec4 focus;
     int lookup[ROOTS * LEAVES]; // root-local leaf index + 1; zero means solid
     vec4 positions[ROOTS * LEAVES]; // xyz, empty leaf width
     vec4 history[ROOTS * LEAVES * 6]; // irradiance RGB and packed distance moments
     ProbeBatch batches[BATCHES];
+    float casterBounds[256 * 6]; // World AABB center and half-extents.
 };
 int rootSlot(ivec3 r) { return (r.x & 7) + 8 * (r.z & 7) + 64 * (r.y & 3); }
 float lodWeight(vec3 p, float scale) {

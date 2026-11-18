@@ -32,7 +32,11 @@ QuaxelEngine
         QuaxelWorld world()
         QuaxelUi ui()
         bool success = game.Prepare(world)
-        if !success { Print("Failed to prepare the initial world") }
+        if !success {
+            Print("Failed to prepare the initial world")
+            // A window kept from a run that restarted closes with this one.
+            QuaxelPlatform.CloseWindow()
+        }
         if success {
             ui.Content = game.BuildUi()
             game.ConfigureUi(ui)
@@ -50,11 +54,13 @@ QuaxelEngine
     -Step(QuaxelGameInstance& game, QuaxelWorld& world, QuaxelInputState& input)
     {
         world.BeginStep()
+        // Asked before the game steps, so the step that unpauses stays still.
+        bool paused = game.WorldPaused()
         // First, so a clip the game starts holds its first frame for its full time.
-        world.AdvanceAnimations((float)Quaxel.FixedDeltaSeconds())
+        if !paused { world.AdvanceAnimations((float)Quaxel.FixedDeltaSeconds()) }
         game.FixedStep(world, input, (float)Quaxel.FixedDeltaSeconds())
         // After the game, so effects started this step move and draw at once.
-        world.AdvanceEffects((float)Quaxel.FixedDeltaSeconds())
+        if !paused { world.AdvanceEffects((float)Quaxel.FixedDeltaSeconds()) }
         world.UpdateSockets()
         world.EndStep()
     }
@@ -76,15 +82,21 @@ QuaxelEngine
 
     -bool RunWindowed(QuaxelGameInstance& game, QuaxelWorld& world, QuaxelUi& ui)
     {
-        if !QuaxelPlatform.OpenWindow(game.WindowTitle(), game.WindowWidth(), game.WindowHeight(), true) {
-            Print("Failed to open the window")
-            return false
+        // A game that restarted left its window open for this run.
+        if !QuaxelPlatform.IsWindowOpen() {
+            if !QuaxelPlatform.OpenWindow(game.WindowTitle(), game.WindowWidth(), game.WindowHeight(), true) {
+                Print("Failed to open the window")
+                return false
+            }
+            string icon = game.WindowIcon()
+            if Length(icon) > 0 && !QuaxelPlatform.SetWindowIcon(icon) { Print("The window icon would not load") }
         }
         bool success = QuaxelRenderer.Start()
         if !success { Print("Failed to start the renderer") }
         if success { success = RunLoop(game, world, ui) }
+        // The renderer stops either way: its storage belongs to this world.
         QuaxelRenderer.Stop()
-        QuaxelPlatform.CloseWindow()
+        if !success || !game.Restarting() { QuaxelPlatform.CloseWindow() }
         return success
     }
 
@@ -146,6 +158,8 @@ QuaxelEngine
                 success = false
                 break
             }
+            // After the frame, so the game can show that it is loading.
+            if game.Restarting() { break }
         }
         QuaxelPlatform.ClearRedrawHandler()
         RenderedWorld = null
@@ -246,12 +260,14 @@ QuaxelEngine
         // Every volume blocks sunlight, including those off screen. Effects
         // receive light but cast no shadows.
         if world.Shadows {
+            int focusParent = world.ParentOf(world.ActiveCamera)
             for item : TraceOrder {
                 if item.Handle < 0 { continue }
                 mat4 boxFromWorld = item.BoxFromWorld
                 float [6] bounds = {item.BoundsCenter.X, item.BoundsCenter.Y, item.BoundsCenter.Z,
                     item.BoundsHalf.X, item.BoundsHalf.Y, item.BoundsHalf.Z}
-                if !QuaxelRenderer.AddBoundedShadowCaster(item.Handle, &boxFromWorld, &bounds[0]) { return false }
+                bool actor = world.Ddgi && ActorGeometry(world,item.Node,focusParent)
+                if !QuaxelRenderer.SubmitBoundedCaster(item.Handle, &boxFromWorld, &bounds[0], actor) { return false }
             }
         }
         if !sortBeforeCasters { SortByNear(TraceOrder) }

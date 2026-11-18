@@ -33,6 +33,10 @@ QuaxelPlatformBackend
     {
         return QuaxelVulkan.AddBoundedShadowCaster(handle, boxFromWorld, bounds)
     }
+    bool SubmitBoundedCaster(int handle, void* boxFromWorld, void* bounds, bool actor)
+    {
+        return QuaxelVulkan.SubmitBoundedCaster(handle, boxFromWorld, bounds, actor)
+    }
     bool AddShadowCaster(int handle, void* boxFromWorld) { return QuaxelVulkan.AddShadowCaster(handle, boxFromWorld) }
     bool LightVoxels(void* worldFromClip, void* lighting) { return QuaxelVulkan.LightVoxels(worldFromClip, lighting) }
 

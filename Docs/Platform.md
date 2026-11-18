@@ -67,6 +67,8 @@ The x64 Windows backend supports one main window per process.
 | `GetWindowSize(width, height)` | Reads current client dimensions after programmatic or user resizing. Clears both outputs on failure. |
 | `ResizeWindow(width, height)` | Requests new client dimensions while preserving position. Returns true on success. |
 | `RequestWindowClose()` | Queues a close request. Pump messages to complete it. |
+| `IsWindowOpen()` | True while the main window exists, including between runs when a game restarted. |
+| `SetWindowIcon(path)` | Shows a `.ico` file on the title bar and taskbar button. A game names one with `WindowIcon()`, and the engine sets it once the window opens. Headless returns false. |
 | `CloseWindow()` | Destroys the window immediately and releases its class. Safe to repeat. |
 | `SetRedrawHandler(handler)` | Sets a function called during live resize, while the normal loop is blocked. `ClearRedrawHandler()` removes it. |
 | `ConsumeWindowStall()` | Returns true once after a window drag blocked the loop, so that time is not simulated. |

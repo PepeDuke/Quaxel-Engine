@@ -1,0 +1,628 @@
+// JSON (RFC 8259) as UTF-8 bytes.
+//
+// QuaxelJsonWriter appends straight to a byte array, since joining Duck text
+// piece by piece would copy it over and over. Calls nest like the document:
+//
+//     QuaxelJsonWriter out
+//     out.BeginObject("")             // the root has no key
+//     out.Int("level", 7)
+//     out.BeginArray("bag")
+//     out.String("", "Ring")          // array items take "" for a key
+//     out.EndArray()
+//     out.EndObject()                 // out.Bytes holds the document
+//
+// QuaxelJson parses bytes into a flat list of nodes, each linked to its first
+// child and next sibling; node 0 is the root. Lookups take a node and give a
+// node, -1 when missing, and every read takes a fallback, so a chain of
+// lookups into a document that lacks a part needs no checks:
+//
+//     QuaxelJson json
+//     if json.Parse(bytes) {
+//         int level = json.Int(json.Find(0, "progress"), "level", 1)
+//         for item : json.First(json.Find(0, "bag")); item >= 0; item = json.Next(item) { ... }
+//     }
+//
+// See Docs/Data.md.
+
+QuaxelJsonWriter
+{
+    uint8 [] Bytes
+    // Two-space indents and a line per member. False writes it all on one line.
+    bool Pretty = true
+    // One per open object or array: true until something is written in it.
+    -bool [] Empty
+
+    BeginObject(string key) { Open(key, "{") }
+    EndObject() { Close("}") }
+    BeginArray(string key) { Open(key, "[") }
+    EndArray() { Close("]") }
+
+    // Keys are ignored inside arrays; pass "".
+    Int(string key, int value)
+    {
+        Member(key)
+        Raw((name)QuaxelUi.FormatInt(value))
+    }
+
+    Bool(string key, bool value)
+    {
+        Member(key)
+        Raw(value ? (name)"true" | (name)"false")
+    }
+
+    // Text given as UTF-8, such as an enum member's Name.
+    Text(string key, name value)
+    {
+        Member(key)
+        Quoted(value)
+    }
+
+    String(string key, string value)
+    {
+        Member(key)
+        Quoted((name)value)
+    }
+
+    // A number with Decimals digits after the point, as 12.50 for 2.
+    Number(string key, double value, int decimals)
+    {
+        Member(key)
+        Raw((name)QuaxelJsonWriter.FormatFixed(value, decimals))
+    }
+
+    Null(string key)
+    {
+        Member(key)
+        Raw((name)"null")
+    }
+
+    // Two whole numbers as a short array on one line, as [4, 5], for grid cells.
+    Pair(string key, int a, int b)
+    {
+        Member(key)
+        Raw((name)("[" + QuaxelUi.FormatInt(a) + ", " + QuaxelUi.FormatInt(b) + "]"))
+    }
+
+    -Open(string key, string bracket)
+    {
+        Member(key)
+        Raw((name)bracket)
+        Empty += true
+    }
+
+    -Close(string bracket)
+    {
+        bool empty = Empty[(int)Empty.Len - 1]
+        Empty--
+        if !empty { NewLine() }
+        Raw((name)bracket)
+    }
+
+    // A comma after the one before, a new indented line, and the key.
+    -Member(string key)
+    {
+        if Empty.Len == 0 { return }
+        int top = (int)Empty.Len - 1
+        if !Empty[top] { Bytes += (uint8)44 }
+        Empty[top] = false
+        NewLine()
+        if Length(key) > 0 {
+            Quoted((name)key)
+            Raw(Pretty ? (name)": " | (name)":")
+        }
+    }
+
+    -NewLine()
+    {
+        if !Pretty { return }
+        Bytes += (uint8)10
+        for i : 0; i < Empty.Len; i++ {
+            Bytes += (uint8)32
+            Bytes += (uint8)32
+        }
+    }
+
+    -Raw(name text)
+    {
+        for i : 0; i < Length(text); i++ { Bytes += (uint8)CodeUnitAt(text, i) }
+    }
+
+    -Quoted(name text)
+    {
+        Bytes += (uint8)34
+        for i : 0; i < Length(text); i++ {
+            uint32 b = CodeUnitAt(text, i)
+            if b == (uint32)34 || b == (uint32)92 {
+                Bytes += (uint8)92
+                Bytes += (uint8)b
+            }
+            else if b < (uint32)32 {
+                // Newline, tab and return by name, other control characters as \u00XX.
+                Bytes += (uint8)92
+                if b == (uint32)10 { Bytes += (uint8)110 }
+                else if b == (uint32)9 { Bytes += (uint8)116 }
+                else if b == (uint32)13 { Bytes += (uint8)114 }
+                else {
+                    Raw((name)"u00")
+                    int high = (int)b / 16
+                    int low = (int)b % 16
+                    Bytes += (uint8)(48 + high)
+                    Bytes += (uint8)(low < 10 ? 48 + low | 87 + low)
+                }
+            }
+            else { Bytes += (uint8)b }
+        }
+        Bytes += (uint8)34
+    }
+}
+
+QuaxelJsonWriter
+#{
+    // A number as text with Decimals digits after the point, rounded.
+    string FormatFixed(double value, int decimals)
+    {
+        int places = Math.Clamp(decimals, 0, 9)
+        double scale = Math.Pow(10.0, (double)places)
+        double rounded = Math.Round(Math.Abs(value) * scale)
+        if rounded > 2.0e18 { return "0" }
+        long whole = (long)rounded
+        long unit = (long)Math.Round(scale)
+        long integer = whole / unit
+        string text = value < 0.0 && whole != (long)0 ? "-" | ""
+        text += QuaxelJsonWriter.FormatLong(integer)
+        if places == 0 { return text }
+        string fraction = QuaxelJsonWriter.FormatLong(whole % unit)
+        while Length(fraction) < places { fraction = "0" + fraction }
+        return text + "." + fraction
+    }
+
+    // A non-negative long as decimal digits.
+    string FormatLong(long value)
+    {
+        if value < (long)2147483647 { return QuaxelUi.FormatInt((int)value) }
+        return QuaxelJsonWriter.FormatLong(value / (long)1000000000) + QuaxelJsonWriter.Padded((int)(value % (long)1000000000), 9)
+    }
+
+    -string Padded(int value, int digits)
+    {
+        string text = QuaxelUi.FormatInt(value)
+        while Length(text) < digits { text = "0" + text }
+        return text
+    }
+}
+
+QuaxelJsonKind : int
+#@{
+    Null, Bool, Number, Text, Array, Object
+}
+
+QuaxelJsonNode
+{
+    QuaxelJsonKind Kind
+    // Its key in the object holding it, or empty.
+    name Key
+    name Text
+    double Number
+    bool Flag
+    int First = -1
+    int Last = -1
+    int Next = -1
+}
+
+QuaxelJson
+{
+    QuaxelJsonNode [] Nodes
+    bool Failed
+    -int Pos
+    -int Depth
+
+    // Parses Duck text as JSON.
+    bool ParseText(string text)
+    {
+        uint8 [] bytes
+        QuaxelBytes.AppendText(bytes, text)
+        return Parse(bytes)
+    }
+
+    // Parses UTF-8 JSON. False for anything malformed or for trailing text.
+    bool Parse(uint8 []& bytes)
+    {
+        Nodes.Clear()
+        Failed = false
+        Pos = 0
+        Depth = 0
+        Value(bytes)
+        Space(bytes)
+        if Pos != bytes.Len { Failed = true }
+        return !Failed && Nodes.Len > 0
+    }
+
+    // The kind of a node; Null for -1.
+    QuaxelJsonKind KindOf(int node) { return node >= 0 && node < Nodes.Len ? Nodes[node].Kind | QuaxelJsonKind.Null }
+
+    // The key a member has in its object, or empty.
+    name KeyOf(int node) { return node >= 0 && node < Nodes.Len ? Nodes[node].Key | (name)"" }
+
+    bool IsObject(int node) { return node >= 0 && node < Nodes.Len && Nodes[node].Kind == QuaxelJsonKind.Object }
+
+    bool IsArray(int node) { return node >= 0 && node < Nodes.Len && Nodes[node].Kind == QuaxelJsonKind.Array }
+
+    // The member of an object with this key, or -1.
+    int Find(int node, string key)
+    {
+        if !IsObject(node) { return -1 }
+        name wanted = (name)key
+        for child : Nodes[node].First; child >= 0; child = Nodes[child].Next {
+            if Nodes[child].Key == wanted { return child }
+        }
+        return -1
+    }
+
+    // The first item of an array or member of an object, or -1; Next goes on.
+    int First(int node) { return node >= 0 && node < Nodes.Len ? Nodes[node].First | -1 }
+
+    int Next(int node) { return Nodes[node].Next }
+
+    int Count(int node)
+    {
+        int count = 0
+        for child : First(node); child >= 0; child = Nodes[child].Next { count++ }
+        return count
+    }
+
+    // Values, with a fallback when the node is missing or of another kind.
+    int AsInt(int node, int fallback)
+    {
+        if node < 0 || Nodes[node].Kind != QuaxelJsonKind.Number { return fallback }
+        double value = Math.Round(Nodes[node].Number)
+        if value > 2147483647.0 || value < -2147483648.0 { return fallback }
+        return (int)value
+    }
+
+    double AsNumber(int node, double fallback)
+    {
+        if node < 0 || Nodes[node].Kind != QuaxelJsonKind.Number { return fallback }
+        return Nodes[node].Number
+    }
+
+    bool AsBool(int node, bool fallback)
+    {
+        if node < 0 || Nodes[node].Kind != QuaxelJsonKind.Bool { return fallback }
+        return Nodes[node].Flag
+    }
+
+    name AsText(int node)
+    {
+        if node < 0 || Nodes[node].Kind != QuaxelJsonKind.Text { return (name)"" }
+        return Nodes[node].Text
+    }
+
+    // Text as Duck's UTF-16 string.
+    string AsString(int node) { return (string)AsText(node) }
+
+    int Int(int object, string key, int fallback) { return AsInt(Find(object, key), fallback) }
+
+    double NumberOf(int object, string key, double fallback) { return AsNumber(Find(object, key), fallback) }
+
+    bool Bool(int object, string key, bool fallback) { return AsBool(Find(object, key), fallback) }
+
+    name Text(int object, string key) { return AsText(Find(object, key)) }
+
+    -int Byte(uint8 []& bytes) { return Pos < bytes.Len ? (int)bytes[Pos] | -1 }
+
+    -Space(uint8 []& bytes)
+    {
+        while Pos < bytes.Len {
+            int b = (int)bytes[Pos]
+            if b != 32 && b != 9 && b != 10 && b != 13 { return }
+            Pos++
+        }
+    }
+
+    -int Add(QuaxelJsonKind kind)
+    {
+        QuaxelJsonNode node
+        node.Kind = kind
+        Nodes += node
+        return (int)Nodes.Len - 1
+    }
+
+    -Link(int parent, int child)
+    {
+        if Nodes[parent].First < 0 { Nodes[parent].First = child }
+        else { Nodes[Nodes[parent].Last].Next = child }
+        Nodes[parent].Last = child
+    }
+
+    -int Value(uint8 []& bytes)
+    {
+        Space(bytes)
+        int b = Byte(bytes)
+        if b == 123 { return Object(bytes) }
+        if b == 91 { return Array(bytes) }
+        if b == 34 {
+            int node = Add(QuaxelJsonKind.Text)
+            Nodes[node].Text = Quoted(bytes)
+            return node
+        }
+        if b == 116 && Word(bytes, "true") {
+            int node = Add(QuaxelJsonKind.Bool)
+            Nodes[node].Flag = true
+            return node
+        }
+        if b == 102 && Word(bytes, "false") { return Add(QuaxelJsonKind.Bool) }
+        if b == 110 && Word(bytes, "null") { return Add(QuaxelJsonKind.Null) }
+        if b == 45 || (b >= 48 && b <= 57) {
+            int node = Add(QuaxelJsonKind.Number)
+            Nodes[node].Number = Number(bytes)
+            return node
+        }
+        Failed = true
+        return Add(QuaxelJsonKind.Null)
+    }
+
+    -int Object(uint8 []& bytes)
+    {
+        int node = Add(QuaxelJsonKind.Object)
+        Pos++
+        Depth++
+        if Depth > 64 { Failed = true }
+        Space(bytes)
+        if Byte(bytes) == 125 {
+            Pos++
+            Depth--
+            return node
+        }
+        while !Failed {
+            Space(bytes)
+            if Byte(bytes) != 34 {
+                Failed = true
+                break
+            }
+            name key = Quoted(bytes)
+            Space(bytes)
+            if Byte(bytes) != 58 {
+                Failed = true
+                break
+            }
+            Pos++
+            int child = Value(bytes)
+            Nodes[child].Key = key
+            Link(node, child)
+            Space(bytes)
+            int b = Byte(bytes)
+            Pos++
+            if b == 125 { break }
+            if b != 44 { Failed = true }
+        }
+        Depth--
+        return node
+    }
+
+    -int Array(uint8 []& bytes)
+    {
+        int node = Add(QuaxelJsonKind.Array)
+        Pos++
+        Depth++
+        if Depth > 64 { Failed = true }
+        Space(bytes)
+        if Byte(bytes) == 93 {
+            Pos++
+            Depth--
+            return node
+        }
+        while !Failed {
+            int child = Value(bytes)
+            Link(node, child)
+            Space(bytes)
+            int b = Byte(bytes)
+            Pos++
+            if b == 93 { break }
+            if b != 44 { Failed = true }
+        }
+        Depth--
+        return node
+    }
+
+    -bool Word(uint8 []& bytes, string word)
+    {
+        name text = (name)word
+        for i : 0; i < Length(text); i++ {
+            if Pos + i >= bytes.Len || (uint32)bytes[Pos + i] != CodeUnitAt(text, i) {
+                Failed = true
+                return false
+            }
+        }
+        Pos += (int)Length(text)
+        return true
+    }
+
+    -double Number(uint8 []& bytes)
+    {
+        double sign = 1.0
+        if Byte(bytes) == 45 {
+            sign = -1.0
+            Pos++
+        }
+        double value = 0.0
+        int digits = 0
+        while Byte(bytes) >= 48 && Byte(bytes) <= 57 {
+            value = value * 10.0 + (double)(Byte(bytes) - 48)
+            Pos++
+            digits++
+        }
+        if Byte(bytes) == 46 {
+            Pos++
+            double scale = 0.1
+            while Byte(bytes) >= 48 && Byte(bytes) <= 57 {
+                value += (double)(Byte(bytes) - 48) * scale
+                scale *= 0.1
+                Pos++
+                digits++
+            }
+        }
+        if Byte(bytes) == 101 || Byte(bytes) == 69 {
+            Pos++
+            double exponentSign = 1.0
+            if Byte(bytes) == 45 {
+                exponentSign = -1.0
+                Pos++
+            }
+            else if Byte(bytes) == 43 { Pos++ }
+            double exponent = 0.0
+            while Byte(bytes) >= 48 && Byte(bytes) <= 57 {
+                exponent = exponent * 10.0 + (double)(Byte(bytes) - 48)
+                Pos++
+            }
+            value *= Math.Pow(10.0, exponentSign * exponent)
+        }
+        if digits == 0 { Failed = true }
+        return sign * value
+    }
+
+    // A quoted string, decoding escapes and UTF-8.
+    -name Quoted(uint8 []& bytes)
+    {
+        name text = (name)""
+        Pos++
+        while !Failed {
+            int b = Byte(bytes)
+            if b < 0 {
+                Failed = true
+                break
+            }
+            Pos++
+            if b == 34 { break }
+            int scalar = b
+            if b == 92 {
+                int e = Byte(bytes)
+                Pos++
+                if e == 110 { scalar = 10 }
+                else if e == 116 { scalar = 9 }
+                else if e == 114 { scalar = 13 }
+                else if e == 98 { scalar = 8 }
+                else if e == 102 { scalar = 12 }
+                else if e == 117 {
+                    scalar = Hex4(bytes)
+                    // A surrogate pair written as two escapes.
+                    if scalar >= 0xD800 && scalar <= 0xDBFF && Byte(bytes) == 92 {
+                        Pos++
+                        if Byte(bytes) == 117 {
+                            Pos++
+                            int low = Hex4(bytes)
+                            if low >= 0xDC00 && low <= 0xDFFF { scalar = 0x10000 + ((scalar - 0xD800) << 10) + (low - 0xDC00) }
+                        }
+                    }
+                }
+                else { scalar = e }
+            }
+            else if b >= 0x80 {
+                // The rest of a UTF-8 sequence.
+                int more = b >= 0xF0 ? 3 | b >= 0xE0 ? 2 | 1
+                scalar = b & (more == 3 ? 0x07 | more == 2 ? 0x0F | 0x1F)
+                for k : 0; k < more; k++ {
+                    int c = Byte(bytes)
+                    if c < 0x80 || c > 0xBF {
+                        Failed = true
+                        return text
+                    }
+                    scalar = (scalar << 6) | (c & 0x3F)
+                    Pos++
+                }
+            }
+            // Lone surrogates and other bad scalars become a question mark.
+            if scalar < 0 || scalar > 0x10FFFF || (scalar >= 0xD800 && scalar <= 0xDFFF) { scalar = 63 }
+            text = text + (name)char(scalar)
+        }
+        return text
+    }
+
+    -int Hex4(uint8 []& bytes)
+    {
+        int value = 0
+        for k : 0; k < 4; k++ {
+            int c = Byte(bytes)
+            Pos++
+            int digit = -1
+            if c >= 48 && c <= 57 { digit = c - 48 }
+            else if c >= 97 && c <= 102 { digit = c - 87 }
+            else if c >= 65 && c <= 70 { digit = c - 55 }
+            if digit < 0 {
+                Failed = true
+                return 63
+            }
+            value = value * 16 + digit
+        }
+        return value
+    }
+}
+T{
+    WrittenJsonParsesBack()
+    {
+        QuaxelJsonWriter out
+        out.BeginObject("")
+        out.Int("level", 7)
+        out.Bool("tithe", true)
+        out.Text("item", (name)"Short \"Sword\"")
+        out.BeginArray("bag")
+        out.Int("", -3)
+        out.Int("", 12)
+        out.EndArray()
+        out.BeginObject("empty")
+        out.EndObject()
+        out.Null("held")
+        out.EndObject()
+        QuaxelJson json
+        T.IsTrue(json.Parse(out.Bytes))
+        T.AreEqual(json.Int(0, "level", 0), 7)
+        T.IsTrue(json.Bool(0, "tithe", false))
+        T.IsTrue(json.Text(0, "item") == (name)"Short \"Sword\"")
+        int bag = json.Find(0, "bag")
+        T.AreEqual(json.Count(bag), 2)
+        T.AreEqual(json.AsInt(json.First(bag), 0), -3)
+        T.AreEqual(json.Count(json.Find(0, "empty")), 0)
+        T.AreEqual(json.Int(0, "missing", 42), 42)
+        T.AreEqual(json.Find(0, "held") >= 0, true)
+    }
+
+    HandWrittenJsonWithEscapesAndNumbersParses()
+    {
+        QuaxelJson json
+        T.IsTrue(json.ParseText("{ \"a\" : 1.5e2 , \"b\":\"caf\\u00e9 \\n\", \"c\": [true,false,null], \"d\": \"\u00e9\" }"))
+        T.AreEqual(json.Int(0, "a", 0), 150)
+        T.IsTrue(json.Text(0, "b") == (name)"caf\u00e9 \n")
+        T.IsTrue(json.Text(0, "d") == (name)"\u00e9")
+        T.AreEqual(json.Count(json.Find(0, "c")), 3)
+    }
+
+    BrokenJsonFails()
+    {
+        string [4] cases = {"{\"a\": }", "[1, 2", "{\"a\": 1} trailing", "nope"}
+        for text : cases {
+            QuaxelJson json
+            T.IsFalse(json.ParseText(text))
+        }
+    }
+
+    CompactOutputNumbersAndEscapesRoundTrip()
+    {
+        QuaxelJsonWriter out
+        out.Pretty = false
+        out.BeginObject("")
+        out.Number("speed", 2.5, 2)
+        out.Number("drop", -0.125, 3)
+        out.Number("far", 3000000000.0, 0)
+        out.String("line", "one\ttwo\nthree")
+        out.Pair("cell", 4, 5)
+        out.EndObject()
+        T.IsTrue(QuaxelBytes.ToText(out.Bytes) == "{\"speed\":2.50,\"drop\":-0.125,\"far\":3000000000,\"line\":\"one\\ttwo\\nthree\",\"cell\":[4, 5]}")
+        QuaxelJson json
+        T.IsTrue(json.Parse(out.Bytes))
+        T.AreEqual(json.NumberOf(0, "speed", 0.0), 2.5)
+        T.AreEqual(json.NumberOf(0, "drop", 0.0), -0.125)
+        T.IsTrue(json.AsString(json.Find(0, "line")) == "one\ttwo\nthree")
+        T.AreEqual(json.KindOf(json.Find(0, "cell")), QuaxelJsonKind.Array)
+        T.IsTrue(json.KeyOf(json.Find(0, "cell")) == (name)"cell")
+        T.AreEqual(json.KindOf(-1), QuaxelJsonKind.Null)
+    }
+}

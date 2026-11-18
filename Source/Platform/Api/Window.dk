@@ -33,5 +33,11 @@ QuaxelPlatform
     bool ConsumeWindowStall() { return QuaxelPlatformBackend.ConsumeWindowStall() }
 
     bool RequestWindowClose() { return QuaxelPlatformBackend.RequestWindowClose() }
+
+    bool IsWindowOpen() { return QuaxelPlatformBackend.IsWindowOpen() }
+
+    // Shows a .ico file on the open window's title bar and taskbar button.
+    // False without a window or when the file will not load.
+    bool SetWindowIcon(string path) { return QuaxelPlatformBackend.SetWindowIcon(path) }
     CloseWindow() { QuaxelPlatformBackend.CloseWindow() }
 }

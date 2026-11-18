@@ -3,6 +3,8 @@ QuaxelPlatformBackend
     bool OpenWindow(string title, int width, int height, bool visible) { return false }
     bool ResizeWindow(int width, int height) { return false }
     bool RequestWindowClose() { return false }
+    bool SetWindowIcon(string path) { return false }
+    bool IsWindowOpen() { return false }
     bool PumpWindow(bool wait) { return false }
     CloseWindow() {}
     SetRedrawHandler(func () handler) {}

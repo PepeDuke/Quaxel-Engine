@@ -16,42 +16,13 @@ layout(push_constant) uniform Params {
 layout(set=0,binding=0,std430) buffer Output { uint frame[]; };
 #include "VoxelShadowCommon.glsl"
 #include "ProbeField.glsl"
-bool sunBlocked(vec3 start, vec3 sun) {
-    int slot = -1;
-    if (sunWindow.w != 0) {
-        vec2 ground = (start.xz - start.y * (sun.xz / sun.y)) / SUN_CHUNK;
-        ivec2 chunk = ivec2(floor(ground));
-        ivec2 offset = chunk - sunWindow.xy;
-        if (all(greaterThanEqual(offset, ivec2(0))) && all(lessThan(offset, ivec2(8)))) {
-            slot = sunSlot(chunk);
-            if (chunkTops[slot >> 2][slot & 3] < -1e29) return false;
-            vec2 local = fract(ground) * SUN_SIZE - 0.5;
-            ivec2 p = ivec2(floor(local));
-            if (all(greaterThanEqual(p, ivec2(0))) && all(lessThan(p, ivec2(SUN_SIZE - 1)))) {
-                int at = sunTexel(slot, p);
-                vec2 a = vec2(depthAtlas[at], depthAtlas[at + 1]);
-                vec2 b = vec2(depthAtlas[at + SUN_SIZE], depthAtlas[at + SUN_SIZE + 1]);
-                float h = start.y * sign(sun.y);
-                float tolerance = SUN_CHUNK / SUN_SIZE;
-                if (h > max(max(a.x, a.y), max(b.x, b.y)) + tolerance) return false;
-                if (h < min(min(a.x, a.y), min(b.x, b.y)) - tolerance) return true;
-            }
-        }
-    }
-    // Keep descriptor indices uniform even where adjacent pixels use different chunks.
-    for (int w = 0; w * 32 < pc.casters; ++w) {
-        uint mask = slot < 0 ? ~0u : sunMask(slot, w);
-        if (mask == 0u) continue;
-        for (int bit = 0; bit < 32 && w * 32 + bit < pc.casters; ++bit) {
-            if ((mask & (1u << bit)) != 0u && firstHit(w * 32 + bit, start, sun, FAR) < FAR) return true;
-        }
-    }
-    return false;
-}
+#include "SunVisibility.glsl"
+#include "ProbeMarkers.glsl"
 
 vec4 gatherIndirect(vec3 p,vec3 n,int level) {
     float scale = level == 0 ? 1.0 : 4.0;
-    vec3 samplePos=p+n*(0.16*scale), total=vec3(0); float weights=0.0;
+    vec3 samplePos=p+n*(0.16*scale), total=vec3(0);
+    float weights=0.0, support=0.0;
     // Gather neighboring adaptive leaves around the surface. Angular moments
     // reduce the contribution of probes separated from the receiver by geometry.
     vec3 grid=samplePos*(2.0/scale)-0.5, blend=fract(grid);
@@ -73,21 +44,31 @@ vec4 gatherIndirect(vec3 p,vec3 n,int level) {
         float variance=max(m.y-m.x*m.x,0.0025);
         float error=max(dist-m.x-0.04,0.0);
         float vis=variance/(variance+error*error);
-        float w=8.0*tent.x*tent.y*tent.z*vis*vis*vis*clamp(0.5-0.5*dot(dir,n),0.03,1.0)/(0.1+dist*dist/(scale*scale));
+        float facing=max(dot(-dir,n),0.0);
+        float cornerWeight=tent.x*tent.y*tent.z;
+        // Fade to the next level as the last usable corners leave the footprint.
+        support+=cornerWeight*smoothstep(0.0,0.1,facing)*smoothstep(0.0,0.1,vis);
+        float w=cornerWeight*vis*vis*vis*facing/(0.1+dist*dist/(scale*scale));
         total+=w*light;weights+=w;
     }
-    return vec4(total/max(weights,0.0001),clamp(weights,0.0,1.0));
+    // Visibility ranks contributing probes. A weak weight alone is not sky exposure.
+    if (weights <= 0.0) return vec4(0);
+    return vec4(total/weights,smoothstep(0.0,0.25,support));
 }
 
-vec3 indirectLight(vec3 p,vec3 n,vec3 ambient) {
+vec3 indirectLight(vec3 p,vec3 n,vec3 ambient,out vec3 weights) {
     float nearWeight = lodWeight(p,1.0);
     vec4 fine = vec4(0);
     if (nearWeight > 0.0) fine = gatherIndirect(p,n,0);
     float fineWeight = nearWeight*fine.a;
     float farWeight = lodWeight(p,4.0);
+    weights = vec3(fineWeight,0,1.0-fineWeight);
     if (fineWeight < 1.0 && farWeight > 0.0) {
         vec4 coarse = gatherIndirect(p,n,1);
-        ambient = mix(ambient,coarse.rgb,farWeight*coarse.a);
+        float coarseWeight = farWeight*coarse.a;
+        ambient = mix(ambient,coarse.rgb,coarseWeight);
+        weights.y = (1.0-fineWeight)*coarseWeight;
+        weights.z *= 1.0-coarseWeight;
     }
     return mix(ambient,fine.rgb,fineWeight);
 }
@@ -98,13 +79,26 @@ void main() {
     int pixels = pc.extent.x * pc.extent.y;
     int index = pixel.x + pc.extent.x * pixel.y;
     float depth = uintBitsToFloat(frame[index + pixels]);
+    vec2 xy = (vec2(pixel) + 0.5) * (2.0 / vec2(pc.extent)) - 1.0;
+    if (pc.gi != 0 && focus.w == 2.0) {
+        vec3 origin = (pc.worldFromClip * vec4(xy,0,1)).xyz;
+        vec3 ray = pc.worldFromClip[2].xyz;
+        float closest = depth*length(ray);
+        vec3 direction = normalize(ray);
+        bool fine = probeMarker(origin,direction,0,closest);
+        bool coarse = probeMarker(origin,direction,1,closest);
+        if (fine || coarse) {
+            vec3 color = coarse ? vec3(1.0,0.55,0.06) : vec3(0.1,0.95,1.0);
+            frame[index] = packUnorm4x8(vec4(pc.bgra != 0 ? color.bgr : color,1));
+            return;
+        }
+    }
     if (depth >= 1.0) return;  // Background keeps its clear color.
     uint packed = frame[index];
     vec3 albedo = vec3((packed >> 16) & 255u, (packed >> 8) & 255u, packed & 255u) / 255.0;
     float ao = float(packed >> 24) / 255.0;
     vec3 n = unpackSnorm4x8(frame[index + 2 * pixels]).xyz;
     n = dot(n, n) > 0.01 ? normalize(n) : vec3(0.0, 1.0, 0.0);
-    vec2 xy = (vec2(pixel) + 0.5) * (2.0 / vec2(pc.extent)) - 1.0;
     vec3 world = (pc.worldFromClip * vec4(xy, depth, 1.0)).xyz;
 
     vec3 sun = sunDirection.xyz;
@@ -113,10 +107,20 @@ void main() {
     if (lambert > 0.0) {
         lit = 1.0;
         vec3 start = world + n * SHADOW_OFFSET;
-        if (sunBlocked(start, sun)) lit = 0.0;
+        if (sunBlocked(start, sun, pc.casters)) lit = 0.0;
     }
     vec3 ambient = mix(groundColor.rgb, skyColor.rgb, n.y * 0.5 + 0.5);
-    if (pc.gi != 0) ambient = indirectLight(world,n,ambient);
+    if (pc.gi != 0) {
+        if (lambert > 0.0 && lit == 0.0) ambient = min(groundColor.rgb,ambient);
+        vec3 weights;
+        ambient = indirectLight(world,n,ambient,weights);
+        if (focus.w == 1.0 || focus.w == 3.0) {
+            vec3 debugColor = focus.w == 1.0 ? vec3(weights.z) :
+                weights.x*vec3(0.1,0.95,1.0) + weights.y*vec3(1.0,0.55,0.06) + weights.z*vec3(0.8,0.05,0.65);
+            frame[index] = packUnorm4x8(vec4(pc.bgra != 0 ? debugColor.bgr : debugColor,1));
+            return;
+        }
+    }
     vec3 light = sunColor.rgb * (lambert * lit * mix(1.0, ao, 0.35)) + ambient * ao;
     for (int i = 0; i < pc.lights; ++i) {
         vec3 delta = lights[i].positionRadius.xyz - world;

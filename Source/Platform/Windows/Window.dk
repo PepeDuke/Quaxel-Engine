@@ -53,6 +53,10 @@ QuaxelWindowsNative
     extern "C" long DispatchMessageW(QuaxelWinMessage* msg)
     extern "C" int PostMessageW(void* window, uint message, uint64 wParam, long lParam)
     extern "C" void* SetCapture(void* window)
+    extern "C" void* LoadImageW(void* instance, string path, uint kind, int width, int height, uint flags)
+    extern "C" int DestroyIcon(void* icon)
+    extern "C" int GetSystemMetrics(int index)
+    extern "C" long SendMessageW(void* window, uint message, uint64 wParam, void* lParam)
     extern "C" int ReleaseCapture()
 }
 
@@ -70,6 +74,9 @@ QuaxelPlatformBackend
 #{
     -void* Window
     -void* Instance
+    // The window's icons, loaded from a file, at the system's large and small sizes.
+    -void* BigIcon
+    -void* SmallIcon
     -bool Registered
     -bool InSizeMove
     -bool WindowStalled
@@ -219,9 +226,40 @@ QuaxelPlatformBackend
         return Registered
     }
 
+    // Loads a .ico file and shows it on the window's title bar and taskbar
+    // button. The window keeps the icons until it closes.
+    bool SetWindowIcon(string path)
+    {
+        if Window == null { return false }
+        // IMAGE_ICON from a file, picking the image closest to each size.
+        uint fromFile = 0x10 // LR_LOADFROMFILE
+        void* large = QuaxelWindowsNative.LoadImageW(null, path, 1, QuaxelWindowsNative.GetSystemMetrics(11), QuaxelWindowsNative.GetSystemMetrics(12), fromFile) // SM_CXICON, SM_CYICON
+        void* little = QuaxelWindowsNative.LoadImageW(null, path, 1, QuaxelWindowsNative.GetSystemMetrics(49), QuaxelWindowsNative.GetSystemMetrics(50), fromFile) // SM_CXSMICON, SM_CYSMICON
+        if large == null || little == null {
+            if large != null { QuaxelWindowsNative.DestroyIcon(large) }
+            if little != null { QuaxelWindowsNative.DestroyIcon(little) }
+            return false
+        }
+        QuaxelWindowsNative.SendMessageW(Window, 0x0080, (uint64)1, large) // WM_SETICON, ICON_BIG
+        QuaxelWindowsNative.SendMessageW(Window, 0x0080, (uint64)0, little) // ICON_SMALL
+        ReleaseIcons()
+        BigIcon = large
+        SmallIcon = little
+        return true
+    }
+
+    -ReleaseIcons()
+    {
+        if BigIcon != null { QuaxelWindowsNative.DestroyIcon(BigIcon) }
+        if SmallIcon != null { QuaxelWindowsNative.DestroyIcon(SmallIcon) }
+        BigIcon = null
+        SmallIcon = null
+    }
+
     CloseWindow()
     {
         if Window != null { QuaxelWindowsNative.DestroyWindow(Window) }
+        if Window == null { ReleaseIcons() }
         if Window == null && Registered {
             Registered = QuaxelWindowsNative.UnregisterClassW("Quaxel", Instance) == 0
         }
@@ -273,6 +311,8 @@ QuaxelPlatformBackend
         return QuaxelWindowsNative.SetWindowPos(Window, null, 0, 0, bounds.right - bounds.left,
             bounds.bottom - bounds.top, 0x16) != 0 // NOMOVE | NOZORDER | NOACTIVATE
     }
+
+    bool IsWindowOpen() { return Window != null }
 
     bool RequestWindowClose()
     {

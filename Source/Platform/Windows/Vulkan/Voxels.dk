@@ -435,6 +435,11 @@ QuaxelVulkan
 
     bool AddBoundedShadowCaster(int handle, void* boxFromWorld, void* bounds)
     {
+        return SubmitBoundedCaster(handle, boxFromWorld, bounds, false)
+    }
+
+    bool SubmitBoundedCaster(int handle, void* boxFromWorld, void* bounds, bool actor)
+    {
         if !FrameOpen { return Device != 0 }
         if !ComputeFrame || handle < 0 || handle >= Volumes.Count { return false }
         if CasterCount >= MaxCasters { return true }
@@ -444,6 +449,7 @@ QuaxelVulkan
         int at = 528 + CasterCount * 20
         memcpy(&Scene.Words[at], boxFromWorld, 64)
         for i : 16; i < 20; i++ { Scene.Words[at + i] = 0 }
+        Scene.Words[at+17] = actor ? 1 | 0
         CasterRevisions[CasterCount] = VolumeRevision[handle]
         CasterBuffers[CasterCount] = Volumes.Items[handle].Buffer
         CasterCount++

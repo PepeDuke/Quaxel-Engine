@@ -1,11 +1,11 @@
 // Two rolling 8x4x8 windows of world-space octree roots, at 16 and 64 voxels per side.
-// Refresh resident geometry before shading. Stream newly exposed roots separately.
+// Static placement and motion-driven lighting updates have separate budgets.
 QuaxelGiRoot
 {
     ivec3 Key
     uint Signature
-    uint StaticSignature
-    bool StaticReady
+    uint MotionSignature
+    int WakeFrames
     int Count
     int Waiting
     bool Ready
@@ -14,7 +14,6 @@ QuaxelGiInstance
 {
     ivec3 Low
     ivec3 High
-    bool Moving
     int Node
     bool Mesh
 }
@@ -22,27 +21,44 @@ QuaxelGiMotion
 {
     uint Stamp
     bool Seen
-    bool Moving
+    int LastMoved
 }
 QuaxelEngine
 #{
     -QuaxelGiRoot [512] GiRoots
     -QuaxelGiInstance [] GiInstances
     -QuaxelGiMotion [] GiMotion
-    -uint8 [2097152] GiStaticOccupancy
-    -uint8 [2097152] GiLastOccupancy
-    -uint [512] StaticSignatures
+    -int GiTick
+    -uint [512] MotionSignatures
     -uint [512] Signatures
     -int [2052] GiWindow
     -int ProbeEpoch
     -extern "C" void* memcpy(void* dst, void* src, long bytes)
 
-    -extern "C" int memcmp(void* a, void* b, long bytes)
-
     -int GiSlot(ivec3 r) { return (r.X & 7) + 8*(r.Z & 7) + 64*(r.Y & 3) }
 
-    -AccumulateGiBounds(ivec3 first,int level,float width, vec3 center, vec3 half, uint stamp, int id, bool mesh)
+    -bool ActorGeometry(QuaxelWorld& world,int node,int player)
     {
+        while node != 0 {
+            if node == player || world.Has(node,QuaxelComponents.Animator) { return true }
+            node = world.ParentOf(node)
+        }
+        return false
+    }
+
+    -AccumulateGiBounds(ivec3 first,int level,float width,vec3 center,vec3 half,uint pose,uint stamp,int id,bool mesh,bool actor)
+    {
+        int key = id*2 + (mesh ? 1 | 0)
+        while GiMotion.Len <= key {
+            QuaxelGiMotion motion
+            GiMotion += motion
+        }
+        if GiMotion[key].Seen && GiMotion[key].Stamp != pose { GiMotion[key].LastMoved = GiTick }
+        GiMotion[key].Seen = true
+        GiMotion[key].Stamp = pose
+        bool dynamic = actor || (GiMotion[key].LastMoved > 0 && GiTick-GiMotion[key].LastMoved < 60)
+        // One receiver cell of padding wakes probes on both sides of a moving surface.
+        if dynamic { half += vec3(0.25,0.25,0.25)*width }
         ivec3 lo
         ivec3 hi
         for k : 0; k < 3; k++ {
@@ -51,32 +67,23 @@ QuaxelEngine
         }
         if lo.X > hi.X || lo.Y > hi.Y || lo.Z > hi.Z { return }
         QuaxelGiInstance instance
-        int key = id*2 + (mesh ? 1 | 0)
-        while GiMotion.Len <= key {
-            QuaxelGiMotion motion
-            GiMotion += motion
-        }
-        if GiMotion[key].Seen && GiMotion[key].Stamp != stamp { GiMotion[key].Moving = true }
-        GiMotion[key].Seen = true
-        GiMotion[key].Stamp = stamp
-        instance.Moving = GiMotion[key].Moving
         instance.Node = id
         instance.Low = lo
         instance.High = hi
         instance.Mesh = mesh
-        GiInstances += instance
+        if !dynamic { GiInstances += instance }
         for y : lo.Y; y <= hi.Y; y++ | z : lo.Z; z <= hi.Z; z++ | x : lo.X; x <= hi.X; x++ {
             int s = level*256 + GiSlot(ivec3(x,y,z))
-            if !instance.Moving { StaticSignatures[s] = (StaticSignatures[s] ^ stamp) * (uint)16777619 }
-            Signatures[s] = (Signatures[s] ^ stamp) * (uint)16777619
+            if dynamic { MotionSignatures[s] = (MotionSignatures[s] ^ stamp) * (uint)16777619 }
+            else { Signatures[s] = (Signatures[s] ^ stamp) * (uint)16777619 }
         }
     }
 
-    -uint HashProbeModel(mat4 model, int id, int asset, int revision)
+    -uint HashProbeModel(mat4 model, int id)
     {
         uint [16] bits
         memcpy(&bits[0],&model,64)
-        uint h = ((uint)id * (uint)16777619 ^ (uint)asset) * (uint)16777619 ^ (uint)revision
+        uint h = (uint)id * (uint)16777619
         for k : 0; k < 16; k++ { h = (h ^ bits[k]) * (uint)16777619 }
         return h
     }
@@ -91,33 +98,39 @@ QuaxelEngine
         int parent = world.ActiveCamera != 0 ? world.ParentOf(world.ActiveCamera) | 0
         if parent != 0 { focus = world.WorldPosition(parent) }
         if ProbeEpoch != epoch { GiMotion.Clear() }
-        BuildProbeLevel(world,focus,epoch,0,2.0)
-        BuildProbeLevel(world,focus,epoch,1,8.0)
+        GiTick++
+        BuildProbeLevel(world,focus,parent,epoch,0,2.0)
+        BuildProbeLevel(world,focus,parent,epoch,1,8.0)
         ProbeEpoch = epoch
         for s : 0; s < 512; s++ {
             GiWindow[s*4] = GiRoots[s].Key.X
             GiWindow[s*4+1] = GiRoots[s].Key.Y
             GiWindow[s*4+2] = GiRoots[s].Key.Z
             GiWindow[s*4+3] = GiRoots[s].Count
+            if GiRoots[s].Count > 0 && GiRoots[s].WakeFrames > 0 { GiWindow[s*4+3] |= 1024 }
         }
-        float [4] center = {focus.X,focus.Y,focus.Z,0.0}
+        float debugMode = world.DebugProbePositions ? 2.0 | (world.DebugProbeCoverage ? 1.0 | 0.0)
+        if world.DebugProbeWeights { debugMode = 3.0 }
+        float [4] center = {focus.X,focus.Y,focus.Z,debugMode}
         memcpy(&GiWindow[2048],&center[0],16)
         QuaxelRenderer.WriteProbeWindow(&GiWindow[0])
     }
 
-    -BuildProbeLevel(QuaxelWorld& world,vec3 focus,int epoch,int level,float width)
+    -BuildProbeLevel(QuaxelWorld& world,vec3 focus,int player,int epoch,int level,float width)
     {
         int base = level*256
         ivec3 first = ivec3((int)Math.Floor(focus.X/width)-4,(int)Math.Floor(focus.Y/width)-1,(int)Math.Floor(focus.Z/width)-4)
         for s : base; s < base+256; s++ {
             Signatures[s] = (uint)2166136261
-            StaticSignatures[s] = (uint)2166136261
+            MotionSignatures[s] = (uint)2166136261
         }
         GiInstances.Clear()
         for item : TraceOrder {
             if item.Handle < 0 { continue }
             int volume = world.VolumeOf(item.Node)
-            AccumulateGiBounds(first,level,width,item.BoundsCenter,item.BoundsHalf,HashProbeModel(item.BoxFromWorld,item.Node,volume,world.VolumeUploadRevision(volume)),item.Node,false)
+            uint pose = HashProbeModel(item.BoxFromWorld,item.Node)
+            uint stamp = (pose ^ (uint)volume)*(uint)16777619 ^ (uint)world.VolumeUploadRevision(volume)
+            AccumulateGiBounds(first,level,width,item.BoundsCenter,item.BoundsHalf,pose,stamp,item.Node,false,ActorGeometry(world,item.Node,player))
         }
         int mask = QuaxelComponents.Transform | QuaxelComponents.MeshRenderer
         for id : world.NextWith(0,mask); id != 0; id = world.NextWith(id,mask) {
@@ -136,23 +149,23 @@ QuaxelEngine
                     if v == 0 || p[k] > hi[k] { hi[k] = p[k] }
                 }
             }
-            AccumulateGiBounds(first,level,width,(hi+lo)*0.5,(hi-lo)*0.5,HashProbeModel(model,id,index,0),id,true)
+            uint pose = HashProbeModel(model,id)
+            AccumulateGiBounds(first,level,width,(hi+lo)*0.5,(hi-lo)*0.5,pose,pose ^ (uint)index,id,true,ActorGeometry(world,id,player))
         }
         for y : 0; y < 4; y++ | z : 0; z < 8; z++ | x : 0; x < 8; x++ {
             ivec3 r = ivec3(first.X+x,first.Y+y,first.Z+z)
             int s = base + GiSlot(r)
             ivec3 old = GiRoots[s].Key
             bool resident = ProbeEpoch == epoch && old.X == r.X && old.Y == r.Y && old.Z == r.Z
+            if !resident { GiRoots[s].WakeFrames = 0 }
+            else if MotionSignatures[s] != GiRoots[s].MotionSignature { GiRoots[s].WakeFrames = 16 }
+            else if GiRoots[s].WakeFrames > 0 { GiRoots[s].WakeFrames-- }
+            GiRoots[s].MotionSignature = MotionSignatures[s]
             if !resident || GiRoots[s].Signature != Signatures[s] {
-                bool refresh = resident && GiRoots[s].Ready
                 GiRoots[s].Key = r
                 GiRoots[s].Signature = Signatures[s]
                 GiRoots[s].Ready = false
-                if !resident {
-                    GiRoots[s].Count = 0
-                    GiRoots[s].StaticReady = false
-                }
-                if refresh { BuildProbeRoot(world,s,true) }
+                GiRoots[s].Count = 0
             }
             if !GiRoots[s].Ready { GiRoots[s].Waiting++ }
         }
@@ -170,34 +183,21 @@ QuaxelEngine
                 }
             }
             if best < 0 { break }
-            BuildProbeRoot(world,best,false)
+            BuildProbeRoot(world,best)
             // Spread new geometry-bearing roots across frames as the window scrolls.
             if Signatures[best] != (uint)2166136261 { break }
         }
 
     }
 
-    -BuildProbeRoot(QuaxelWorld& world,int slot,bool refresh)
+    -BuildProbeRoot(QuaxelWorld& world,int slot)
     {
         QuaxelProbeTree Placement()
         int level = slot / 256
         int scale = level == 0 ? 1 | 4
         Placement.BeginLevel(GiRoots[slot].Key,scale)
         ivec3 r = GiRoots[slot].Key
-        // Cache the union of stationary geometry; overlay actors at their current poses.
-        int offset = slot*4096
-        if !GiRoots[slot].StaticReady || GiRoots[slot].StaticSignature != StaticSignatures[slot] {
-            RasterGiInstances(world,Placement,r,false)
-            memcpy(&GiStaticOccupancy[offset],&Placement.Occupancy[0],4096)
-            GiRoots[slot].StaticSignature = StaticSignatures[slot]
-            GiRoots[slot].StaticReady = true
-        } else { memcpy(&Placement.Occupancy[0],&GiStaticOccupancy[offset],4096) }
-        RasterGiInstances(world,Placement,r,true)
-        if refresh && memcmp(&Placement.Occupancy[0],&GiLastOccupancy[offset],4096) == 0 {
-            GiRoots[slot].Ready = true
-            return
-        }
-        memcpy(&GiLastOccupancy[offset],&Placement.Occupancy[0],4096)
+        RasterGiInstances(world,Placement,r)
         Placement.FinishTree(0.125*(float)scale,true)
         int [512] cells
         float [2048] positions
@@ -221,15 +221,42 @@ QuaxelEngine
         GiRoots[slot].Ready = true
     }
 
-    -RasterGiInstances(QuaxelWorld& world, QuaxelProbeTree& Placement, ivec3 r, bool moving)
+    -RasterGiInstances(QuaxelWorld& world, QuaxelProbeTree& Placement, ivec3 r)
     {
         for instance : GiInstances {
-            if instance.Moving != moving { continue }
             if r.X < instance.Low.X || r.Y < instance.Low.Y || r.Z < instance.Low.Z || r.X > instance.High.X || r.Y > instance.High.Y || r.Z > instance.High.Z { continue }
             if instance.Mesh {
                 QuaxelMeshData mesh = world.GetMesh(world.MeshOf(instance.Node))
                 Placement.AddMesh(mesh,world.ModelMatrix(instance.Node))
             } else { Placement.AddVolume(world,instance.Node) }
         }
+    }
+}
+T{
+    ActorCrossesRootsWithoutChangingPlacement()
+    {
+        QuaxelWorld world()
+        int actor = world.CreateNode()
+        int child = world.CreateChild(actor)
+        T.IsTrue(ActorGeometry(world,child,actor))
+        ivec3 first = ivec3(0,0,0)
+        vec3 half = vec3(0.1,0.1,0.1)
+        uint initial = (uint)2166136261
+        GiMotion.Clear()
+        for step : 0; step < 2; step++ {
+            GiInstances.Clear()
+            for s : 0; s < 256; s++ {
+                Signatures[s] = initial
+                MotionSignatures[s] = initial
+            }
+            vec3 center = vec3(1.0+2.0*(float)step,1.0,1.0)
+            AccumulateGiBounds(first,0,2.0,center,half,(uint)step,(uint)step,child,false,true)
+            T.AreEqual((int)GiInstances.Len,0)
+            for s : 0; s < 2; s++ {
+                T.IsTrue(Signatures[s] == initial)
+                T.AreEqual(MotionSignatures[s] != initial,s == step)
+            }
+        }
+        GiMotion.Clear()
     }
 }

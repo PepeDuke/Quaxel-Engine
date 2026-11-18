@@ -84,6 +84,9 @@ with the world's voxels, so blood stains whatever it lands on. [Effects](Docs/Ef
 Worlds can be generated as seeded maps of clearings, passes and mountains, with
 each clearing filled by a swappable module. [Terrain generation](Docs/Terrain.md)
 
+Saves, settings and caches can be written as JSON, packed with gzip and read
+back, all in Duck with no native library. [Data: bytes, files, gzip and JSON](Docs/Data.md)
+
 ## Dependency boundary
 
 Dependency direction is `Hellfeather -> Quaxel`; Quaxel must not import game code.

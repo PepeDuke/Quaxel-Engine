@@ -1,0 +1,152 @@
+// Byte arrays and whole files, for formats such as gzip and JSON that work on
+// bytes rather than Duck text. Text goes in and out as UTF-8. See Docs/Data.md.
+
+QuaxelBytes
+#{
+    // Appends Text as UTF-8.
+    AppendText(uint8 []& bytes, string text)
+    {
+        name utf8 = (name)text
+        for i : 0; i < Length(utf8); i++ { bytes += (uint8)CodeUnitAt(utf8, i) }
+    }
+
+    // UTF-8 bytes as Duck text. A broken sequence becomes U+FFFD.
+    string ToText(uint8 []& bytes)
+    {
+        // Joined a piece at a time, so long text is not copied once per character.
+        string text = ""
+        string piece = ""
+        int at = 0
+        int count = (int)bytes.Len
+        while at < count {
+            int b = (int)bytes[at]
+            at++
+            int scalar = b
+            if b >= 0x80 {
+                int more = b >= 0xF0 ? 3 | b >= 0xE0 ? 2 | b >= 0xC0 ? 1 | 0
+                scalar = more == 0 ? 0xFFFD | b & (more == 3 ? 0x07 | more == 2 ? 0x0F | 0x1F)
+                for k : 0; k < more; k++ {
+                    int c = at < count ? (int)bytes[at] | 0
+                    if c < 0x80 || c > 0xBF {
+                        scalar = 0xFFFD
+                        break
+                    }
+                    scalar = (scalar << 6) | (c & 0x3F)
+                    at++
+                }
+            }
+            if scalar > 0x10FFFF || (scalar >= 0xD800 && scalar <= 0xDFFF) { scalar = 0xFFFD }
+            piece += (string)char(scalar)
+            if Length(piece) >= 256 {
+                text += piece
+                piece = ""
+            }
+        }
+        return text + piece
+    }
+
+    bool Equal(uint8 []& a, uint8 []& b)
+    {
+        if a.Len != b.Len { return false }
+        for i : 0; i < a.Len; i++ {
+            if a[i] != b[i] { return false }
+        }
+        return true
+    }
+}
+
+QuaxelFileNative
+#{
+    extern "C" int _wmkdir(string path)
+    extern "C" int _wremove(string path)
+}
+
+// Whole files. Paths are relative to the working directory, like `file`'s.
+QuaxelFiles
+#{
+    bool Exists(string path)
+    {
+        file probe
+        return probe.Open(path)
+    }
+
+    // Appends the whole file to Bytes. False when it cannot be opened.
+    bool ReadBytes(string path, uint8 []& bytes)
+    {
+        file source
+        if !source.Open(path) { return false }
+        uint8 [4096] chunk
+        long count = source.Read(chunk)
+        while count > 0 {
+            for i : 0; i < count; i++ { bytes += chunk[i] }
+            count = source.Read(chunk)
+        }
+        return true
+    }
+
+    // Replaces the file with Bytes. False when it cannot be written in full.
+    bool WriteBytes(string path, uint8 []& bytes)
+    {
+        file target
+        if !target.Create(path) { return false }
+        uint8 [4096] chunk
+        int at = 0
+        int total = (int)bytes.Len
+        while total - at >= 4096 {
+            for i : 0; i < 4096; i++ { chunk[i] = bytes[at + i] }
+            if target.Write(chunk) != 4096 { return false }
+            at += 4096
+        }
+        while at < total {
+            uint8 b = bytes[at]
+            if target.Write(b) != 1 { return false }
+            at++
+        }
+        return true
+    }
+
+    // Deletes a file. False when it is not there or cannot be deleted.
+    bool Remove(string path) { return QuaxelFileNative._wremove(path) == 0 }
+
+    // Makes one folder, whose parent must exist. True when it is there
+    // afterward, whether made now or before.
+    bool MakeFolder(string path)
+    {
+        QuaxelFileNative._wmkdir(path)
+        file probe
+        string test = path + "/.quaxel-probe"
+        if !probe.Create(test) { return false }
+        probe.Close()
+        QuaxelFileNative._wremove(test)
+        return true
+    }
+}
+T{
+    TextRoundTripsThroughUtf8()
+    {
+        uint8 [] bytes
+        QuaxelBytes.AppendText(bytes, "café \U0001F986")
+        // é is two bytes and the duck four: 3 + 2 + 1 + 4.
+        T.AreEqual(bytes.Len, (long)10)
+        T.IsTrue(QuaxelBytes.ToText(bytes) == "café \U0001F986")
+        bytes += (uint8)0xFF
+        T.IsTrue(QuaxelBytes.ToText(bytes) == "café \U0001F986�")
+    }
+
+    FilesWriteReadAndGo()
+    {
+        T.IsTrue(QuaxelFiles.MakeFolder(".duck"))
+        string path = ".duck/quaxel-bytes-test.bin"
+        uint8 [] bytes
+        for i : 0; i < 5000; i++ { bytes += (uint8)(i % 251) }
+        T.IsTrue(QuaxelFiles.WriteBytes(path, bytes))
+        T.IsTrue(QuaxelFiles.Exists(path))
+        uint8 [] back
+        T.IsTrue(QuaxelFiles.ReadBytes(path, back))
+        T.IsTrue(QuaxelBytes.Equal(bytes, back))
+        T.IsTrue(QuaxelFiles.Remove(path))
+        T.IsFalse(QuaxelFiles.Exists(path))
+        uint8 [] none
+        T.IsFalse(QuaxelFiles.ReadBytes(path, none))
+    }
+}

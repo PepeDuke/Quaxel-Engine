@@ -28,6 +28,10 @@ HellfeatherGame : QuaxelGameInstance
 `UpdateUi` runs once per frame, after the fixed steps. A headless run calls it
 once per step and draws nothing.
 
+A game that shows a pause menu returns true from `WorldPaused()`. The engine
+then holds animations and effects still but keeps calling `FixedStep`, so the
+game can still read the key that unpauses it.
+
 ## Tags
 
 Colors are `0xAARRGGBB` display values. A color with zero alpha draws nothing.

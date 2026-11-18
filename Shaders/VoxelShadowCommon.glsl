@@ -1,6 +1,6 @@
 struct Caster {
     mat4 boxFromWorld;  // World to the volume's unit box, centred on 0.
-    ivec4 info;         // x: first word of the volume in its buffer.
+    ivec4 info;         // x: first word of the volume in its buffer. y: actor for probe tracing.
 };
 struct PointLight { vec4 positionRadius; vec4 color; uvec4 casterMask[2]; };
 layout(set=1,binding=0,std430) readonly buffer Scene {

@@ -15,6 +15,15 @@ QuaxelTerrainPlacement
     int LightColumn
     int LightRow
     int LightRadius
+    // The model's ground plan, worked out from its voxels on the first stream:
+    // a FootWide by FootDeep grid in FootCells from FootStart, whose first cell
+    // is FootLeft and FootTop columns from Column and Row. Each cell is 0 open,
+    // 1 hidden behind the model, or 2 under it. FootStart is -1 until known.
+    int FootStart = -1
+    int FootLeft
+    int FootTop
+    int FootWide
+    int FootDeep
 }
 
 // One resident slot of terrain data and its render node.
@@ -75,6 +84,19 @@ QuaxelTerrain
     -int BuildStartRow
     -int BuildPlacementStart
     -int [] NearPlacements
+    // Every placement's ground plan, one grid after another.
+    -int [] FootCells
+    // Model shapes seen from above, worked out once per volume and voxel size:
+    // the top of each terrain column the model covers, in world units above
+    // its bottom, or -1 where it covers nothing.
+    -int [] ShapeVolume
+    -float [] ShapeVoxel
+    -int [] ShapeLeft
+    -int [] ShapeTop
+    -int [] ShapeWide
+    -int [] ShapeDeep
+    -int [] ShapeStart
+    -float [] ShapeTops
     -float [] NodeWarpX
     -float [] NodeWarpZ
     -float [] NodeFloor
@@ -439,6 +461,7 @@ QuaxelTerrain
     -ResolvePlacements()
     {
         Placements.Clear()
+        FootCells.Clear()
         for i : 0; i < Layout.Sites.Len; i++ {
             QuaxelTerrainSite site = Layout.Sites[i]
             QuaxelTerrainPlacer placer()
@@ -582,6 +605,7 @@ QuaxelTerrain
             if BuildRow == Span {
                 BuildRow = 0
                 BuildPhase = 2
+                EnsureFootprints(world)
                 NearPlacementsForChunk()
             }
         }
@@ -678,6 +702,10 @@ QuaxelTerrain
         NearPlacements.Clear()
         for i : 0; i < Placements.Len; i++ {
             int size = Math.Max(Placements[i].Half + Placements[i].Reach, Placements[i].LightRadius + Math.Max(Math.Abs(Placements[i].LightColumn - Placements[i].Column), Math.Abs(Placements[i].LightRow - Placements[i].Row)))
+            if Placements[i].FootStart >= 0 {
+                size = Math.Max(size, Math.Max(Math.Abs(Placements[i].FootLeft), Math.Abs(Placements[i].FootTop)))
+                size = Math.Max(size, Math.Max(Placements[i].FootLeft + Placements[i].FootWide, Placements[i].FootTop + Placements[i].FootDeep))
+            }
             int startColumn = BuildStartColumn + Pad
             int startRow = BuildStartRow + Pad
             if Placements[i].Column + size < startColumn || Placements[i].Column - size > startColumn + Core { continue }
@@ -757,34 +785,151 @@ QuaxelTerrain
         }
     }
 
-    // Placement is soft: the ground keeps its surface. Footprints block and level
-    // it for the model to stand on. Sight strips only block.
+    // Placement is soft: the ground keeps its surface. The square of Half under
+    // a model is levelled for it to stand on, but only the columns the model
+    // covers, seen from above, block, with the ground its own height hides
+    // behind it (see EnsureFootprints). Props never level or hide anything.
     -ApplyPlacements(int columnIndex, int rowIndex, QuaxelTerrainColumn& column)
     {
         for n : 0; n < NearPlacements.Len; n++ {
             int i = NearPlacements[n]
             int half = Placements[i].Half
-            int dx = columnIndex - (Placements[i].Column - half)
-            int dz = rowIndex - (Placements[i].Row - half)
-            int size = half * 2
-            if dx >= 0 && dz >= 0 && dx < size && dz < size {
-                if Placements[i].Prop {
-                    column.Kind = QuaxelTerrainKind.Structure
-                    return
-                }
+            int dx = columnIndex - Placements[i].Column
+            int dz = rowIndex - Placements[i].Row
+            int cell = FootCellAt(i, dx, dz)
+            bool square = dx >= -half && dz >= -half && dx < half && dz < half
+            if square && !Placements[i].Prop {
                 column.Height = Placements[i].Base
                 column.Floor = Placements[i].Base
+            }
+            if cell == 2 || (cell == 1 && !Placements[i].Prop) {
                 column.Kind = QuaxelTerrainKind.Structure
                 return
             }
-            int low = Math.Max(Math.Max(0, -dx), -dz)
-            int high = Math.Min(Math.Min(Placements[i].Reach, size - 1 - dx), size - 1 - dz)
-            if Placements[i].Prop { continue }
-            if low <= high {
-                column.Kind = QuaxelTerrainKind.Structure
-                return
+            if square && !Placements[i].Prop { column.Kind = QuaxelTerrainKind.Open }
+        }
+    }
+
+    // A placement's ground plan at a column offset from its anchor: 0 open,
+    // 1 hidden behind it, 2 under it.
+    -int FootCellAt(int i, int dx, int dz)
+    {
+        if Placements[i].FootStart < 0 { return 0 }
+        int x = dx - Placements[i].FootLeft
+        int z = dz - Placements[i].FootTop
+        if x < 0 || z < 0 || x >= Placements[i].FootWide || z >= Placements[i].FootDeep { return 0 }
+        return FootCells[Placements[i].FootStart + x * Placements[i].FootDeep + z]
+    }
+
+    // Works out each placement's ground plan from its model, once. A column
+    // the model covers blocks. Behind a building, toward -X -Z where the
+    // camera cannot see past it, each covered column also blocks the ground
+    // its own height hides, which is H - lip + 2 diagonal cells for H columns
+    // above the floor and never more than the offer's Sight allows. A prop
+    // blocks only what it covers inside its Half square, and hides nothing,
+    // and not even that where it lies lower than FlatProp. A model with no
+    // voxels keeps its whole square, as before.
+    -EnsureFootprints(QuaxelWorld& world)
+    {
+        for i : 0; i < Placements.Len; i++ {
+            if Placements[i].FootStart >= 0 { continue }
+            int shape = ShapeOf(world, Placements[i].Volume, Placements[i].VoxelSize)
+            bool prop = Placements[i].Prop
+            int half = Placements[i].Half
+            int reach = prop ? 0 | Placements[i].Reach
+            int left = shape >= 0 ? ShapeLeft[shape] | -half
+            int top = shape >= 0 ? ShapeTop[shape] | -half
+            int wide = shape >= 0 ? ShapeWide[shape] | half * 2
+            int deep = shape >= 0 ? ShapeDeep[shape] | half * 2
+            int gridDeep = deep + reach
+            Placements[i].FootLeft = left - reach
+            Placements[i].FootTop = top - reach
+            Placements[i].FootWide = wide + reach
+            Placements[i].FootDeep = gridDeep
+            Placements[i].FootStart = (int)FootCells.Len
+            for n : 0; n < (wide + reach) * gridDeep; n++ { FootCells += 0 }
+            // The model's bottom stands this far above the floor, in world units.
+            ivec3 cells = world.VolumeCells(Placements[i].Volume)
+            float lift = (float)Placements[i].Height * 0.5 * Cell - (float)cells.Y * Placements[i].VoxelSize * 0.5
+            for x : 0; x < wide; x++ {
+                for z : 0; z < deep; z++ {
+                    float tallest = 1000.0
+                    if shape >= 0 {
+                        tallest = ShapeTops[ShapeStart[shape] + x * deep + z]
+                        if tallest < 0.0 { continue }
+                    }
+                    int dx = left + x
+                    int dz = top + z
+                    if prop && (dx < -half || dz < -half || dx >= half || dz >= half) { continue }
+                    // What lies flat on the floor, such as a rug or scattered
+                    // feathers, is walked over.
+                    if prop && tallest < FlatProp { continue }
+                    int cell = Placements[i].FootStart + (x + reach) * gridDeep + z + reach
+                    FootCells[cell] = 2
+                    if prop { continue }
+                    int columns = (int)Math.Ceil((lift + tallest) / Cell)
+                    int hides = Math.Min(reach, columns - Config.Lip + 2)
+                    for k : 1; k <= hides; k++ {
+                        int behind = cell - k * gridDeep - k
+                        if FootCells[behind] == 0 { FootCells[behind] = 1 }
+                    }
+                }
             }
         }
+    }
+
+    // The index of a model's shape from above, worked out on first use, or -1
+    // if the volume holds no voxels.
+    -int ShapeOf(QuaxelWorld& world, int volume, float voxelSize)
+    {
+        for i : 0; i < ShapeVolume.Len; i++ {
+            if ShapeVolume[i] == volume && ShapeVoxel[i] (0.0)== voxelSize { return ShapeWide[i] > 0 ? (int)i | -1 }
+        }
+        ivec3 cells = world.VolumeCells(volume)
+        if cells.X <= 0 || cells.Y <= 0 || cells.Z <= 0 { return -1 }
+        // The model is centered on its anchor, the corner shared by its four
+        // middle columns, so voxel x lies at (x + 0.5 - width / 2) voxels from it.
+        int left = (int)Math.Floor((0.5 - (float)cells.X * 0.5) * voxelSize / Cell)
+        int right = (int)Math.Floor(((float)cells.X - 0.5 - (float)cells.X * 0.5) * voxelSize / Cell)
+        int top = (int)Math.Floor((0.5 - (float)cells.Z * 0.5) * voxelSize / Cell)
+        int bottom = (int)Math.Floor(((float)cells.Z - 0.5 - (float)cells.Z * 0.5) * voxelSize / Cell)
+        int wide = right - left + 1
+        int deep = bottom - top + 1
+        int start = (int)ShapeTops.Len
+        for n : 0; n < wide * deep; n++ { ShapeTops += -1.0 }
+        bool any = false
+        for x : 0; x < cells.X; x++ {
+            int column = (int)Math.Floor(((float)x + 0.5 - (float)cells.X * 0.5) * voxelSize / Cell) - left
+            for z : 0; z < cells.Z; z++ {
+                // The highest voxel in this stack, skipping empty 8-voxel bricks.
+                int y = cells.Y - 1
+                int found = -1
+                while y >= 0 {
+                    if world.VolumeBlockOccupancy(volume, x, y, z, 8) == 0 {
+                        y = (y / 8) * 8 - 1
+                        continue
+                    }
+                    if world.GetVoxel(volume, x, y, z) >= 0 {
+                        found = y
+                        break
+                    }
+                    y--
+                }
+                if found < 0 { continue }
+                any = true
+                int row = (int)Math.Floor(((float)z + 0.5 - (float)cells.Z * 0.5) * voxelSize / Cell) - top
+                int index = start + column * deep + row
+                ShapeTops[index] = Math.Max(ShapeTops[index], (float)(found + 1) * voxelSize)
+            }
+        }
+        ShapeVolume += volume
+        ShapeVoxel += voxelSize
+        ShapeLeft += left
+        ShapeTop += top
+        ShapeWide += any ? wide | 0
+        ShapeDeep += deep
+        ShapeStart += start
+        return any ? (int)ShapeVolume.Len - 1 | -1
     }
 
     // A column can hide (x - k, z - k) only while its height exceeds that floor
@@ -902,9 +1047,11 @@ QuaxelTerrain
     }
 
     // Brightens a linear color and tints it toward firelight.
+    // Firelight warms a color. Pure black is a void a game left unlit on
+    // purpose, such as the dark beyond a room's walls, and takes no light.
     -int Lit(int color, float glow)
     {
-        if glow <= 0.0 { return color }
+        if glow <= 0.0 || color == 0 { return color }
         int red = Math.Min(255, (int)((float)((color >> 16) & 255) * (1.0 + glow * 2.6) + glow * 62.0))
         int green = Math.Min(255, (int)((float)((color >> 8) & 255) * (1.0 + glow * 1.5) + glow * 18.0))
         int blue = Math.Min(255, (int)((float)(color & 255) * (1.0 + glow * 0.5) + glow * 3.0))
@@ -1045,6 +1192,8 @@ QuaxelTerrain
 }
 #{
     #float Cell = 0.125
+    // World units: a prop no taller than this where it lies does not block there.
+    #float FlatProp = 0.0625
     #int ChunkColumns = 128
     #int ChunkCells = 128
     // Columns toward -X -Z whose openness can limit a column's height.

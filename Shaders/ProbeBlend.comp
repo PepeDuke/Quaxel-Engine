@@ -5,16 +5,13 @@ layout(local_size_x=6) in;
 void main() {
     int g=int(gl_WorkGroupID.x), f=int(gl_LocalInvocationID.x), id=batches[g].target.x;
     if(id<0) return;
-    // Several camera samples can request the same probe. One writer combines them.
-    for(int i=0;i<g;++i) if(batches[i].target.x==id) return;
-    vec3 sum=vec3(0); vec2 m=vec2(0); float count=0;
-    for(int i=g;i<BATCHES;++i) if(batches[i].target.x==id) {
-        vec4 v=batches[i].faces[f]; sum+=v.rgb; m+=moments(v); count++;
-    }
     int at=historySlot(id)*6+f;
+    vec4 sampleFace=batches[g].faces[f];
     vec4 old=history[at];
-    // The four foot-level batches come first and use fixed ray directions.
-    // Apply their current visibility and irradiance together on this frame.
-    float weight=batches[g].target.y!=0 || floatBitsToUint(old.w)==0u ? 1.0 : 1.0-pow(0.82,count);
-    history[at]=vec4(mix(old.rgb,sum/count,weight),packMoments(mix(moments(old),m/count,weight)));
+    if (floatBitsToUint(old.w)==0u || floatBitsToUint(sampleFace.w)==0u) {
+        history[at]=sampleFace;
+        return;
+    }
+    history[at]=vec4(mix(old.rgb,sampleFace.rgb,0.18),
+                     packMoments(mix(moments(old),moments(sampleFace),0.18)));
 }

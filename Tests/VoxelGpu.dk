@@ -281,6 +281,27 @@ T{
         long [4] at = {RowAt(0.5), RowAt(3.5), RowAt(6.5), 0}
         uint [4] read
         T.IsTrue(ReadFrameWords(at, 3, read))
+        // With no available probe history the ledge still blocks sky fallback.
+        // Walk the field focus past this fixed receiver and sample the same shadow.
+        for step : 0; step < 3; step++ {
+            T.IsTrue(BeginFrame(128,128,null))
+            T.IsTrue(TraceVolume(handle,&matrix[0],0.0,0.0,1.0,1.0,&axes[0]))
+            T.IsTrue(AddShadowCaster(handle,&identity[0]))
+            T.IsTrue(BeginProbeField(false) > 0)
+            int [2052] emptyWindow
+            float focusX = (float)step * 2.0
+            memcpy(&emptyWindow[2048],&focusX,4)
+            WriteProbeWindow(&emptyWindow[0])
+            for channel : 0; channel < 3; channel++ {
+                lighting[8+channel] = 1.0
+                lighting[12+channel] = 0.0
+            }
+            T.IsTrue(LightVoxels(&matrix[0],&lighting[0]))
+            uint [4] fallback
+            T.IsTrue(ReadFrameWords(at,3,fallback))
+            T.AreEqual(Green(fallback[1]),0.0)
+            T.IsTrue(Green(fallback[0]) > 60.0)
+        }
         Stop()
         QuaxelPlatformBackend.CloseWindow()
         float sunny = Green(read[0])
@@ -350,11 +371,18 @@ T{
         int [512] cells
         for i : 0; i < 512; i++ { cells[i] = 1 }
         float [4] position = {0.125,0.125,0.125,0.25}
+        // A small opaque actor straddles the fixed probe for one update.
+        QuaxelTestBrick actor = EmptyBrick()
+        for x : 0...7 | y : 0...7 | z : 0...7 { SetTestCell(actor,x,y,z,0) }
+        int body = UploadTestBrick(actor)
+        float [16] actorBox = {64,0,0,0,0,64,0,0,0,0,64,0,-8,-8,-8,1}
+        float [6] actorBounds = {0.125,0.125,0.125,0.0078125,0.0078125,0.0078125}
         uint steady = 0
         for trial : 0; trial < 7; trial++ {
             T.IsTrue(BeginFrame(128,128,null))
             T.IsTrue(TraceVolume(white,&matrix[0],0.0,0.0,1.0,1.0,&axes[0]))
             T.IsTrue(AddBoundedShadowCaster(red,&identity[0],&bounds[0]))
+            if trial == 2 { T.IsTrue(SubmitBoundedCaster(body,&actorBox[0],&actorBounds[0],true)) }
             if trial > 0 {
                 T.IsTrue(BeginProbeField(trial == 2) > 0)
                 if trial == 1 { WriteProbeRoot(0,1,&cells[0],&position[0]) }
@@ -395,6 +423,28 @@ T{
             else { T.IsTrue(redChannel > 15) }
             T.AreEqual(blue,0)
             T.AreEqual(Green(pixels[0]),0.0)
+        }
+        // Read the projected center, then move the same probe behind the wall.
+        // The unlit white wall has zero green and each debug level has a distinct green.
+        for trial : 0; trial < 3; trial++ {
+            T.IsTrue(BeginFrame(128,128,null))
+            T.IsTrue(TraceVolume(white,&matrix[0],0.0,0.0,1.0,1.0,&axes[0]))
+            T.IsTrue(BeginProbeField(false) > 0)
+            int [2052] markers
+            markers[2051] = 0x40000000 // DebugProbePositions, focus at the origin
+            int slot = trial == 1 ? 256 | 0
+            markers[slot*4+3] = 1
+            position[2] = trial == 2 ? 0.625 | 0.125
+            WriteProbeRoot(slot,1,&cells[0],&position[0])
+            WriteProbeWindow(&markers[0])
+            T.IsTrue(LightVoxels(&matrix[0],&sun[0]))
+            long [4] centerPixel = {80+80*128,0,0,0}
+            uint [4] marker
+            T.IsTrue(ReadFrameWords(centerPixel,1,marker))
+            float green = Green(marker[0])
+            if trial == 0 { T.IsTrue(green > 230.0) }
+            else if trial == 1 { T.IsTrue(green > 130.0 && green < 150.0) }
+            else { T.AreEqual(green,0.0) }
         }
         Stop()
         QuaxelPlatformBackend.CloseWindow()

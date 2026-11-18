@@ -273,7 +273,10 @@ QuaxelProbeTree
             for z : p.Z; z < p.Z + size; z++ | y : p.Y; y < p.Y + size; y++ | x : p.X; x < p.X + size; x++ {
                 filled += Occupancy[x + 16*y + 256*z]
             }
-            if filled == 0 {
+            // Keep a one-unit baseline across open fine-field roots, including
+            // the first empty root above terrain that ends on a root boundary.
+            bool splitOpenRoot = probesOnly && size == 16 && Pitch == QuaxelTerrain.Cell
+            if filled == 0 && !splitOpenRoot {
                 float radius = 0.5 * (float)size * Pitch
                 if radius >= minClearance {
                     Cells[i].Probe = (int)Probes.Len
@@ -316,6 +319,27 @@ QuaxelProbeTree
     }
 }
 T{
+    FlatTerrainHasConsistentFineSpacingAcrossRootHeights()
+    {
+        QuaxelProbeTree tree()
+        for filledRows : 0; filledRows <= 8; filledRows+=8 {
+            tree.Begin(ivec3(0,0,0))
+            for z : 0; z < 16; z++ | y : 0; y < filledRows; y++ | x : 0; x < 16; x++ {
+                tree.Occupancy[x+16*y+256*z] = 1
+            }
+            tree.FinishTree(0.125,true)
+            int mask = 0
+            for p : tree.Probes {
+                if p.Y != (float)filledRows*0.125+0.5 { continue }
+                mask |= 1 << ((int)Math.Floor(p.X)+2*(int)Math.Floor(p.Z))
+            }
+            T.AreEqual(mask,15)
+        }
+        tree.BeginLevel(ivec3(0,0,0),4)
+        tree.FinishTree(0.5,true)
+        T.AreEqual((int)tree.Probes.Len,1)
+    }
+
     ProbeTreeBuildsSiblingsInBreadthFirstOrder()
     {
         QuaxelWorld world()

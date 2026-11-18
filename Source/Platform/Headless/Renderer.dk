@@ -23,6 +23,10 @@ QuaxelPlatformBackend
     {
         return false
     }
+    bool SubmitBoundedCaster(int handle, void* boxFromWorld, void* bounds, bool actor)
+    {
+        return false
+    }
     bool AddShadowCaster(int handle, void* boxFromWorld) { return false }
     bool LightVoxels(void* worldFromClip, void* lighting) { return false }
 
