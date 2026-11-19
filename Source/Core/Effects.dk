@@ -396,6 +396,19 @@ QuaxelWorld
         return true
     }
 
+    // Moves a playing effect's origin. Particles live in the effect's own grid
+    // around the origin, so they all move with it: an aura can follow a
+    // creature. What it collides with stays as baked where it started, so use
+    // it for effects that touch nothing.
+    bool MoveEffect(int effect, vec3 origin)
+    {
+        int slot = EffectSlot(effect)
+        if slot < 0 { return false }
+        Effects[slot].Origin = origin
+        Effects[slot].ParamsChanged = true
+        return true
+    }
+
     // Removes the effect at once, stains included.
     bool EndEffect(int effect)
     {
