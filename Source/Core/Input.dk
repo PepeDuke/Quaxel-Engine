@@ -2,6 +2,7 @@
 // Alt the value Windows gives either Alt key.
 QuaxelKey : int
 #@{
+    Shift: 16,
     Alt: 18,
     A: 65,
     C: 67,
