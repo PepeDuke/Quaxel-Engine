@@ -1,0 +1,77 @@
+QuaxelSoundClip
+{
+    -int U16(uint8 []& bytes, int i)
+    {
+        return (int)bytes[i] | ((int)bytes[i + 1] << 8)
+    }
+
+    -int Word(uint8 []& bytes, int i)
+    {
+        return U16(bytes, i) | (U16(bytes, i + 2) << 16)
+    }
+
+    // RIFF/WAVE, PCM16. Unknown chunks include an even-byte alignment pad.
+    bool DecodeWave(uint8 []& bytes)
+    {
+        if bytes.Len < 12 || bytes.Len > 2147483647 { return false }
+        int size = Word(bytes, 4)
+        if Word(bytes, 0) != 0x46464952 || Word(bytes, 8) != 0x45564157 || size < 4 || size > bytes.Len - 8 { return false }
+        int end = size + 8
+        int data = 0
+        int length = 0
+        int pos = 12
+        int channels = 0
+        int rate = 0
+        while pos < end {
+            if end - pos < 8 { return false }
+            int tag = Word(bytes, pos)
+            int count = Word(bytes, pos + 4)
+            pos += 8
+            if count < 0 || count > end - pos || ((count & 1) != 0 && count == end - pos) { return false }
+            if tag == 0x20746D66 {
+                if channels != 0 || count < 16 || U16(bytes, pos) != 1 || U16(bytes, pos + 14) != 16 { return false }
+                channels = U16(bytes, pos + 2)
+                rate = Word(bytes, pos + 4)
+                if (channels != 1 && channels != 2) || rate <= 0 || rate > 384000 || U16(bytes, pos + 12) != 2 * channels { return false }
+            }
+            if tag == 0x61746164 {
+                if data != 0 { return false }
+                data = pos
+                length = count
+            }
+            pos += count + (count & 1)
+        }
+        if channels == 0 || length == 0 || length % (2 * channels) != 0 { return false }
+        Samples.Clear()
+        Channels = channels
+        Rate = rate
+        for i : 0; i < length; i += 2 { Samples += (int16)U16(bytes, data + i) }
+        return true
+    }
+}
+T{
+    LoadPaddedWaveAndRejectTruncation()
+    {
+        // Two signed mono samples with an odd-sized metadata chunk.
+        uint8 [58] fixture = {82,73,70,70,50,0,0,0,87,65,86,69,
+            74,85,78,75,1,0,0,0,99,0,102,109,116,32,16,0,0,0,
+            1,0,1,0,128,187,0,0,0,119,1,0,2,0,16,0,
+            100,97,116,97,4,0,0,0,0,128,255,127}
+        uint8 [] bytes
+        for i : 0; i < fixture.Len; i++ { bytes += fixture[i] }
+        string path = ".duck/audio-test.wav"
+        T.IsTrue(QuaxelFiles.WriteBytes(path, bytes))
+        QuaxelWorld world()
+        int clip = world.LoadSound(path)
+        T.IsTrue(QuaxelFiles.Remove(path))
+        T.IsTrue(world.PlaySound(clip, 0, 1.0, false) != 0)
+        int16 [1600] block
+        world.MixAudio(block)
+        T.AreEqual((int)block[0], -32768)
+        T.AreEqual((int)block[3], 32767)
+        T.AreEqual((int)block[4], 0)
+        QuaxelSoundClip invalid
+        bytes--
+        T.IsFalse(invalid.DecodeWave(bytes))
+    }
+}

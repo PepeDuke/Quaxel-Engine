@@ -74,6 +74,8 @@ QuaxelEngine
         while session.Running && session.Frame < total {
             SampleInput(input)
             Step(game, world, input)
+            int16 [1600] audio
+            world.MixAudio(audio)
             game.UpdateUi(ui, world)
             session.Advance()
         }
@@ -126,6 +128,8 @@ QuaxelEngine
         QuaxelPlatform.ConsumeWindowStall()
 
         bool success = true
+        bool audioOpen = QuaxelAudioOutput.Open()
+        int16 [1600] audio
         bool minimized = false
         QuaxelInputState input
         while QuaxelPlatform.PumpWindow(minimized) {
@@ -145,7 +149,11 @@ QuaxelEngine
 
             SampleInput(input)
             int steps = stepper.Advance(now, MaxStepsPerFrame())
-            for i : 0; i < steps; i++ { Step(game, world, input) }
+            for i : 0; i < steps; i++ {
+                Step(game, world, input)
+                if !audioOpen { world.MixAudio(audio) }
+            }
+            if audioOpen { audioOpen = PumpAudio(world, audio) }
 
             game.UpdateUi(ui, world)
             int mouseX = 0
@@ -161,10 +169,23 @@ QuaxelEngine
             // After the frame, so the game can show that it is loading.
             if game.Restarting() { break }
         }
+        QuaxelAudioOutput.Close()
         QuaxelPlatform.ClearRedrawHandler()
         RenderedWorld = null
         RenderedUi = null
         return success
+    }
+
+    -bool PumpAudio(QuaxelWorld& world, int16 [1600]& audio)
+    {
+        for i : 0; i < 4 && QuaxelAudioOutput.Ready(); i++ {
+            world.MixAudio(audio)
+            if !QuaxelAudioOutput.Submit(audio) {
+                QuaxelAudioOutput.Close()
+                return false
+            }
+        }
+        return true
     }
 
     -RedrawDuringResize()

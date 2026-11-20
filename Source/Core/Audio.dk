@@ -1,0 +1,236 @@
+QuaxelAudioSource
+{
+    float InnerRadius = 1.0
+    float OuterRadius = 20.0
+}
+
+QuaxelSoundClip
+{
+    int Rate
+    int Channels
+    int16 [] Samples
+
+    MixVoice(QuaxelVoice& voice, float left, float right, float [1600]& mix)
+    {
+        int channels = Channels
+        int frames = (int)Samples.Len / channels
+        for i : 0; i < 800; i++ {
+            int next = voice.Frame + 1
+            if next == frames { next = voice.Looping ? 0 | voice.Frame }
+            int a = voice.Frame * channels
+            int b = next * channels
+            float blend = (float)voice.Phase / 48000.0
+            float l = (float)Samples[a] + blend * ((float)Samples[b] - (float)Samples[a])
+            float r = l
+            if channels == 2 {
+                r = (float)Samples[a + 1] + blend * ((float)Samples[b + 1] - (float)Samples[a + 1])
+                if voice.Node != 0 {
+                    l = (l + r) * 0.5
+                    r = l
+                }
+            }
+            mix[2 * i] += l * left
+            mix[2 * i + 1] += r * right
+            voice.Phase += Rate
+            voice.Frame += voice.Phase / 48000
+            voice.Phase %= 48000
+            if voice.Frame >= frames {
+                if !voice.Looping {
+                    voice.Id = 0
+                    return
+                }
+                voice.Frame %= frames
+            }
+        }
+    }
+}
+
+QuaxelVoice
+{
+    long Id
+    int Clip
+    int Node
+    int Frame
+    int Phase
+    float Gain
+    bool Looping
+}
+
+QuaxelWorld
+{
+    -QuaxelSoundClip [] Sounds
+    -QuaxelVoice [] Voices
+    -long LastVoice
+
+    // Clip handles start at one. Samples are signed interleaved PCM.
+    int AddSound(QuaxelSoundClip& clip)
+    {
+        if clip.Channels != 1 && clip.Channels != 2 { return 0 }
+        if clip.Rate <= 0 || clip.Rate > 384000 || clip.Samples.Len == 0 || clip.Samples.Len > 2147483640 || clip.Samples.Len % clip.Channels != 0 { return 0 }
+        Sounds++
+        int index = (int)Sounds.Len - 1
+        Sounds[index].Rate = clip.Rate
+        Sounds[index].Channels = clip.Channels
+        for sample : clip.Samples { Sounds[index].Samples += sample }
+        return (int)Sounds.Len
+    }
+
+    int LoadSound(string path)
+    {
+        uint8 [] bytes
+        if !QuaxelFiles.ReadBytes(path, bytes) { return 0 }
+        Sounds++
+        int index = (int)Sounds.Len - 1
+        if !Sounds[index].DecodeWave(bytes) {
+            Sounds--
+            return 0
+        }
+        return index + 1
+    }
+
+    bool SetAudioSource(int node, QuaxelAudioSource source)
+    {
+        if !Has(node, QuaxelComponents.Transform) || !(source.InnerRadius >= 0.0 && source.OuterRadius > source.InnerRadius) { return false }
+        Nodes[node - 1].AudioSource = source
+        Nodes[node - 1].Mask |= QuaxelComponents.AudioSource
+        return true
+    }
+
+    // Node zero plays in stereo independently of the camera.
+    long PlaySound(int clip, int node, float gain, bool looping)
+    {
+        if clip <= 0 || clip > Sounds.Len || !(gain >= 0.0 && gain <= 1.0) { return 0 }
+        if node != 0 && !Has(node, QuaxelComponents.AudioSource) { return 0 }
+        int slot = 0
+        while slot < Voices.Len && Voices[slot].Id != 0 { slot++ }
+        if slot == 128 { return 0 }
+        if slot == Voices.Len { Voices++ }
+        QuaxelVoice voice
+        LastVoice++
+        voice.Id = LastVoice
+        voice.Clip = clip - 1
+        voice.Node = node
+        voice.Gain = gain
+        voice.Looping = looping
+        Voices[slot] = voice
+        return voice.Id
+    }
+
+    bool StopSound(long voice)
+    {
+        if voice <= 0 { return false }
+        for i : 0; i < Voices.Len; i++ {
+            if Voices[i].Id == voice {
+                Voices[i].Id = 0
+                return true
+            }
+        }
+        return false
+    }
+
+    // 1/60 second of interleaved 48 kHz stereo per block.
+    MixAudio(int16 [1600]& output)
+    {
+        float [1600] mix
+        vec3 eye
+        vec3 right
+        bool listener = Has(CameraNode, QuaxelComponents.Transform)
+        if listener {
+            eye = WorldPosition(CameraNode)
+            right = Nodes[CameraNode - 1].Camera.Right()
+        }
+        for i : 0; i < Voices.Len; i++ {
+            QuaxelVoice voice = Voices[i]
+            if voice.Id == 0 { continue }
+            float left = voice.Gain
+            float r = voice.Gain
+            if voice.Node != 0 {
+                if !Has(voice.Node, QuaxelComponents.AudioSource) {
+                    Voices[i].Id = 0
+                    continue
+                }
+                QuaxelAudioSource source = Nodes[voice.Node - 1].AudioSource
+                vec3 offset = WorldPosition(voice.Node) - eye
+                float distance = offset.Length()
+                float t = Math.Clamp((distance - source.InnerRadius) / (source.OuterRadius - source.InnerRadius), 0.0, 1.0)
+                float volume = listener ? voice.Gain * (1.0 - t * t * (3.0 - 2.0 * t)) | 0.0
+                float pan = distance > 0.00001 ? Math.Clamp(Math.Dot(offset, right) / distance, -1.0, 1.0) | 0.0
+                left = volume * Math.Sqrt(0.5 * (1.0 - pan))
+                r = volume * Math.Sqrt(0.5 * (1.0 + pan))
+            }
+            Sounds[voice.Clip].MixVoice(voice, left, r, mix)
+            Voices[i] = voice
+        }
+        for i : 0; i < 1600; i++ { output[i] = (int16)Math.Clamp(mix[i], -32768.0, 32767.0) }
+    }
+
+}
+T{
+    OverlapLoopStopAndReuse()
+    {
+        QuaxelWorld world()
+        QuaxelSoundClip clip
+        clip.Rate = 24000
+        clip.Channels = 2
+        clip.Samples += (int16)22000
+        clip.Samples += (int16)-22000
+        int sound = world.AddSound(clip)
+        long first = world.PlaySound(sound, 0, 1.0, true)
+        long second = world.PlaySound(sound, 0, 1.0, false)
+        T.IsTrue(first > 0 && second > first)
+        int16 [1600] block
+        world.MixAudio(block)
+        T.AreEqual((int)block[0], 32767)
+        T.AreEqual((int)block[1], -32768)
+        T.AreEqual((int)block[4], 22000)
+        T.IsFalse(world.StopSound(second))
+        T.IsTrue(world.StopSound(first))
+        long replacement = world.PlaySound(sound, 0, 0.5, true)
+        T.IsFalse(world.StopSound(first))
+        world.MixAudio(block)
+        T.AreEqual((int)block[1599], -11000)
+        T.IsTrue(world.StopSound(replacement))
+    }
+
+    MovingParentChangesPanAndFalloff()
+    {
+        QuaxelWorld world()
+        QuaxelSoundClip clip
+        clip.Rate = 48000
+        clip.Channels = 1
+        clip.Samples += (int16)1000
+        int sound = world.AddSound(clip)
+        vec3 unit = vec3(1.0, 1.0, 1.0)
+        QuaxelTransform origin = QuaxelTransform.Make(vec3(0.0, 0.0, 0.0), unit)
+        int listener = world.CreateNode()
+        world.AttachTransform(listener, origin)
+        QuaxelCamera camera
+        camera.Direction = vec3(0.0, 0.0, -1.0)
+        camera.Up = vec3(0.0, 1.0, 0.0)
+        world.AttachCamera(listener, camera)
+        world.SetActiveCamera(listener)
+        int parent = world.CreateNode()
+        int emitter = world.CreateChild(parent)
+        world.AttachTransform(emitter, origin)
+        world.AttachTransform(parent, QuaxelTransform.Make(vec3(1.0, 0.0, 0.0), unit))
+        QuaxelAudioSource source
+        source.InnerRadius = 1.0
+        source.OuterRadius = 3.0
+        T.IsTrue(world.SetAudioSource(emitter, source))
+        long voice = world.PlaySound(sound, emitter, 1.0, true)
+        int16 [1600] block
+        world.MixAudio(block)
+        T.AreEqual((int)block[0], 0)
+        T.AreEqual((int)block[1], 1000)
+        world.SetTransform(parent, QuaxelTransform.Make(vec3(-2.0, 0.0, 0.0), unit))
+        world.MixAudio(block)
+        T.AreEqual((int)block[0], 500)
+        T.AreEqual((int)block[1], 0)
+        world.SetTransform(parent, QuaxelTransform.Make(vec3(-3.0, 0.0, 0.0), unit))
+        world.MixAudio(block)
+        T.AreEqual((int)block[0], 0)
+        world.DestroyNode(parent)
+        world.MixAudio(block)
+        T.IsFalse(world.StopSound(voice))
+    }
+}

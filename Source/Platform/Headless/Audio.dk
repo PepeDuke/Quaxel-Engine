@@ -1,0 +1,7 @@
+QuaxelAudioBackend
+#{
+    bool Open() { return false }
+    bool Ready() { return false }
+    bool Submit(int16 [1600]& samples) { return false }
+    Close() {}
+}

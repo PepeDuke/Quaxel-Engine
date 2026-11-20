@@ -1,0 +1,7 @@
+QuaxelAudioOutput
+#{
+    bool Open() { return QuaxelAudioBackend.Open() }
+    bool Ready() { return QuaxelAudioBackend.Ready() }
+    bool Submit(int16 [1600]& samples) { return QuaxelAudioBackend.Submit(samples) }
+    Close() { QuaxelAudioBackend.Close() }
+}

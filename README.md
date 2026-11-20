@@ -115,3 +115,24 @@ belongs in the backend. Neither type is the bootstrap's native `cstring`.
 ../Duck/duck.cmd test Quaxel.Windows.dkp
 ../Duck/duck.cmd test Tests/Mock.dkp
 ```
+
+## Audio
+
+Load a 16-bit PCM WAV once per world and reuse its clip handle. Mono and stereo clips are resampled to the 48 kHz output rate. Games can also supply interleaved signed samples with `world.AddSound(clip)`.
+
+```duck
+int step = world.LoadSound("Assets/footstep.wav")
+QuaxelAudioSource source
+source.InnerRadius = 1.0
+source.OuterRadius = 16.0
+world.SetAudioSource(footNode, source)
+long first = world.PlaySound(step, footNode, 0.8, false)
+long second = world.PlaySound(step, footNode, 0.8, false)
+world.StopSound(first)
+```
+
+The source node needs a transform. Its world position follows its parent. The active camera listens from its world position, using its view direction and up vector for stereo panning. Gain stays constant within the inner radius, falls smoothly to zero at the outer radius, and stays silent beyond it. With no active listener, spatial voices advance silently. Destroying the source ends its voices on the next mix.
+
+Pass node `0` for UI or music playback and `true` as the last argument to loop. Gain ranges from zero to one. Each play has an independent cursor and stop handle. A world supports 128 simultaneous voices. Loading or playing returns zero on failure, including when all voices are busy.
+
+Windows queues up to four blocks of 800 stereo frames, about 67 ms in total. Position changes and stops affect newly mixed blocks. A render stall longer than the queued audio can cause a gap. Headless runs and Windows runs without an output device advance the mixer once per simulation step.

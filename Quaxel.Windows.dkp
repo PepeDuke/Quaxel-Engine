@@ -16,4 +16,4 @@ depends = ["quaxel_core", "quaxel_platform"]
 
 [modules.quaxel_platform_backend]
 sources = ["Source/Platform/Windows/**/*.dk", "Tests/VoxelGpu.dk"]
-libraries = ["Kernel32", "User32", ".duck/vulkan/vulkan-1.lib"]
+libraries = ["Kernel32", "User32", "Winmm", ".duck/vulkan/vulkan-1.lib"]

@@ -1,0 +1,98 @@
+// WAVEFORMATEX and WAVEHDR for the x64 WinMM ABI.
+QuaxelWaveFormat
+{
+    uint16 Tag
+    uint16 Channels
+    uint Rate
+    uint BytesPerSecond
+    uint16 Alignment
+    uint16 Bits
+    uint16 Extra
+}
+
+QuaxelWaveHeader
+{
+    void* Data
+    uint Bytes
+    uint Recorded
+    long User
+    uint Flags
+    uint Loops
+    void* Next
+    long Reserved
+}
+
+QuaxelWindowsNative
+#{
+    extern "C" int waveOutOpen(long& device, uint id, QuaxelWaveFormat* format, long callback, long instance, uint flags)
+    extern "C" int waveOutPrepareHeader(long device, QuaxelWaveHeader* header, uint size)
+    extern "C" int waveOutWrite(long device, QuaxelWaveHeader* header, uint size)
+    extern "C" int waveOutReset(long device)
+    extern "C" int waveOutUnprepareHeader(long device, QuaxelWaveHeader* header, uint size)
+    extern "C" int waveOutClose(long device)
+}
+
+QuaxelAudioBackend
+#{
+    -long Device
+    // Stable addresses until reset returns all outstanding buffers.
+    // Six aligned 64-bit words per native WAVEHDR on x64.
+    -long [24] HeaderStorage
+    -int16 [6400] Samples
+    -int Prepared
+    -int Cursor
+
+    -QuaxelWaveHeader* Header(int slot) { return (QuaxelWaveHeader*)&HeaderStorage[slot * 6] }
+
+    bool Open()
+    {
+        if Device != 0 { return true }
+        QuaxelWaveFormat format
+        format.Tag = 1
+        format.Channels = 2
+        format.Rate = 48000
+        format.BytesPerSecond = 192000
+        format.Alignment = 4
+        format.Bits = 16
+        long handle = 0
+        if QuaxelWindowsNative.waveOutOpen(handle, 0xFFFFFFFF, &format, 0, 0, 0) != 0 { return false }
+        Device = handle
+        for i : 0; i < 4; i++ {
+            QuaxelWaveHeader header
+            header.Data = &Samples[i * 1600]
+            header.Bytes = 3200
+            QuaxelWaveHeader* destination = Header(i)
+            *destination = header
+            if QuaxelWindowsNative.waveOutPrepareHeader(Device, Header(i), 48) != 0 {
+                Close()
+                return false
+            }
+            Prepared++
+        }
+        return true
+    }
+
+    bool Ready() { return Device != 0 && (Header(Cursor).Flags & 16) == 0 }
+
+    bool Submit(int16 [1600]& block)
+    {
+        if !Ready() { return false }
+        for i : 0; i < block.Len; i++ { Samples[Cursor * 1600 + i] = block[i] }
+        if QuaxelWindowsNative.waveOutWrite(Device, Header(Cursor), 48) != 0 { return false }
+        Cursor = (Cursor + 1) % 4
+        return true
+    }
+
+    Close()
+    {
+        if Device == 0 { return }
+        QuaxelWindowsNative.waveOutReset(Device)
+        for i : 0; i < Prepared; i++ {
+            QuaxelWindowsNative.waveOutUnprepareHeader(Device, Header(i), 48)
+        }
+        QuaxelWindowsNative.waveOutClose(Device)
+        Prepared = 0
+        Cursor = 0
+        Device = 0
+    }
+}
