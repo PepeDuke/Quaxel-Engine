@@ -169,6 +169,43 @@ the first time it is shown. Frames count toward the Vulkan backend's limit of
 4096 uploaded volumes, and a game that passes the limit stops with a rendering
 failure.
 
+## Frame calls
+
+A `call <name>` line inside a frame runs game code each time a playing clip
+reaches that frame, such as a footstep on the frame where a foot lands. A frame
+can have several, and they go anywhere among its sockets and rows:
+
+```text
+clip walk loop
+frame 76
+call footstep
+socket hand_r 19.24 33.30 36.56 180 25 180
+# y = 0
+...
+```
+
+The engine hands each reached call to the game's `AnimationCall`, once per fixed
+step, after the animators advance and before `FixedStep`:
+
+```c++
+AnimationCall(QuaxelWorld& world, QuaxelAnimationCall call)
+{
+    if call.Name == "footstep" { PlayFootstep(world, call.Node) }
+}
+```
+
+`QuaxelAnimationCall` holds the `Node`, the call's `Name`, the `Clip` name and
+the `Frame` within the clip. Because calls follow the frames, they stay in step
+when `SetAnimationSpeed` changes the pace or a frame's milliseconds change. A
+clip's first frame makes its calls on the advance after `PlayClip`. Calling
+`PlayClip` with the clip already playing does not restart it, so its calls do not
+repeat. A step that crosses several frames makes each one's calls in order.
+Paused worlds make no calls.
+
+`world.AddAnimationCall(animation, "walk", 2, "footstep")` adds a call in code.
+Outside the engine's loop, as in tests, `world.AnimationCallCount()` and
+`world.AnimationCallAt(i)` give the calls the last `AdvanceAnimations` reached.
+
 ## Sockets
 
 A socket is a named position and rotation on a grid. Sockets let one model hold

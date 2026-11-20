@@ -135,4 +135,35 @@ The source node needs a transform. Its world position follows its parent. The ac
 
 Pass node `0` for UI or music playback and `true` as the last argument to loop. Gain ranges from zero to one. Each play has an independent cursor and stop handle. A world supports 128 simultaneous voices. Loading or playing returns zero on failure, including when all voices are busy.
 
+### Sound groups
+
+A group holds interchangeable clips, such as four footsteps on stone. Each play picks one at random, never the one the group played last, and varies its pitch and gain so repeats do not sound mechanical:
+
+```duck
+string [] paths = {"Assets/Sounds/stone_1.wav", "Assets/Sounds/stone_2.wav", "Assets/Sounds/stone_3.wav"}
+// Pitch within ±6 %, and up to 20 % quieter.
+int stone = world.LoadSoundGroup(paths, 0.06, 0.2)
+world.PlaySoundGroup(stone, footNode, 0.5, false)
+```
+
+`CreateSoundGroup(pitchJitter, gainJitter)` and `AddToSoundGroup(group, clip)` build a group from clips already loaded. Both jitters are fractions from 0 to 0.5. `LoadSoundGroup` leaves out files that fail to load and returns zero only when none loads. `SeedSoundRandom(seed)` makes the picks repeatable. `PlaySoundGroupPitched(group, node, gain, looping, basePitch)` plays around a base pitch from 0.25 to 4, so one group can voice a small creature high and a large one low; the jitter applies on top. `PlaySoundPitched(clip, node, gain, looping, pitch)` plays one clip at a fixed pitch from 0.25 to 4, where 2 is an octave up at twice the speed.
+
+### Reverb
+
+Each world has one reverb, set to the room it imitates. Voices are dry until a share of them is sent to it:
+
+```duck
+QuaxelReverbSettings hall
+hall.RoomSize = 0.85   // 0 small room to 1 large hall
+hall.Damping = 0.3     // 0 bright stone to 1 soft furnishings
+hall.Wet = 0.45        // level of the reverb in the mix
+world.SetReverb(hall)
+long step = world.PlaySoundGroup(stone, 0, 0.12, false)
+world.SetVoiceReverb(step, 0.5)
+```
+
+All values range from 0 to 1, and out-of-range values are refused. The tail keeps ringing after its voice ends and carries into new settings; `ClearReverb()` silences it, as on a cut to another place, and `Release()` does too. The reverb is Freeverb-style: four damped comb filters and two allpass filters per channel at 48 kHz, with the first echo after about 25 ms.
+
+To choose a group by what is underfoot, `terrain.SurfaceAt(x, z)` gives the surface of the column under a world point: a `QuaxelTerrainSurface` value or a game's own, or -1 where no chunk is loaded.
+
 Windows queues up to four blocks of 800 stereo frames, about 67 ms in total. Position changes and stops affect newly mixed blocks. A render stall longer than the queued audio can cause a gap. Headless runs and Windows runs without an output device advance the mixer once per simulation step.

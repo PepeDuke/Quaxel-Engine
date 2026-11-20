@@ -185,7 +185,11 @@ QuaxelVoxelModelParser
                             if TakeDirective(cursor, end, "socket") {
                                 ProcessSocket(world, cursor, end)
                             } else {
-                                ProcessRow(world, at, end)
+                                if TakeDirective(cursor, end, "call") {
+                                    ProcessCall(world, cursor, end)
+                                } else {
+                                    ProcessRow(world, at, end)
+                                }
                             }
                         }
                     }
@@ -291,6 +295,23 @@ QuaxelVoxelModelParser
             return
         }
         if Stage == 2 { BaseHasSockets = true }
+    }
+
+    // `call <name>` anywhere in a frame: the game's AnimationCall runs with
+    // that name when a clip reaches the frame.
+    -ProcessCall(QuaxelWorld& world, int at, int end)
+    {
+        if Stage != 4 {
+            Fail("'call' must be inside a frame")
+            return
+        }
+        int cursor = at
+        string callName = TakeName(cursor, end)
+        if Length(callName) == 0 || cursor != end {
+            Fail("expected 'call <name>'")
+            return
+        }
+        world.AddAnimationCallToNewestFrame(Animation, callName)
     }
 
     -ProcessFrame(QuaxelWorld& world, int at, int end)
@@ -555,6 +576,92 @@ T{
         parser.FeedText(world, "qvox 1\nsize 1 1 1\n.\n")
         T.IsTrue(parser.Finish(world))
         T.AreEqual(parser.Animation, -1)
+    }
+
+    CallLinesRunEachTimeTheirFrameIsReached()
+    {
+        QuaxelWorld world()
+        QuaxelVoxelModelParser parser()
+        parser.FeedText(world, "qvox 1\nsize 1 1 1\ncolor r FF0000\nclip walk loop\nframe 100\ncall step\nr\nframe 100\nr\ncall step\ncall dust\nframe 100\nr\n")
+        T.IsTrue(parser.Finish(world))
+        int node = world.CreateNode()
+        T.IsTrue(world.AttachAnimator(node, parser.Animation))
+        T.IsTrue(world.PlayClip(node, "walk"))
+        // The first frame's calls come on the advance after PlayClip.
+        world.AdvanceAnimations(0.05)
+        T.AreEqual(world.AnimationCallCount(), 1)
+        QuaxelAnimationCall first = world.AnimationCallAt(0)
+        T.AreEqual(first.Node, node)
+        T.AreEqual(first.Name, "step")
+        T.AreEqual(first.Clip, "walk")
+        T.AreEqual(first.Frame, 0)
+        // Into frame 1: both its calls, in file order. Each advance replaces the last's calls.
+        world.AdvanceAnimations(0.1)
+        T.AreEqual(world.AnimationCallCount(), 2)
+        QuaxelAnimationCall second = world.AnimationCallAt(1)
+        T.AreEqual(second.Name, "dust")
+        T.AreEqual(second.Frame, 1)
+        world.AdvanceAnimations(0.1)
+        T.AreEqual(world.AnimationCallCount(), 0)
+        // Round the loop to frame 0 again.
+        world.AdvanceAnimations(0.1)
+        T.AreEqual(world.AnimationCallCount(), 1)
+        // PlayClip of the clip already playing does not restart it or its calls.
+        T.IsTrue(world.PlayClip(node, "walk"))
+        world.AdvanceAnimations(0.01)
+        T.AreEqual(world.AnimationCallCount(), 0)
+    }
+
+    CallsKeepPaceWithTheAnimationSpeed()
+    {
+        QuaxelWorld world()
+        QuaxelVoxelModelParser parser()
+        parser.FeedText(world, "qvox 1\nsize 1 1 1\ncolor r FF0000\nclip walk loop\nframe 100\ncall step\nr\nframe 100\nr\n")
+        T.IsTrue(parser.Finish(world))
+        int node = world.CreateNode()
+        world.AttachAnimator(node, parser.Animation)
+        world.PlayClip(node, "walk")
+        int normal = 0
+        for i : 0; i < 100; i++ {
+            world.AdvanceAnimations(0.01)
+            normal += world.AnimationCallCount()
+        }
+        world.StopClip(node)
+        world.SetAnimationSpeed(node, 2.0)
+        world.PlayClip(node, "walk")
+        int fast = 0
+        for i : 0; i < 100; i++ {
+            world.AdvanceAnimations(0.01)
+            fast += world.AnimationCallCount()
+        }
+        T.AreEqual(normal, 5)
+        T.AreEqual(fast, 10)
+    }
+
+    CallsAddedInCodeAndBadCallLines()
+    {
+        QuaxelWorld world()
+        QuaxelVoxelModelParser parser()
+        parser.FeedText(world, "qvox 1\nsize 1 1 1\ncolor r FF0000\nclip walk loop\nframe 100\nr\nframe 100\nr\n")
+        T.IsTrue(parser.Finish(world))
+        T.IsTrue(world.AddAnimationCall(parser.Animation, "walk", 1, "step"))
+        T.IsFalse(world.AddAnimationCall(parser.Animation, "walk", 2, "step"))
+        T.IsFalse(world.AddAnimationCall(parser.Animation, "run", 0, "step"))
+        int node = world.CreateNode()
+        world.AttachAnimator(node, parser.Animation)
+        world.PlayClip(node, "walk")
+        world.AdvanceAnimations(0.15)
+        T.AreEqual(world.AnimationCallCount(), 1)
+
+        QuaxelVoxelModelParser early()
+        early.FeedText(world, "qvox 1\nsize 1 1 1\nclip walk loop\ncall step\n")
+        T.AreEqual(early.Error, "'call' must be inside a frame")
+        QuaxelVoxelModelParser base()
+        base.FeedText(world, "qvox 1\nsize 1 1 1\ncall step\n")
+        T.AreEqual(base.Error, "'call' must be inside a frame")
+        QuaxelVoxelModelParser extra()
+        extra.FeedText(world, "qvox 1\nsize 1 1 1\nclip walk loop\nframe 10\ncall step left\n")
+        T.AreEqual(extra.Error, "expected 'call <name>'")
     }
 
     ClipsReadFramesIntoTheirOwnVolumes()

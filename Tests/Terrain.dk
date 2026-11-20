@@ -169,6 +169,31 @@ T{
         T.IsTrue(walls > 10)
     }
 
+    SurfacesFollowTheColumnsAndAreUnknownWhereUnbuilt()
+    {
+        QuaxelTerrainConfig config
+        QuaxelWorld world()
+        QuaxelTerrain terrain()
+        T.IsTrue(terrain.Configure(config) && terrain.Start(world, vec3(0.0, 0.0, 0.0)))
+        int open = 0
+        for column : -300; column < 380; column += 3 {
+            for row : -300; row < 380; row += 3 {
+                kind : terrain.ColumnKind(column, row)
+                int surface = terrain.ColumnSurface(column, row)
+                if kind == QuaxelTerrainKind.Unloaded { T.AreEqual(surface, -1) }
+                else if kind == QuaxelTerrainKind.Mountain { T.AreEqual(surface, QuaxelTerrainSurface.Rock) }
+                else if kind == QuaxelTerrainKind.Water { T.AreEqual(surface, QuaxelTerrainSurface.Water) }
+                else if kind == QuaxelTerrainKind.Open {
+                    T.IsTrue(surface >= 0)
+                    open++
+                }
+            }
+        }
+        T.IsTrue(open > 100)
+        T.AreEqual(terrain.SurfaceAt(0.0, 0.0), terrain.ColumnSurface(0, 0))
+        T.AreEqual(terrain.SurfaceAt(100000.0, 0.0), -1)
+    }
+
     ReservedPathsSurviveAModuleThatFloodsEverything()
     {
         QuaxelTerrainConfig config

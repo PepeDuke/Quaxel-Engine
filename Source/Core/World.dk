@@ -167,6 +167,7 @@ QuaxelWorld
     -bool [] VolumeDirty
     -int [] MeshVolumes
     -QuaxelVoxelAnimation [] Animations
+    -QuaxelAnimationCall [] AnimationCalls
     -int CameraNode
     -bool Stepping
     -bool HasPendingChanges
@@ -510,6 +511,7 @@ QuaxelWorld
         animator.Frame = 0
         animator.Elapsed = 0.0
         animator.Playing = true
+        animator.Entered = false
         Nodes[id - 1].Animator = animator
         Nodes[id - 1].Volume = Animations[animator.Animation].FrameVolume(clip, 0)
         return true
@@ -539,16 +541,39 @@ QuaxelWorld
         return Animations[animator.Animation].ClipName(animator.Clip)
     }
 
+    // Adds a call to a frame of a clip, as a `call` line in a model does.
+    bool AddAnimationCall(int animation, string clipName, int frame, string callName)
+    {
+        if animation < 0 || animation >= Animations.Len { return false }
+        return Animations[animation].AddCallAt(Animations[animation].FindClip(clipName), frame, callName)
+    }
+
+    // Adds a call to the frame added last, as the model parser does.
+    bool AddAnimationCallToNewestFrame(int animation, string callName)
+    {
+        if animation < 0 || animation >= Animations.Len { return false }
+        return Animations[animation].AddCall(callName)
+    }
+
+    // The calls the last AdvanceAnimations reached, in node order and, for
+    // each node, frame order. The engine hands them to the game's AnimationCall.
+    int AnimationCallCount() { return (int)AnimationCalls.Len }
+
+    QuaxelAnimationCall AnimationCallAt(int index) { return AnimationCalls[index] }
+
     AdvanceAnimations(float deltaSeconds)
     {
+        AnimationCalls.Clear()
+        QuaxelAnimationCall [] reached
         int mask = QuaxelComponents.Voxels | QuaxelComponents.Animator
         for id : NextWith(0, mask); id != 0; id = NextWith(id, mask) {
             QuaxelAnimator animator = Nodes[id - 1].Animator
             if !animator.Playing { continue }
-            Animations[animator.Animation].Advance(animator, deltaSeconds)
+            Animations[animator.Animation].AdvanceCalling(animator, deltaSeconds, id, reached)
             Nodes[id - 1].Animator = animator
             Nodes[id - 1].Volume = Animations[animator.Animation].FrameVolume(animator.Clip, animator.Frame)
         }
+        for call : reached { AnimationCalls += call }
         UpdateSockets()
     }
 
@@ -695,6 +720,8 @@ QuaxelWorld
     {
         Sounds.Clear()
         Voices.Clear()
+        SoundGroups.Clear()
+        ClearReverb()
         Nodes.Clear()
         Meshes.Clear()
         MeshVolumes.Clear()
@@ -1031,6 +1058,11 @@ QuaxelGameInstance
 
     // Runs once per fixed simulation step.
     FixedStep(QuaxelWorld& world, QuaxelInputState& input, float deltaSeconds) {}
+
+    // Runs when a node's clip reaches a frame with a `call` line, or a call
+    // added with world.AddAnimationCall, before FixedStep of the same step.
+    // Switch on call.Name to run the game's own code.
+    AnimationCall(QuaxelWorld& world, QuaxelAnimationCall call) {}
 
     // While true the engine holds animations and effects still. FixedStep
     // still runs, so the game can read the keys that unpause it.

@@ -4,13 +4,112 @@ QuaxelAudioSource
     float OuterRadius = 20.0
 }
 
+// The room a world's reverb imitates. All values range from 0 to 1.
+QuaxelReverbSettings
+{
+    // Small rooms die away quickly; large halls ring for seconds.
+    float RoomSize = 0.5
+    // How much soft furnishings swallow the high end of the tail.
+    float Damping = 0.5
+    // Level of the reverb added to the dry mix.
+    float Wet = 0.3
+}
+
+// A Freeverb-style reverb: four parallel damped comb filters into two
+// allpass filters per channel, the right channel's delays slightly longer to
+// widen the tail. It runs on 48 kHz mono input and writes stereo.
+QuaxelReverb
+{
+    QuaxelReverbSettings Settings
+    // Every filter's delay line, one after another.
+    -float [] Lines
+    -int [12] Start
+    -int [12] Length
+    -int [12] Cursor
+    // The low-pass memory of each comb filter.
+    -float [8] Store
+
+    -Allocate()
+    {
+        // Freeverb's tunings, scaled from 44.1 to 48 kHz. Combs come first,
+        // left then right, then the allpasses.
+        int [6] tuning = {1214, 1293, 1390, 1476, 605, 480}
+        int offset = 0
+        for side : 0; side < 2; side++ {
+            for k : 0; k < 6; k++ {
+                int filter = k < 4 ? side * 4 + k | 8 + side * 2 + (k - 4)
+                Start[filter] = offset
+                Length[filter] = tuning[k] + side * 23
+                Cursor[filter] = 0
+                offset += Length[filter]
+            }
+        }
+        for i : 0; i < offset; i++ { Lines += 0.0 }
+    }
+
+    // Adds the reverb of one block of send to the stereo mix.
+    Process(float [800]& send, float [1600]& mix)
+    {
+        if Lines.Len == 0 { Allocate() }
+        float feedback = 0.7 + 0.28 * Math.Clamp(Settings.RoomSize, 0.0, 1.0)
+        float damp = 0.4 * Math.Clamp(Settings.Damping, 0.0, 1.0)
+        float wet = 3.0 * Math.Clamp(Settings.Wet, 0.0, 1.0)
+        for i : 0; i < 800; i++ {
+            float input = send[i] * 0.03
+            for side : 0; side < 2; side++ {
+                float sum = 0.0
+                for k : 0; k < 4; k++ {
+                    int c = side * 4 + k
+                    int at = Start[c] + Cursor[c]
+                    float echo = Lines[at]
+                    Store[c] = echo * (1.0 - damp) + Store[c] * damp
+                    Lines[at] = input + Store[c] * feedback
+                    Cursor[c] = (Cursor[c] + 1) % Length[c]
+                    sum += echo
+                }
+                for k : 0; k < 2; k++ {
+                    int a = 8 + side * 2 + k
+                    int at = Start[a] + Cursor[a]
+                    float delayed = Lines[at]
+                    Lines[at] = sum + delayed * 0.5
+                    sum = delayed - sum
+                    Cursor[a] = (Cursor[a] + 1) % Length[a]
+                }
+                mix[2 * i + side] += sum * wet
+            }
+        }
+    }
+
+    // Silences the tail without changing the settings.
+    Clear()
+    {
+        for i : 0; i < Lines.Len; i++ { Lines[i] = 0.0 }
+        for c : 0; c < 8; c++ { Store[c] = 0.0 }
+    }
+}
+
+// Interchangeable clips, such as footsteps. Each play picks one at random,
+// never the one played just before, and varies its pitch and gain.
+QuaxelSoundGroup
+{
+    // Clip handles, from LoadSound or AddSound.
+    int [] Clips
+    // A fraction: 0.06 plays from 0.94 to 1.06 times the clip's speed.
+    float PitchJitter
+    // A fraction: 0.2 takes up to a fifth off the gain.
+    float GainJitter
+    // Index into Clips of the last pick, or -1.
+    int Last = -1
+}
+
 QuaxelSoundClip
 {
     int Rate
     int Channels
     int16 [] Samples
 
-    MixVoice(QuaxelVoice& voice, float left, float right, float [1600]& mix)
+    // Send is the share of the voice also fed to the reverb, as mono.
+    MixVoice(QuaxelVoice& voice, float left, float right, float [1600]& mix, float send, float [800]& reverb)
     {
         int channels = Channels
         int frames = (int)Samples.Len / channels
@@ -31,7 +130,8 @@ QuaxelSoundClip
             }
             mix[2 * i] += l * left
             mix[2 * i + 1] += r * right
-            voice.Phase += Rate
+            if send > 0.0 { reverb[i] += (l * left + r * right) * 0.5 * send }
+            voice.Phase += voice.Step
             voice.Frame += voice.Phase / 48000
             voice.Phase %= 48000
             if voice.Frame >= frames {
@@ -52,7 +152,11 @@ QuaxelVoice
     int Node
     int Frame
     int Phase
+    // Source frames per output second: the clip's rate times the pitch.
+    int Step
     float Gain
+    // From 0 to 1, how much of the voice goes to the world's reverb.
+    float ReverbSend
     bool Looping
 }
 
@@ -61,6 +165,12 @@ QuaxelWorld
     -QuaxelSoundClip [] Sounds
     -QuaxelVoice [] Voices
     -long LastVoice
+    -QuaxelSoundGroup [] SoundGroups
+    -QuaxelRandom SoundRandom
+    -bool SoundRandomSeeded
+    -QuaxelReverb Reverb
+    // True from the first send until the reverb is cleared, so the tail rings out.
+    -bool ReverbActive
 
     // Clip handles start at one. Samples are signed interleaved PCM.
     int AddSound(QuaxelSoundClip& clip)
@@ -96,8 +206,130 @@ QuaxelWorld
         return true
     }
 
+    // Sets the room every voice's reverb send plays into. A tail already ringing
+    // carries on into the new room.
+    bool SetReverb(QuaxelReverbSettings settings)
+    {
+        if !(settings.RoomSize >= 0.0 && settings.RoomSize <= 1.0) || !(settings.Damping >= 0.0 && settings.Damping <= 1.0) || !(settings.Wet >= 0.0 && settings.Wet <= 1.0) { return false }
+        Reverb.Settings = settings
+        return true
+    }
+
+    QuaxelReverbSettings GetReverb() { return Reverb.Settings }
+
+    // Stops the reverb tail at once, as when cutting to another place.
+    ClearReverb()
+    {
+        Reverb.Clear()
+        ReverbActive = false
+    }
+
+    // Sends part of a playing voice to the reverb, from 0 (dry) to 1. Call it
+    // right after PlaySound or PlaySoundGroup, with the handle they gave.
+    bool SetVoiceReverb(long voice, float send)
+    {
+        if voice <= 0 || !(send >= 0.0 && send <= 1.0) { return false }
+        for i : 0; i < Voices.Len; i++ {
+            if Voices[i].Id == voice {
+                Voices[i].ReverbSend = send
+                return true
+            }
+        }
+        return false
+    }
+
+    // Group handles start at one. Jitters are fractions from 0 to 0.5.
+    int CreateSoundGroup(float pitchJitter, float gainJitter)
+    {
+        if !(pitchJitter >= 0.0 && pitchJitter <= 0.5) || !(gainJitter >= 0.0 && gainJitter <= 0.5) { return 0 }
+        SoundGroups++
+        int index = (int)SoundGroups.Len - 1
+        SoundGroups[index].PitchJitter = pitchJitter
+        SoundGroups[index].GainJitter = gainJitter
+        return index + 1
+    }
+
+    bool AddToSoundGroup(int group, int clip)
+    {
+        if group <= 0 || group > SoundGroups.Len || clip <= 0 || clip > Sounds.Len { return false }
+        SoundGroups[group - 1].Clips += clip
+        return true
+    }
+
+    // Loads each file into a new group. Files that fail to load are left out,
+    // and the group is zero only when none loads.
+    int LoadSoundGroup(string []& paths, float pitchJitter, float gainJitter)
+    {
+        int group = CreateSoundGroup(pitchJitter, gainJitter)
+        if group == 0 { return 0 }
+        for path : paths {
+            int clip = LoadSound(path)
+            if clip > 0 { AddToSoundGroup(group, clip) }
+        }
+        if SoundGroups[group - 1].Clips.Len > 0 { return group }
+        SoundGroups--
+        return 0
+    }
+
+    int SoundGroupSize(int group)
+    {
+        if group <= 0 || group > SoundGroups.Len { return 0 }
+        return (int)SoundGroups[group - 1].Clips.Len
+    }
+
+    // Makes the group picks and jitter repeat from the same seed.
+    SeedSoundRandom(uint seed)
+    {
+        SoundRandom.Begin(seed)
+        SoundRandomSeeded = true
+    }
+
+    // Plays one of the group's clips, as PlaySound does.
+    long PlaySoundGroup(int group, int node, float gain, bool looping)
+    {
+        return PlaySoundGroupPitched(group, node, gain, looping, 1.0)
+    }
+
+    // As PlaySoundGroup, around a base pitch from 0.25 to 4, so one group can
+    // voice a small creature high and a big one low. The jitter applies on top.
+    long PlaySoundGroupPitched(int group, int node, float gain, bool looping, float basePitch)
+    {
+        if !(basePitch >= 0.25 && basePitch <= 4.0) { return 0 }
+        if group <= 0 || group > SoundGroups.Len || !(gain >= 0.0 && gain <= 1.0) { return 0 }
+        int count = (int)SoundGroups[group - 1].Clips.Len
+        if count == 0 { return 0 }
+        if !SoundRandomSeeded { SeedSoundRandom((uint)0x51ED) }
+        int last = SoundGroups[group - 1].Last
+        int pick = 0
+        if count > 1 {
+            if last < 0 || last >= count { pick = SoundRandom.Below(count) }
+            else {
+                // One of the others, evenly.
+                pick = SoundRandom.Below(count - 1)
+                if pick >= last { pick++ }
+            }
+        }
+        SoundGroups[group - 1].Last = pick
+        float pitchJitter = SoundGroups[group - 1].PitchJitter
+        float pitch = Math.Clamp(basePitch * SoundRandom.Range(1.0 - pitchJitter, 1.0 + pitchJitter), 0.25, 4.0)
+        float scaled = gain * (1.0 - SoundGroups[group - 1].GainJitter * SoundRandom.Unit())
+        return PlayVoice(SoundGroups[group - 1].Clips[pick], node, scaled, looping, pitch)
+    }
+
     // Node zero plays in stereo independently of the camera.
     long PlaySound(int clip, int node, float gain, bool looping)
+    {
+        return PlayVoice(clip, node, gain, looping, 1.0)
+    }
+
+    // Pitch scales the playback speed; 2.0 plays an octave up in half the time.
+    long PlaySoundPitched(int clip, int node, float gain, bool looping, float pitch)
+    {
+        if !(pitch >= 0.25 && pitch <= 4.0) { return 0 }
+        return PlayVoice(clip, node, gain, looping, pitch)
+    }
+
+    -long PlayVoice(int clip, int node, float gain, bool looping, float pitch)
     {
         if clip <= 0 || clip > Sounds.Len || !(gain >= 0.0 && gain <= 1.0) { return 0 }
         if node != 0 && !Has(node, QuaxelComponents.AudioSource) { return 0 }
@@ -109,6 +341,7 @@ QuaxelWorld
         LastVoice++
         voice.Id = LastVoice
         voice.Clip = clip - 1
+        voice.Step = Math.Max(1, (int)((float)Sounds[clip - 1].Rate * pitch + 0.5))
         voice.Node = node
         voice.Gain = gain
         voice.Looping = looping
@@ -132,6 +365,7 @@ QuaxelWorld
     MixAudio(int16 [1600]& output)
     {
         float [1600] mix
+        float [800] send
         vec3 eye
         vec3 right
         bool listener = Has(CameraNode, QuaxelComponents.Transform)
@@ -158,14 +392,177 @@ QuaxelWorld
                 left = volume * Math.Sqrt(0.5 * (1.0 - pan))
                 r = volume * Math.Sqrt(0.5 * (1.0 + pan))
             }
-            Sounds[voice.Clip].MixVoice(voice, left, r, mix)
+            if voice.ReverbSend > 0.0 { ReverbActive = true }
+            Sounds[voice.Clip].MixVoice(voice, left, r, mix, voice.ReverbSend, send)
             Voices[i] = voice
         }
+        if ReverbActive { Reverb.Process(send, mix) }
         for i : 0; i < 1600; i++ { output[i] = (int16)Math.Clamp(mix[i], -32768.0, 32767.0) }
     }
 
 }
 T{
+    ReverbSendLeavesATailThatRingsOutAndClears()
+    {
+        QuaxelWorld world()
+        QuaxelSoundClip clip
+        clip.Rate = 48000
+        clip.Channels = 1
+        clip.Samples += (int16)20000
+        int sound = world.AddSound(clip)
+        QuaxelReverbSettings room
+        room.RoomSize = 0.8
+        room.Wet = 1.0
+        T.IsTrue(world.SetReverb(room))
+        long voice = world.PlaySound(sound, 0, 1.0, false)
+        T.IsTrue(world.SetVoiceReverb(voice, 1.0))
+        int16 [1600] block
+        world.MixAudio(block)
+        // The dry impulse alone, since the shortest comb is 1214 frames long.
+        T.AreEqual((int)block[0], 20000)
+        for i : 2; i < 1600; i++ { T.AreEqual((int)block[i], 0) }
+        world.MixAudio(block)
+        bool echoed = false
+        for i : 0; i < 1600; i++ { if block[i] != (int16)0 { echoed = true } }
+        T.IsTrue(echoed)
+        // Still ringing a few blocks later, with no voice playing.
+        for b : 0; b < 5; b++ { world.MixAudio(block) }
+        bool ringing = false
+        for i : 0; i < 1600; i++ { if block[i] != (int16)0 { ringing = true } }
+        T.IsTrue(ringing)
+        world.ClearReverb()
+        world.MixAudio(block)
+        for i : 0; i < 1600; i++ { T.AreEqual((int)block[i], 0) }
+    }
+
+    DryVoicesGetNoReverb()
+    {
+        QuaxelWorld world()
+        QuaxelSoundClip clip
+        clip.Rate = 48000
+        clip.Channels = 1
+        clip.Samples += (int16)20000
+        int sound = world.AddSound(clip)
+        QuaxelReverbSettings room
+        room.Wet = 1.0
+        world.SetReverb(room)
+        world.PlaySound(sound, 0, 1.0, false)
+        int16 [1600] block
+        world.MixAudio(block)
+        for i : 2; i < 1600; i++ { T.AreEqual((int)block[i], 0) }
+    }
+
+    ReverbRejectsBadValues()
+    {
+        QuaxelWorld world()
+        QuaxelReverbSettings room
+        room.Wet = 1.5
+        T.IsFalse(world.SetReverb(room))
+        QuaxelReverbSettings kept = world.GetReverb()
+        T.AreEqual(kept.Wet, 0.3)
+        T.IsFalse(world.SetVoiceReverb(0, 0.5))
+        T.IsFalse(world.SetVoiceReverb(99, 0.5))
+        QuaxelSoundClip clip
+        clip.Rate = 48000
+        clip.Channels = 1
+        clip.Samples += (int16)1
+        long voice = world.PlaySound(world.AddSound(clip), 0, 1.0, true)
+        T.IsFalse(world.SetVoiceReverb(voice, -0.1))
+        T.IsTrue(world.SetVoiceReverb(voice, 0.0))
+    }
+
+    GroupNeverRepeatsItsLastPick()
+    {
+        QuaxelWorld world()
+        int group = world.CreateSoundGroup(0.0, 0.0)
+        for value : 1...3 {
+            QuaxelSoundClip clip
+            clip.Rate = 48000
+            clip.Channels = 1
+            clip.Samples += (int16)(value * 1000)
+            T.IsTrue(world.AddToSoundGroup(group, world.AddSound(clip)))
+        }
+        T.AreEqual(world.SoundGroupSize(group), 3)
+        world.SeedSoundRandom((uint)7)
+        int previous = 0
+        int [4] seen
+        for i : 0; i < 30; i++ {
+            T.IsTrue(world.PlaySoundGroup(group, 0, 1.0, false) > 0)
+            int16 [1600] block
+            world.MixAudio(block)
+            int value = (int)block[0]
+            T.IsTrue(value != previous)
+            seen[value / 1000] += 1
+            previous = value
+        }
+        T.IsTrue(seen[1] > 0 && seen[2] > 0 && seen[3] > 0)
+    }
+
+    GroupGainJitterOnlyLowers()
+    {
+        QuaxelWorld world()
+        QuaxelSoundClip clip
+        clip.Rate = 48000
+        clip.Channels = 1
+        clip.Samples += (int16)10000
+        int group = world.CreateSoundGroup(0.0, 0.5)
+        world.AddToSoundGroup(group, world.AddSound(clip))
+        for i : 0; i < 10; i++ {
+            world.PlaySoundGroup(group, 0, 1.0, false)
+            int16 [1600] block
+            world.MixAudio(block)
+            T.IsTrue(block[0] >= (int16)5000 && block[0] <= (int16)10000)
+        }
+    }
+
+    BadGroupsAndMissingFilesGiveZero()
+    {
+        QuaxelWorld world()
+        T.AreEqual(world.CreateSoundGroup(0.6, 0.0), 0)
+        T.AreEqual(world.PlaySoundGroup(1, 0, 1.0, false), (long)0)
+        int empty = world.CreateSoundGroup(0.0, 0.0)
+        T.AreEqual(world.PlaySoundGroup(empty, 0, 1.0, false), (long)0)
+        T.IsFalse(world.AddToSoundGroup(empty, 1))
+        string [] paths = {"Missing/one.wav", "Missing/two.wav"}
+        T.AreEqual(world.LoadSoundGroup(paths, 0.0, 0.0), 0)
+        T.AreEqual(world.SoundGroupSize(empty), 0)
+    }
+
+    GroupBasePitchSetsTheSpeed()
+    {
+        QuaxelWorld world()
+        QuaxelSoundClip clip
+        clip.Rate = 48000
+        clip.Channels = 1
+        clip.Samples += (int16)0
+        clip.Samples += (int16)1000
+        int group = world.CreateSoundGroup(0.0, 0.0)
+        world.AddToSoundGroup(group, world.AddSound(clip))
+        T.AreEqual(world.PlaySoundGroupPitched(group, 0, 1.0, false, 5.0), (long)0)
+        T.IsTrue(world.PlaySoundGroupPitched(group, 0, 1.0, false, 0.5) > 0)
+        int16 [1600] block
+        world.MixAudio(block)
+        T.AreEqual((int)block[2], 500)
+    }
+
+    HalfPitchPlaysAtHalfSpeed()
+    {
+        QuaxelWorld world()
+        QuaxelSoundClip clip
+        clip.Rate = 48000
+        clip.Channels = 1
+        clip.Samples += (int16)0
+        clip.Samples += (int16)1000
+        int sound = world.AddSound(clip)
+        T.AreEqual(world.PlaySoundPitched(sound, 0, 1.0, false, 5.0), (long)0)
+        T.IsTrue(world.PlaySoundPitched(sound, 0, 1.0, false, 0.5) > 0)
+        int16 [1600] block
+        world.MixAudio(block)
+        T.AreEqual((int)block[0], 0)
+        T.AreEqual((int)block[2], 500)
+        T.AreEqual((int)block[4], 1000)
+    }
+
     OverlapLoopStopAndReuse()
     {
         QuaxelWorld world()

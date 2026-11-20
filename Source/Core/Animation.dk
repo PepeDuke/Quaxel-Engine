@@ -1,3 +1,21 @@
+// A named call made when a clip reaches a frame, such as "footstep".
+// Frame counts across every clip of the animation.
+QuaxelFrameCall
+{
+    int Frame
+    string Name
+}
+
+// A frame call a node reached, handed to QuaxelGameInstance.AnimationCall.
+QuaxelAnimationCall
+{
+    int Node
+    string Name
+    string Clip
+    // The frame within the clip.
+    int Frame
+}
+
 // One step of a clip: the volume to show and how long to hold it.
 QuaxelVoxelFrame
 {
@@ -20,6 +38,47 @@ QuaxelVoxelAnimation
 {
     -QuaxelVoxelClip [] Clips
     -QuaxelVoxelFrame [] Frames
+    -QuaxelFrameCall [] Calls
+
+    // Adds a call to the newest frame. A frame can carry several.
+    bool AddCall(string callName)
+    {
+        if Frames.Len == 0 || Length(callName) == 0 { return false }
+        QuaxelFrameCall call
+        call.Frame = (int)Frames.Len - 1
+        call.Name = callName
+        Calls += call
+        return true
+    }
+
+    // Adds a call to a frame of a clip, as a model's `call` line does.
+    bool AddCallAt(int clip, int frame, string callName)
+    {
+        if clip < 0 || clip >= Clips.Len || frame < 0 || frame >= Clips[clip].FrameCount || Length(callName) == 0 { return false }
+        QuaxelFrameCall call
+        call.Frame = Clips[clip].FirstFrame + frame
+        call.Name = callName
+        Calls += call
+        return true
+    }
+
+    // Appends the calls on a clip's frame, made by a node, in the order added.
+    CollectCalls(int node, int clip, int frame, QuaxelAnimationCall []& reached)
+    {
+        if Calls.Len == 0 { return }
+        int index = Clips[clip].FirstFrame + frame
+        for call : Calls {
+            if call.Frame != index { continue }
+            QuaxelAnimationCall made
+            made.Node = node
+            made.Name = call.Name
+            made.Clip = Clips[clip].Name
+            made.Frame = frame
+            reached += made
+        }
+    }
+
+    int CallCount() { return (int)Calls.Len }
 
     // Returns the clip's index, or -1 if there is no clip with that name.
     int FindClip(string clipName)
@@ -66,7 +125,20 @@ QuaxelVoxelAnimation
     // A clip that plays once stops on its last frame.
     Advance(QuaxelAnimator& animator, float deltaSeconds)
     {
-        if !animator.Playing || animator.Speed <= 0.0 { return }
+        QuaxelAnimationCall [] ignored
+        AdvanceCalling(animator, deltaSeconds, 0, ignored)
+    }
+
+    // Advances as Advance does, adding the calls of every frame entered, the
+    // clip's first frame included, for the node.
+    AdvanceCalling(QuaxelAnimator& animator, float deltaSeconds, int node, QuaxelAnimationCall []& reached)
+    {
+        if !animator.Playing { return }
+        if !animator.Entered {
+            animator.Entered = true
+            CollectCalls(node, animator.Clip, animator.Frame, reached)
+        }
+        if animator.Speed <= 0.0 { return }
         QuaxelVoxelClip clip = Clips[animator.Clip]
         animator.Elapsed += deltaSeconds * animator.Speed
         while animator.Elapsed >= Frames[clip.FirstFrame + animator.Frame].Seconds {
@@ -82,6 +154,7 @@ QuaxelVoxelAnimation
                 animator.Frame = 0
             }
             animator.Elapsed -= held
+            CollectCalls(node, animator.Clip, animator.Frame, reached)
         }
     }
 }
@@ -191,4 +264,7 @@ QuaxelAnimator
     float Elapsed // Seconds spent on the current frame.
     float Speed = 1.0 // Zero or less holds the current frame.
     bool Playing
+    // False until the current frame's calls have been made, so a clip's
+    // first frame makes its calls on the next advance.
+    bool Entered
 }

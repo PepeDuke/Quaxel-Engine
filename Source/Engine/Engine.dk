@@ -51,13 +51,26 @@ QuaxelEngine
         return success
     }
 
+    // Hands the game each frame call the last AdvanceAnimations reached, in order.
+    RunAnimationCalls(QuaxelGameInstance& game, QuaxelWorld& world)
+    {
+        int count = world.AnimationCallCount()
+        for i : 0; i < count; i++ {
+            QuaxelAnimationCall call = world.AnimationCallAt(i)
+            game.AnimationCall(world, call)
+        }
+    }
+
     -Step(QuaxelGameInstance& game, QuaxelWorld& world, QuaxelInputState& input)
     {
         world.BeginStep()
         // Asked before the game steps, so the step that unpauses stays still.
         bool paused = game.WorldPaused()
         // First, so a clip the game starts holds its first frame for its full time.
-        if !paused { world.AdvanceAnimations((float)Quaxel.FixedDeltaSeconds()) }
+        if !paused {
+            world.AdvanceAnimations((float)Quaxel.FixedDeltaSeconds())
+            RunAnimationCalls(game, world)
+        }
         game.FixedStep(world, input, (float)Quaxel.FixedDeltaSeconds())
         // After the game, so effects started this step move and draw at once.
         if !paused { world.AdvanceEffects((float)Quaxel.FixedDeltaSeconds()) }

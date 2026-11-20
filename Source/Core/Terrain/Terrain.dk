@@ -36,6 +36,7 @@ QuaxelTerrainChunk
     int Volume
     int [] Heights
     QuaxelTerrainKind [] Kinds
+    int [] Surfaces
     int [] PlacementNodes
 }
 
@@ -568,6 +569,7 @@ QuaxelTerrain
             for c : 0; c < ChunkColumns * ChunkColumns; c++ {
                 Chunks[i].Heights += 0
                 Chunks[i].Kinds += QuaxelTerrainKind.Mountain
+                Chunks[i].Surfaces += QuaxelTerrainSurface.Rock
             }
         }
         while !IsReady(focus) {
@@ -986,6 +988,7 @@ QuaxelTerrain
                 int target = x * ChunkColumns + z
                 Chunks[slot].Heights[target] = CoreHeight[source]
                 Chunks[slot].Kinds[target] = CoreKind[source]
+                Chunks[slot].Surfaces[target] = CoreSurface[source]
             }
         }
         if !WriteVoxels(world, slot) { return false }
@@ -1107,6 +1110,20 @@ QuaxelTerrain
         int z = row - Chunks[chunk].Z * ChunkColumns
         return Chunks[chunk].Kinds[x * ChunkColumns + z]
     }
+
+    // The QuaxelTerrainSurface (or a game's own surface) of a world column, or
+    // -1 when it is not resident.
+    int ColumnSurface(int column, int row)
+    {
+        int chunk = FindChunk(QuaxelNoise.FloorDiv(column, ChunkColumns), QuaxelNoise.FloorDiv(row, ChunkColumns))
+        if chunk < 0 { return -1 }
+        int x = column - Chunks[chunk].X * ChunkColumns
+        int z = row - Chunks[chunk].Z * ChunkColumns
+        return Chunks[chunk].Surfaces[x * ChunkColumns + z]
+    }
+
+    // The surface underfoot at a world point, as for choosing footstep sounds.
+    int SurfaceAt(float x, float z) { return ColumnSurface(ColumnAt(x), ColumnAt(z)) }
 
     // A column is blocked if it is not open ground or has not been generated.
     bool IsBlockedColumn(int column, int row) { return ColumnKind(column, row) != QuaxelTerrainKind.Open }

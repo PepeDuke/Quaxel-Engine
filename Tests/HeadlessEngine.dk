@@ -237,6 +237,50 @@ T{
     }
 }
 
+// Counts the `call` lines its clip reaches, and when in the step they arrive.
+QuaxelFrameCallTestGame : QuaxelGameInstance
+{
+    int Node
+    int Steps
+    string [] Calls
+    int [] CallSteps
+
+    int HeadlessSteps() { return 4 }
+
+    bool Prepare(QuaxelWorld& world)
+    {
+        QuaxelVoxelModelParser parser()
+        // Two frames of one fixed step each at 60 Hz.
+        parser.FeedText(world, "qvox 1\nsize 1 1 1\nclip walk loop\nframe 17\ncall left\n.\nframe 17\ncall right\n.\n")
+        if !parser.Finish(world) { return false }
+        Node = world.CreateNode()
+        return world.AttachAnimator(Node, parser.Animation) && world.PlayClip(Node, "walk")
+    }
+
+    AnimationCall(QuaxelWorld& world, QuaxelAnimationCall call)
+    {
+        if call.Node != Node { return }
+        Calls += call.Name
+        CallSteps += Steps
+    }
+
+    FixedStep(QuaxelWorld& world, QuaxelInputState& input, float deltaSeconds) { Steps++ }
+}
+T{
+    TheEngineHandsFrameCallsToTheGameBeforeItsStep()
+    {
+        QuaxelFrameCallTestGame game()
+        T.IsTrue(QuaxelEngine.Run(game))
+        T.AreEqual((int)game.Calls.Len, 4)
+        T.AreEqual(game.Calls[0], "left")
+        T.AreEqual(game.Calls[1], "right")
+        T.AreEqual(game.Calls[2], "left")
+        // Each arrives before the FixedStep of its own step.
+        T.AreEqual(game.CallSteps[0], 0)
+        T.AreEqual(game.CallSteps[3], 3)
+    }
+}
+
 // Changes clip inside FixedStep. UpdateUi runs where a frame would be drawn.
 QuaxelSocketTestGame : QuaxelGameInstance
 {
