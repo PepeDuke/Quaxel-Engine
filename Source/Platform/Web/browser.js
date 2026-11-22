@@ -132,21 +132,24 @@ const Quaxel = {
             this.bindDisplay(game);
             this.bindInput();
             const fetchOk = async url => {
-                const response = await fetch(url);
+                const response = await fetch(url, {cache:'no-cache'});
                 if (!response.ok) throw Error(url + ' returned ' + response.status);
                 return response;
             };
-            const [index, pack, shader] = await Promise.all([
+            const [index, pack] = await Promise.all([
                 fetchOk('assets.json').then(r=>r.json()),
                 fetchOk('assets.gz').then(r=>new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer()),
-                fetchOk('voxel.frag').then(r=>r.text())
+                this.graphics.initialize(fetchOk,fail)
             ]);
-            this.graphics.fragment = shader;
             status.textContent = 'Preparing ' + game + '…';
             window.Module = {
                 arguments: new URLSearchParams(location.search).getAll('arg'),
                 onAbort: fail,
-                onExit: code => { status.hidden=false; status.textContent=game + ' closed (' + code + ')'; },
+                onExit: code => {
+                    if (this.graphics.failed) return;
+                    status.hidden=false;
+                    status.textContent=game + ' closed (' + code + ')';
+                },
                 preRun: [module => {
                     const fs = module.FS;
                     let offset = 0;

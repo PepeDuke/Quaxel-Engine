@@ -1,7 +1,7 @@
 QuaxelPlatformBackend
 #{
     PreferUncappedPresentation() {  }
-    string PresentationMode() { return "WebGL 2" }
+    string PresentationMode() { return "WebGPU" }
     bool StartGpuTiming() { return false }
     double MeanLightingMs() { return 0.0 }
     bool FinishGpuTiming(double []& samples) { return false }

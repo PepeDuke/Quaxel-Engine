@@ -43,18 +43,21 @@ point, simulation and assets. From the Hellfeather repository:
 python -m http.server 8000 --bind 127.0.0.1 --directory .duck/build/web/wasm64/release/site
 ```
 
-Open `http://127.0.0.1:8000/Hellfeather.html` in a browser with WebGL 2,
+Open `http://127.0.0.1:8000/Hellfeather.html` in a browser with WebGPU,
 WebAssembly Memory64 and JSPI. Deploy the contents of `site/` together.
 The page unpacks the game assets before startup and keeps saves in browser
 storage for the game's origin. Each frame yields to the browser's animation
 scheduler. A key press or pointer press enables audio.
 
 `Quaxel.Web.dkp` selects the browser file bindings and window, input, audio and
-graphics backend in `Source/Platform/Web/`. WebGL traces voxel bricks, renders
+graphics backend in `Source/Platform/Web/`. WebGPU traces voxel bricks, renders
 meshes, directional sunlight and shadowed point lights. Particle simulation and stamping
-share the Vulkan effect kernels and run in Wasm. Dynamic diffuse global
+use GPU compute passes generated from the Vulkan effect kernels. The HUD uses a separate WebGPU canvas at its logical resolution. Dynamic diffuse global
 illumination and the Windows GPU benchmark are currently
-available on the Vulkan backend.
+available on the Vulkan backend. The web build ships WGSL shaders from
+`Source/Platform/Web/Shaders`. After editing the GLSL voxel or effect kernels,
+regenerate their WGSL with `python Tools/Web/shaders.py` using Vulkan SDK
+`glslc` and Naga (`naga-wasi-cli@0.1.0`, or pass `--naga PATH`).
 
 ## Current foundation
 

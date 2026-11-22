@@ -15,7 +15,7 @@ depends = ["quaxel_core", "quaxel_platform"]
 
 [modules.quaxel_platform_backend]
 sources = ["Source/Platform/Web/Backend/*.dk"]
-libraries = ["Source/Platform/Web/Browser.c", ".duck/web/Effects.cpp"]
+libraries = ["Source/Platform/Web/Browser.c"]
 
 [modules.quaxel_core]
 sources = ["Source/Core/**/*.dk", "Source/Platform/Web/Files.dk"]

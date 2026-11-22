@@ -10,7 +10,6 @@
 //   PARTICLES  STRIDE words per particle.
 //   PARAMS     the effect's style and timing, written by the CPU.
 
-#ifndef QUAXEL_SOFTWARE_EFFECTS
 layout(push_constant) uniform Params {
     mat4 matrix;   // Bake: slot cell centre to collider grid coordinates.
     int base;      // First word of the slot in the page.
@@ -22,7 +21,6 @@ layout(push_constant) uniform Params {
 } pc;
 
 layout(set=0,binding=0,std430) buffer Page { int words[]; };
-#endif
 
 const int N = 64;
 const int DIRECTORY = 3;
@@ -93,9 +91,6 @@ int brickOf(ivec3 c) { ivec3 b = c >> 3; return b.x + 8 * (b.y + 8 * b.z); }
 // Writes the color only. EffectBricks.comp rebuilds the occupancy bits.
 void putVoxel(ivec3 c, int rgb) {
     if (!inGrid(c)) return;
-#ifdef QUAXEL_SOFTWARE_EFFECTS
-    words[DIRECTORY + brickOf(c)] = 1; // Visit touched bricks when rebuilding the upload.
-#endif
     words[pc.base + BRICKS + brickOf(c) * BRICK + MASK_WORDS + mortonCell(c & 7)] = (rgb & 0xFFFFFF) + 1;
 }
 

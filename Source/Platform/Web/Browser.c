@@ -40,45 +40,33 @@ EM_JS(int, qx_audio, (int action, const short *samples), {
     return Quaxel.audio(action, HEAP16, Number(samples) / 2);
 });
 EM_JS(int, qx_start, (void), { return Quaxel.graphics.start(); });
-struct Volume { int *data; int words; };
-static struct Volume *volumes, atlas;
-static int handles, capacity;
-
-static int map(struct Volume *volume, int words, void **mapped) {
+// Duck fills one mapping and immediately unmaps it. The GPU owns persistent volume data.
+static int *staging;
+static int capacity, mapped_words, handles;
+static int map_words(int words, void **mapped) {
     *mapped = NULL;
     if (words < 0) return 0;
-    int *next = realloc(volume->data, (words ? (size_t)words : 1) * sizeof(int));
-    if (!next) return 0;
-    volume->data = *mapped = next;
-    volume->words = words;
+    if (!staging || capacity < words) {
+        int *next = realloc(staging, (size_t)(words ? words : 1) * sizeof(int));
+        if (!next) return 0;
+        staging = next;
+        capacity = words;
+    }
+    *mapped = staging;
+    mapped_words = words;
     return 1;
 }
 int qx_map(int previous, int words, void **mapped) {
-    if (previous >= handles) return -1;
-    if (previous < 0 && handles == capacity) {
-        int size = capacity ? 2 * capacity : 64;
-        struct Volume *next = realloc(volumes, size * sizeof(*volumes));
-        if (!next) return -1;
-        volumes = next;
-        capacity = size;
-    }
-    int handle = previous < 0 ? handles : previous;
-    if (previous < 0) volumes[handle] = (struct Volume){0};
-    if (!map(&volumes[handle], words, mapped)) return -1;
-    if (previous < 0) handles++;
-    return handle;
+    if (previous >= handles || !map_words(words, mapped)) return -1;
+    return previous < 0 ? handles++ : previous;
 }
-int qx_map_atlas(int words, void **mapped) { return map(&atlas, words, mapped); }
-const int *qx_volume(int handle) {
-    return handle >= 0 && handle < handles ? volumes[handle].data : NULL;
-}
+int qx_map_atlas(int words, void **mapped) { return map_words(words, mapped); }
 EM_JS(void, qx_upload_words, (int handle, const int *data, int words), {
     const start = Number(data) / 4;
     Quaxel.graphics.upload(handle, HEAP32.subarray(start,start+words));
 });
 void qx_upload(int handle) {
-    struct Volume *volume = handle < 0 ? &atlas : &volumes[handle];
-    qx_upload_words(handle, volume->data, volume->words);
+    qx_upload_words(handle, staging, mapped_words);
 }
 EM_JS(int, qx_begin, (const float *matrix), {
     return Quaxel.graphics.begin(matrix ? HEAPF32.subarray(Number(matrix)/4,Number(matrix)/4+16) : null);
@@ -107,15 +95,12 @@ EM_JS(int, qx_draw, (int mesh,const float *matrix), {
 });
 EM_JS(int, qx_end, (void), { return Quaxel.graphics.end(); });
 EM_JS(void, stop_graphics, (void), { Quaxel.graphics.stop(); });
-void qx_stop_effects(void);
+
 void qx_stop(void) {
     stop_graphics();
-    qx_stop_effects();
-    for (int i = 0; i < handles; i++) free(volumes[i].data);
-    free(volumes);
-    free(atlas.data);
-    volumes = NULL;
-    atlas = (struct Volume){0};
+
+    free(staging);
+    staging = NULL;
     handles = capacity = 0;
 }
 
@@ -123,5 +108,25 @@ EM_JS(int, qx_caster, (int handle, const float *matrix, const float *bounds), {
     const offset=Number(matrix)/4;
     Quaxel.graphics.casters.push({handle,matrix:HEAPF32.slice(offset,offset+16),
         bounds:bounds ? HEAPF32.slice(Number(bounds)/4,Number(bounds)/4+6) : null});
+    return 1;
+});
+
+EM_JS(int, qx_pages, (int pages), { return Quaxel.graphics.ensurePages(pages); });
+EM_JS(int, qx_reset, (int slot), { return Quaxel.graphics.resetEffect(slot); });
+EM_JS(int, qx_params, (int slot,const void *data,int bytes), {
+    return Quaxel.graphics.effectParams(slot,HEAPU8.subarray(Number(data),Number(data)+bytes));
+});
+EM_JS(int, qx_bake, (int slot,int volume,const float *matrix,int x,int y,int z), {
+    return Quaxel.graphics.bake(slot,volume,HEAPF32.subarray(Number(matrix)/4,Number(matrix)/4+16),x,y,z);
+});
+EM_JS(int, qx_simulate, (int slot,int step,float seconds), {
+    return Quaxel.graphics.simulate(slot,step,seconds);
+});
+EM_JS(int, qx_stamp, (int slot,int tick), { return Quaxel.graphics.stamp(slot,tick); });
+EM_ASYNC_JS(int, qx_read_slot, (int slot,int words,void *destination), {
+    if (!destination) return 0;
+    const result=await Quaxel.graphics.readSlot(slot,words);
+    if (!result) return 0;
+    HEAPU32.set(result,Number(destination)/4);
     return 1;
 });

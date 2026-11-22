@@ -1,26 +1,44 @@
-#version 300 es
+#version 450
+#extension GL_EXT_samplerless_texture_functions : require
 precision highp float;
 precision highp int;
-uniform highp isampler2D grid;
-uniform ivec2 extent;
-uniform mat4 boxFromClip, worldFromClip;
-uniform mat3 normals;
-uniform vec4 sun, sunlight, sky, ground;
-uniform int lightCount;
-uniform bool hasShadows;
-uniform int shadowPass;
-uniform vec2 tileOrigin;
-uniform highp sampler2D pointMap;
-uniform highp sampler2D shadowMap;
-uniform mat4 lightFromWorld;
-uniform float shadowBias;
-uniform vec4 lights[64];
-out vec4 color;
-
-int word(int at) {
-    int width = textureSize(grid,0).x;
-    return texelFetch(grid,ivec2(at % width,at / width),0).r;
-}
+layout(set=0,binding=0,std430) readonly buffer Volume { int gridWords[]; };
+layout(set=0,binding=1,std140) uniform Draw {
+    mat4 boxFromClip;
+    vec4 axes[3];
+    vec4 viewport; // top-left and extent, in target pixels
+    ivec4 flags;   // 0 scene, 1 directional shadow, 2 point shadow
+} draw;
+#define boxFromClip draw.boxFromClip
+#define extent draw.viewport.zw
+#define shadowPass draw.flags.x
+#define tileOrigin draw.viewport.xy
+#define normals mat3(draw.axes[0].xyz,draw.axes[1].xyz,draw.axes[2].xyz)
+int word(int at) { return gridWords[at]; }
+#ifndef QUAXEL_DEPTH_ONLY
+layout(set=1,binding=0,std140) uniform Frame {
+    mat4 worldFromClip;
+    mat4 lightFromWorld;
+    vec4 sun, sunlight, sky, ground;
+    vec4 lights[64];
+    float shadowBias;
+    int lightCount;
+    int hasShadows;
+} frame;
+#define worldFromClip frame.worldFromClip
+#define lightFromWorld frame.lightFromWorld
+#define sun frame.sun
+#define sunlight frame.sunlight
+#define sky frame.sky
+#define ground frame.ground
+#define lights frame.lights
+#define shadowBias frame.shadowBias
+#define lightCount frame.lightCount
+#define hasShadows (frame.hasShadows!=0)
+layout(set=1,binding=1) uniform texture2D shadowMap;
+layout(set=1,binding=2) uniform texture2D pointMap;
+layout(location=0) out vec4 color;
+#endif
 int morton(ivec3 p) {
     ivec3 bits = (p & 1) | ((p & 2) << 2) | ((p & 4) << 4);
     return bits.x | (bits.y << 1) | (bits.z << 2);
@@ -28,7 +46,7 @@ int morton(ivec3 p) {
 
 void main() {
     vec2 pixel=gl_FragCoord.xy-tileOrigin;
-    vec2 xy = vec2(pixel.x,float(extent.y)-pixel.y)*2.0/vec2(extent)-1.0;
+    vec2 xy=pixel*2.0/vec2(extent)-1.0;
     ivec3 dims = ivec3(word(0),word(1),word(2));
     ivec3 bricks = (dims+7)/8;
     vec3 origin = ((boxFromClip*vec4(xy,0,1)).xyz+0.5)*vec3(dims);
@@ -59,6 +77,10 @@ void main() {
         int base=word(3+brick.x+bricks.x*(brick.y+bricks.y*brick.z));
         int index=morton(cell & 7);
         if (base!=0 && ((word(base+(index>>5))>>(index&31))&1)!=0) {
+#ifdef QUAXEL_DEPTH_ONLY
+            gl_FragDepth=t;
+            return;
+#else
             if (shadowPass!=0) { gl_FragDepth=t; color=vec4(0); return; }
             int rgb=word(base+16+index)-1;
             vec3 n=normals[face]*float(stepDir[face]==0 ? 1 : -stepDir[face]);
@@ -79,7 +101,7 @@ void main() {
                 vec2 texel=1.0/vec2(textureSize(shadowMap,0));
                 visibility=0.0;
                 for(int sy=-1;sy<=1;sy++) for(int sx=-1;sx<=1;sx++)
-                    visibility+=step(uv.z-shadowBias*slope*2.0,texture(shadowMap,uv.xy+vec2(sx,sy)*texel).r)/9.0;
+                    visibility+=step(uv.z-shadowBias*slope*2.0,texelFetch(shadowMap,clamp(ivec2(uv.xy/texel)+ivec2(sx,sy),ivec2(0),textureSize(shadowMap,0)-1),0).r)/9.0;
             }
             vec3 light=ambient*ao+sunlight.rgb*(visibility*max(dot(n,sun.xyz),0.0)*mix(1.0,ao,0.35));
             for (int i=0; i<lightCount; i++) {
@@ -92,6 +114,7 @@ void main() {
                     float major=max(magnitude[a],0.00001);
                     int face=2*a+(delta[a]<0.0 ? 1 : 0);
                     vec2 at=0.5+0.5*vec2(delta[(a+1)%3],-delta[(a+2)%3])/major;
+                    at.y=1.0-at.y;
                     int size=textureSize(pointMap,0).x/6;
                     ivec2 texel=ivec2(face,i)*size+clamp(ivec2(at*float(size)),ivec2(0),ivec2(size-1));
                     float bias=0.025+major/float(size);
@@ -103,6 +126,7 @@ void main() {
             color=vec4(mix(12.92*linear,1.055*pow(linear,vec3(1.0/2.4))-0.055,greaterThan(linear,vec3(0.0031308))),1);
             gl_FragDepth=t;
             return;
+#endif
         }
         // Walk a cell inside a populated brick, jump to the far edge of an empty brick.
         int size=base==0 ? 8 : 1;

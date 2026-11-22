@@ -33,7 +33,8 @@ with tempfile.NamedTemporaryFile(dir=out, delete=False) as tmp:
 Path(tmp.name).replace(out / "assets.gz")
 (out / "assets.json").write_text(json.dumps(index))
 html = (HOST / "shell.html").read_text().replace("@GAME@", project["name"])
-for name in ("browser.js", "graphics.js", "shadows.js", "voxel.frag"):
+shutil.copytree(HOST / "Shaders", out / "Shaders", dirs_exist_ok=True)
+for name in ("browser.js", "graphics.js", "shadows.js"):
     shutil.copyfile(HOST / name, out / name)
     if name.endswith(".js"):
         version = hashlib.sha256((out / name).read_bytes()).hexdigest()[:12]
