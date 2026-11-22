@@ -1,0 +1,79 @@
+QuaxelBrowser
+#{
+    extern "C" int MapAtlas(int words, void*& mapped) = "qx_map_atlas"
+    extern "C" int Pages(int pages) = "qx_pages"
+    extern "C" int Reset(int slot) = "qx_reset"
+    extern "C" int Params(int slot, void* data, int bytes) = "qx_params"
+    extern "C" int Bake(int slot, int handle, void* matrix, int x, int y, int z) = "qx_bake"
+    extern "C" int Simulate(int slot, int step, float seconds) = "qx_simulate"
+    extern "C" int Stamp(int slot, int tick) = "qx_stamp"
+    extern "C" int ReadSlot(int slot, int words, void* destination) = "qx_read_slot"
+    extern "C" int Start() = "qx_start"
+    extern "C" int Map(int previous, int words, void*& mapped) = "qx_map"
+    extern "C" void Upload(int handle) = "qx_upload"
+    extern "C" int Begin(void* matrix) = "qx_begin"
+    extern "C" int Trace(int handle, void* matrix, float left, float top, float right, float bottom, void* axes) = "qx_trace"
+    extern "C" int Caster(int handle, void* matrix, void* bounds) = "qx_caster"
+    extern "C" int Point(void* data) = "qx_point"
+    extern "C" int Light(void* matrix, void* lighting) = "qx_light"
+    extern "C" int Ui(int x, int y, int width, int height, uint color, uint first, uint last, int cell) = "qx_ui"
+    extern "C" int Mesh(void* v, int n, void* i, int count) = "qx_mesh"
+    extern "C" int Draw(int mesh, void* matrix) = "qx_draw"
+    extern "C" int End() = "qx_end"
+    extern "C" void Stop() = "qx_stop"
+    extern "C" int Open(string title, int width, int height) = "qx_window"
+    extern "C" int Resize(int width, int height) = "qx_resize"
+    extern "C" int Input(int index) = "qx_input"
+    extern "C" int Frame() = "qx_frame"
+    extern "C" double Now() = "emscripten_get_now"
+    extern "C" int Icon(string path) = "qx_icon"
+    extern "C" int Audio(int action, void* samples) = "qx_audio"
+}
+
+QuaxelPlatformBackend
+#{
+    -bool Opened
+    bool SupportsWindowing() { return true }
+    bool OpenWindow(string title, int width, int height, bool visible)
+    {
+        Opened = QuaxelBrowser.Open(title, width, height) != 0
+        return Opened
+    }
+    bool ResizeWindow(int width, int height) { return QuaxelBrowser.Resize(width, height) != 0 }
+    bool SetWindowIcon(string path) { return QuaxelBrowser.Icon(path) != 0 }
+    bool IsWindowOpen() { return Opened }
+    CloseWindow() { Opened = false }
+    bool RequestWindowClose() { Opened = false
+        return true }
+    bool PumpWindow(bool wait) { return Opened && QuaxelBrowser.Frame() != 0 }
+    SetRedrawHandler(func () handler) {}
+    ClearRedrawHandler() {}
+    bool ConsumeWindowStall() { return QuaxelBrowser.Input(263) != 0 }
+    bool IsKeyDown(int key) { return QuaxelBrowser.Input(key) != 0 }
+    bool IsMouseButtonDown() { return QuaxelBrowser.Input(256) != 0 }
+    bool IsRightMouseButtonDown() { return QuaxelBrowser.Input(257) != 0 }
+    int TakeWheelNotches() { return QuaxelBrowser.Input(260) }
+    bool GetMousePosition(int& x, int& y)
+    {
+        x = QuaxelBrowser.Input(258)
+        y = QuaxelBrowser.Input(259)
+        return Opened
+    }
+    bool GetWindowSize(int& width, int& height)
+    {
+        width = QuaxelBrowser.Input(261)
+        height = QuaxelBrowser.Input(262)
+        return Opened
+    }
+    bool GetClockFrequency(long& frequency) { frequency = 1000000
+        return true }
+    bool ReadClock(long& ticks) { ticks = (long)(QuaxelBrowser.Now() * 1000.0)
+        return true }
+}
+QuaxelAudioBackend
+#{
+    bool Open() { return QuaxelBrowser.Audio(0, null) != 0 }
+    bool Ready() { return QuaxelBrowser.Audio(1, null) != 0 }
+    bool Submit(int16 [1600]& samples) { return QuaxelBrowser.Audio(2, &samples[0]) != 0 }
+    Close() { QuaxelBrowser.Audio(3, null) }
+}

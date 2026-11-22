@@ -55,10 +55,43 @@ QuaxelBytes
     }
 }
 
-QuaxelFileNative
+QuaxelStreamNative
 #{
-    extern "C" int _wmkdir(string path)
-    extern "C" int _wremove(string path)
+    extern "C" long fread(void* bytes, long size, long count, void* stream)
+    extern "C" long fwrite(void* bytes, long size, long count, void* stream)
+}
+
+// Reads and writes byte counts. The platform opens paths in the game's filesystem.
+QuaxelFile
+{
+    -void* Stream
+
+    bool Open(string path)
+    {
+        Close()
+        Stream = QuaxelFileNative.Open(path, "rb")
+        return Stream != null
+    }
+
+    bool Create(string path)
+    {
+        Close()
+        Stream = QuaxelFileNative.Open(path, "wb")
+        return Stream != null
+    }
+
+    long Read(void* bytes, long count) { return QuaxelStreamNative.fread(bytes, 1, count, Stream) }
+    long Write(void* bytes, long count) { return QuaxelStreamNative.fwrite(bytes, 1, count, Stream) }
+
+    bool Close()
+    {
+        if Stream == null { return true }
+        int result = QuaxelFileNative.Close(Stream)
+        Stream = null
+        return result == 0
+    }
+
+    ~QuaxelFile() { Close() }
 }
 
 // Whole files. Paths are relative to the working directory, like `file`'s.
@@ -66,20 +99,20 @@ QuaxelFiles
 #{
     bool Exists(string path)
     {
-        file probe
+        QuaxelFile probe
         return probe.Open(path)
     }
 
     // Appends the whole file to Bytes. False when it cannot be opened.
     bool ReadBytes(string path, uint8 []& bytes)
     {
-        file source
+        QuaxelFile source
         if !source.Open(path) { return false }
         uint8 [4096] chunk
-        long count = source.Read(chunk)
+        long count = source.Read(&chunk[0], 4096)
         while count > 0 {
             for i : 0; i < count; i++ { bytes += chunk[i] }
-            count = source.Read(chunk)
+            count = source.Read(&chunk[0], 4096)
         }
         return true
     }
@@ -87,37 +120,37 @@ QuaxelFiles
     // Replaces the file with Bytes. False when it cannot be written in full.
     bool WriteBytes(string path, uint8 []& bytes)
     {
-        file target
+        QuaxelFile target
         if !target.Create(path) { return false }
         uint8 [4096] chunk
         int at = 0
         int total = (int)bytes.Len
         while total - at >= 4096 {
             for i : 0; i < 4096; i++ { chunk[i] = bytes[at + i] }
-            if target.Write(chunk) != 4096 { return false }
+            if target.Write(&chunk[0], 4096) != 4096 { return false }
             at += 4096
         }
         while at < total {
             uint8 b = bytes[at]
-            if target.Write(b) != 1 { return false }
+            if target.Write(&b, 1) != 1 { return false }
             at++
         }
-        return true
+        return target.Close()
     }
 
     // Deletes a file. False when it is not there or cannot be deleted.
-    bool Remove(string path) { return QuaxelFileNative._wremove(path) == 0 }
+    bool Remove(string path) { return QuaxelFileNative.Remove(path) == 0 }
 
     // Makes one folder, whose parent must exist. True when it is there
     // afterward, whether made now or before.
     bool MakeFolder(string path)
     {
-        QuaxelFileNative._wmkdir(path)
-        file probe
+        QuaxelFileNative.MakeFolder(path)
+        QuaxelFile probe
         string test = path + "/.quaxel-probe"
         if !probe.Create(test) { return false }
         probe.Close()
-        QuaxelFileNative._wremove(test)
+        QuaxelFileNative.Remove(test)
         return true
     }
 }

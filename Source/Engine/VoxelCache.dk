@@ -17,15 +17,15 @@ QuaxelCacheChecksum
 
 QuaxelAssets
 #{
-    -bool ReadFaceCache(file& cache, uint sourceHash, QuaxelWorld& world, int first)
+    -bool ReadFaceCache(QuaxelFile& cache, uint sourceHash, QuaxelWorld& world, int first)
     {
         uint [4] header
-        if cache.Read(header) != 4 || header[0] != (uint)0x43585651 || header[1] != (uint)1 || header[2] != sourceHash { return false }
+        if cache.Read(&header[0], 16) != 16 || header[0] != (uint)0x43585651 || header[1] != (uint)1 || header[2] != sourceHash { return false }
         bool loaded = false
         uint8 [4096] bytes
         for section : (uint)0; section < header[3]; section++ {
             uint [3] meta
-            if cache.Read(meta) != 3 { return false }
+            if cache.Read(&meta[0], 12) != 12 { return false }
             bool ao = meta[0] == (uint)0x31304f41 // AO01
             if ao && (loaded || (meta[1] & (uint)15) != (uint)0) { return false }
             int volume = first
@@ -61,7 +61,7 @@ QuaxelAssets
             }
         }
         uint8 trailing = 0
-        if !loaded || cache.Read(trailing) != 0 { return false }
+        if !loaded || cache.Read(&trailing, 1) != 0 { return false }
         for volume : first; volume < world.VolumeCount; volume++ { world.EnableFaceAo(volume) }
         return true
     }

@@ -1,0 +1,42 @@
+QuaxelPlatformBackend
+#{
+    PreferUncappedPresentation() {  }
+    string PresentationMode() { return "WebGL 2" }
+    bool StartGpuTiming() { return false }
+    double MeanLightingMs() { return 0.0 }
+    bool FinishGpuTiming(double []& samples) { return false }
+    bool ReadThreadTime(long& ticks) { return false }
+
+    bool StartRenderer() { return QuaxelBrowser.Start() != 0 }
+    int MapVolume(int previous, int words, void*& mapped) { return QuaxelBrowser.Map(previous, words, mapped) }
+    UnmapVolume(int handle) { QuaxelBrowser.Upload(handle) }
+    bool BeginVoxelFrame() { return QuaxelBrowser.Begin(null) != 0 }
+    bool TraceVolume(int handle, void* boxFromClip, float left, float top, float right, float bottom, void* axes) { return QuaxelBrowser.Trace(handle, boxFromClip, left, top, right, bottom, axes) != 0 }
+    int BeginProbeField(bool uniformUpdates) { return 0 }
+    WriteProbeRoot(int slot, int count, void* cells, void* positions) {  }
+    WriteProbeWindow(void* roots) {  }
+    bool AddPointLight(void* data) { return QuaxelBrowser.Point(data) != 0 }
+    bool AddBoundedShadowCaster(int handle, void* boxFromWorld, void* bounds) { return QuaxelBrowser.Caster(handle, boxFromWorld, bounds) != 0 }
+    bool SubmitBoundedCaster(int handle, void* boxFromWorld, void* bounds, bool actor) { return QuaxelBrowser.Caster(handle, boxFromWorld, bounds) != 0 }
+    bool AddShadowCaster(int handle, void* boxFromWorld) { return QuaxelBrowser.Caster(handle, boxFromWorld, null) != 0 }
+    bool LightVoxels(void* worldFromClip, void* lighting) { return QuaxelBrowser.Light(worldFromClip, lighting) != 0 }
+
+    bool EnsureEffectPages(int pages) { return QuaxelBrowser.Pages(pages) != 0 }
+    bool ResetEffect(int slot) { return QuaxelBrowser.Reset(slot) != 0 }
+    bool WriteEffectParams(int slot, void* data, int bytes) { return QuaxelBrowser.Params(slot, data, bytes) != 0 }
+    bool BakeEffect(int slot, int volume, void* matrix, int cellsX, int cellsY, int cellsZ) { return QuaxelBrowser.Bake(slot, volume, matrix, cellsX, cellsY, cellsZ) != 0 }
+    bool SimulateEffect(int slot, int step, float seconds) { return QuaxelBrowser.Simulate(slot, step, seconds) != 0 }
+    bool DrawEffect(int slot, int tick) { return QuaxelBrowser.Stamp(slot, tick) != 0 }
+    bool TraceEffect(int slot, void* boxFromClip, float left, float top, float right, float bottom, void* axes) { return QuaxelBrowser.Trace(0x40000000 + slot, boxFromClip, left, top, right, bottom, axes) != 0 }
+    bool ReadEffectSlot(int slot, int words, void* destination) { return QuaxelBrowser.ReadSlot(slot, words, destination) != 0 }
+
+    bool DrawUi(int x, int y, int width, int height, uint color, uint glyphFirst, uint glyphLast, int cell) { return QuaxelBrowser.Ui(x, y, width, height, color, glyphFirst, glyphLast, cell) != 0 }
+    bool MapUiAtlas(int words, void*& mapped) { return QuaxelBrowser.MapAtlas(words, mapped) != 0 }
+    UnmapUiAtlas() { QuaxelBrowser.Upload(-1) }
+
+    int CreateMesh(void* vertices, int vertexCount, void* indices, int indexCount) { return QuaxelBrowser.Mesh(vertices, vertexCount, indices, indexCount) }
+    bool BeginFrame(void* viewProjection) { return QuaxelBrowser.Begin(viewProjection) != 0 }
+    bool DrawMesh(int mesh, void* model) { return QuaxelBrowser.Draw(mesh, model) != 0 }
+    bool EndFrame() { return QuaxelBrowser.End() != 0 }
+    StopRenderer() { QuaxelBrowser.Stop() }
+}

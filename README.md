@@ -32,6 +32,30 @@ Windows outputs use `.duck/build/windows/<profile>`; headless engine outputs use
 `.duck/build/headless/<profile>`. The default headless game retains
 `.duck/build/<profile>`. Backend outputs cannot overwrite one another.
 
+## Browser build
+
+With a Memory64-capable Emscripten SDK activated, run
+`./build.ps1 -Platform web -Profile release` here to build the engine, or in
+Hellfeather to build the playable game. The game uses its existing Duck entry
+point, simulation and assets. From the Hellfeather repository:
+
+```powershell
+python -m http.server 8000 --bind 127.0.0.1 --directory .duck/build/web/wasm64/release/site
+```
+
+Open `http://127.0.0.1:8000/Hellfeather.html` in a browser with WebGL 2,
+WebAssembly Memory64 and JSPI. Deploy the contents of `site/` together.
+The page unpacks the game assets before startup and keeps saves in browser
+storage for the game's origin. Each frame yields to the browser's animation
+scheduler. A key press or pointer press enables audio.
+
+`Quaxel.Web.dkp` selects the browser file bindings and window, input, audio and
+graphics backend in `Source/Platform/Web/`. WebGL traces voxel bricks, renders
+meshes, directional sunlight and shadowed point lights. Particle simulation and stamping
+share the Vulkan effect kernels and run in Wasm. Dynamic diffuse global
+illumination and the Windows GPU benchmark are currently
+available on the Vulkan backend.
+
 ## Current foundation
 
 `Quaxel.dkp` is a library project without `Main`. `Source/Core/Runtime.dk`
@@ -41,7 +65,7 @@ restarts it, `Advance()` increments the frame while running, and `Stop()` keeps
 the last frame available. Games can read the `Frame` and `Running` properties.
 The static `Quaxel` functions still accept separately stored frame and running
 values.
-All engine runtime and game source is Duck; PowerShell is only a build launcher.
+Game logic and the shared engine are written in Duck. The web backend also uses C, C++, JavaScript and GLSL.
 The Duck bootstrap compiler and build tool are currently implemented in C++.
 
 `quaxel_engine` (`Source/Engine`) owns the main loop. A game derives from

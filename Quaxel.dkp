@@ -5,4 +5,4 @@ name = "Quaxel"
 kind = "library"
 
 [modules.quaxel_core]
-sources = ["Source/Core/**/*.dk"]
+sources = ["Source/Core/**/*.dk", "Source/Platform/Native/Files.dk"]

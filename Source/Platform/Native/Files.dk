@@ -1,0 +1,7 @@
+QuaxelFileNative
+#{
+    extern "C" int Close(void* stream) = "fclose"
+    extern "C" void* Open(string path, string mode) = "_wfopen"
+    extern "C" int MakeFolder(string path) = "_wmkdir"
+    extern "C" int Remove(string path) = "_wremove"
+}

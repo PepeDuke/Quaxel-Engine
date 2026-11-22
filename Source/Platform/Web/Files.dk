@@ -1,0 +1,10 @@
+QuaxelFileNative
+#{
+    extern "C" int Close(void* stream) = "qx_close"
+    -extern "C" void* fopen(name path, name mode)
+    -extern "C" int mkdir(name path, int mode)
+    extern "C" int Remove(string path) = "qx_remove"
+
+    void* Open(string path, string mode) { return fopen((name)path, (name)mode) }
+    int MakeFolder(string path) { return mkdir((name)path, 511) }
+}
