@@ -7,6 +7,7 @@ import shutil
 import sys
 import tempfile
 import tomllib
+import zipfile
 
 ENGINE = Path(__file__).resolve().parents[2]
 HOST = ENGINE / "Source/Platform/Web"
@@ -40,6 +41,15 @@ for name in ("browser.js", "graphics.js", "shadows.js"):
         version = hashlib.sha256((out / name).read_bytes()).hexdigest()[:12]
         html = html.replace(f'src="{name}"', f'src="{name}?v={version}"')
 (out / (project["name"] + ".html")).write_text(html)
+# Static hosts such as itch.io require the entry page to be index.html.
+(out / "index.html").write_text(html)
+shipped = [project["name"] + suffix for suffix in (".html", ".js", ".wasm")]
+shipped += ["index.html", "assets.gz", "assets.json", "browser.js", "graphics.js", "shadows.js"]
+shipped += [p.relative_to(out).as_posix() for p in sorted((out / "Shaders").glob("*.wgsl"))]
+with zipfile.ZipFile(build / (project["name"] + "-web.zip"), "w", zipfile.ZIP_DEFLATED) as archive:
+    for name in shipped:
+        # assets.gz is already compressed; deflating it again only costs time.
+        archive.write(out / name, name, zipfile.ZIP_STORED if name.endswith(".gz") else zipfile.ZIP_DEFLATED)
 # Keep Duck's standard HTML entry point usable from the build directory.
 (build / (project["name"] + ".html")).write_text(
     '<!doctype html><script>location.replace("site/" + location.pathname.split("/").pop() + location.search + location.hash)</script>')

@@ -20,8 +20,9 @@ const Quaxel = {
         return 1;
     },
     fit() {
-        const height = Math.min(innerHeight, this.requestedHeight);
-        const width = Math.round(height * innerWidth / Math.max(innerHeight,1));
+        // A hidden or collapsed iframe reports a 0x0 viewport; WebGPU rejects empty textures.
+        const height = Math.max(1, Math.min(innerHeight, this.requestedHeight));
+        const width = Math.max(1, Math.round(height * innerWidth / Math.max(innerHeight,1)));
         const {scene,overlay} = this.graphics;
         if (overlay.width !== width) overlay.width = width;
         if (overlay.height !== height) overlay.height = height;
@@ -138,7 +139,13 @@ const Quaxel = {
             };
             const [index, pack] = await Promise.all([
                 fetchOk('assets.json').then(r=>r.json()),
-                fetchOk('assets.gz').then(r=>new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer()),
+                // Hosts such as itch.io serve gzip files with Content-Encoding: gzip, so the
+                // browser may already have decompressed the pack. Only gunzip if the magic bytes remain.
+                fetchOk('assets.gz').then(r=>r.arrayBuffer()).then(bytes => {
+                    const head = new Uint8Array(bytes,0,Math.min(2,bytes.byteLength));
+                    if (head[0] !== 0x1f || head[1] !== 0x8b) return bytes;
+                    return new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
+                }),
                 this.graphics.initialize(fetchOk,fail)
             ]);
             status.textContent = 'Preparing ' + game + '…';

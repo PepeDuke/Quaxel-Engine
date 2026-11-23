@@ -805,7 +805,7 @@ T{
         QuaxelEffectFixtures.memcpy(&words[0], &params, (long)QuaxelEffectParams.Size)
         T.AreEqual(words[39], style.MaxParticles)
         T.AreEqual(words[38], params.Seed)
-        T.AreEqual(words[32], QuaxelEffectContact.Slide + 0)
+        T.AreEqual(words[32], QuaxelEffectContact.Slide)
         T.AreEqual(words[10], 1000000000)
     }
 }
