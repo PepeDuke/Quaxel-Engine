@@ -109,8 +109,14 @@ ceiling pressure and stay as tall cliffs. Only slopes that would cover ground
 behind them are pulled down. Those slopes are nearly edge-on from this camera,
 so the height loss barely shows.
 
-The rule relies on the fixed camera, as does the shell in stage 8. A rotating
-camera would need the porthole described under risks, and a solid fill.
+The rule and the shell in stage 8 are built for the play camera. A camera
+looking another way, as in a cutscene, calls `ViewFrom(world, forward, focus)`:
+within `ViewReach` of what it looks at, the same ceiling is swept along its own
+view over the loaded chunks (one column a step along the view's major ground
+axis, the ray falling `drop` cells over it), and the shell is written for the
+faces it can see. Everything is still plain voxels, drawn and lit as always.
+`ViewFrom` with the play camera's direction gives the chunks back exactly as
+built. A chunk keeps its full heights and seeds for this.
 
 ## Modules
 

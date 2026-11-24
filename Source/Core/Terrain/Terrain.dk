@@ -34,10 +34,22 @@ QuaxelTerrainChunk
     int Z
     int Node
     int Volume
+    // As drawn from the current view: mountains cut to the view ceiling.
     int [] Heights
     QuaxelTerrainKind [] Kinds
     int [] Surfaces
     int [] PlacementNodes
+    // Kept to draw the chunk again from another view (see ViewFrom): full
+    // heights, open ground's floor plus the lip (or -1), and the color inputs.
+    int [] Raw
+    int [] Seeds
+    float [] Walls
+    float [] Glows
+    // As built for the play view: its heights and the lowest cell of its shell.
+    int [] PlayHeights
+    int [] PlayLows
+    // Whether its voxels are drawn for a view other than the play view.
+    bool Viewed
 }
 
 // Generates and streams terrain, and answers walkability queries. A game derives
@@ -52,6 +64,15 @@ QuaxelTerrain
     QuaxelTerrainPlacement [] Placements
     -QuaxelTerrainChunk [] Chunks
     -int LastChunk
+    // The way the camera looks at the terrain, and whether that is the play
+    // view the chunks are built for. See ViewFrom.
+    -vec3 ViewForward = vec3(-0.57735026, -0.57735026, -0.57735026)
+    -bool PlayView = true
+    // Around what the camera looks at, the chunks drawn for its view.
+    -vec3 ViewFocus
+    // The shared grid of the last sweep from another view, kept to be refilled.
+    -float [] ViewSeeds
+    -float [] ViewCeilings
     -int OriginColumn
     -int OriginRow
     -int SpawnLevel
@@ -570,6 +591,12 @@ QuaxelTerrain
                 Chunks[i].Heights += 0
                 Chunks[i].Kinds += QuaxelTerrainKind.Mountain
                 Chunks[i].Surfaces += QuaxelTerrainSurface.Rock
+                Chunks[i].Raw += 0
+                Chunks[i].Seeds += -1
+                Chunks[i].Walls += 0.0
+                Chunks[i].Glows += 0.0
+                Chunks[i].PlayHeights += 0
+                Chunks[i].PlayLows += 0
             }
         }
         while !IsReady(focus) {
@@ -975,10 +1002,22 @@ QuaxelTerrain
         if dx > ResidentRadius || dz > ResidentRadius { return true }
         int slot = FreeSlot()
         if slot < 0 { return true }
+        // Full heights and seeds, kept for drawing from another view.
+        for x : 0; x < ChunkColumns; x++ {
+            for z : 0; z < ChunkColumns; z++ {
+                int source = (x + Pad) * Span + z + Pad
+                int target = x * ChunkColumns + z
+                Chunks[slot].Raw[target] = CoreHeight[x * Core + z]
+                Chunks[slot].Seeds[target] = Dist[source] < 0.0 ? FloorGrid[source] + Config.Lip | -1
+                Chunks[slot].Walls[target] = Math.Clamp(1.0 + Dist[source] / 2.0, 0.0, 1.0)
+                Chunks[slot].Glows[target] = GlowAt(BuildStartColumn + Pad + x, BuildStartRow + Pad + z)
+            }
+        }
         SweepCeiling()
         for n : 0; n < Chunks[slot].PlacementNodes.Len; n++ { world.DestroyNode(Chunks[slot].PlacementNodes[n]) }
         Chunks[slot].PlacementNodes.Clear()
         Chunks[slot].Valid = true
+        Chunks[slot].Viewed = false
         Chunks[slot].X = BuildChunkX
         Chunks[slot].Z = BuildChunkZ
         LastChunk = slot
@@ -987,11 +1026,14 @@ QuaxelTerrain
                 int source = x * Core + z
                 int target = x * ChunkColumns + z
                 Chunks[slot].Heights[target] = CoreHeight[source]
+                Chunks[slot].PlayHeights[target] = CoreHeight[source]
                 Chunks[slot].Kinds[target] = CoreKind[source]
                 Chunks[slot].Surfaces[target] = CoreSurface[source]
             }
         }
         if !WriteVoxels(world, slot) { return false }
+        // Built while the camera looks another way: drawn from there instead.
+        if !PlayView && !ViewChunks(world, slot) { return false }
         QuaxelTransform transform = world.GetTransform(Chunks[slot].Node)
         transform.Position = vec3(
             ((float)BuildChunkX + 0.5) * (float)ChunkColumns * Cell,
@@ -1014,6 +1056,7 @@ QuaxelTerrain
                 int index = x * Core + z
                 int height = Math.Min(CoreHeight[index], ChunkCells)
                 int low = Math.Max(0, Math.Min(Math.Min(CoreHeight[index + Core], CoreHeight[index + 1]), height - 1))
+                Chunks[slot].PlayLows[x * ChunkColumns + z] = low
                 float glow = GlowAt(BuildStartColumn + Pad + x, BuildStartRow + Pad + z)
                 QuaxelTerrainCell cell
                 cell.Surface = CoreSurface[index]
@@ -1031,6 +1074,249 @@ QuaxelTerrain
             }
         }
         return true
+    }
+
+    // Draws the terrain from the point of view of a camera looking along
+    // Forward. The chunks are built for the play view, whose camera looks down
+    // -X -Z at 45 degrees: mountains that would hide open ground from it are
+    // cut down (SweepCeiling) and only the faces it can see are written. A
+    // camera looking another way, as in a cutscene, has the same done for its
+    // own view over every loaded chunk, and the play view gives back the
+    // chunks exactly as built. True when nothing failed; it does nothing while
+    // the view is unchanged. Only chunks within ViewReach of Focus, what the
+    // camera looks at, are drawn for another view; the rest keep the play view.
+    bool ViewFrom(QuaxelWorld& world, vec3 forward, vec3 focus)
+    {
+        float length = forward.Length()
+        if length <= 0.0 { return true }
+        vec3 f = forward * (1.0 / length)
+        bool play = f (0.001)== vec3(-0.57735026, -0.57735026, -0.57735026)
+        ViewFocus = focus
+        if play && PlayView { return true }
+        if !play && !PlayView && f (0.0005)== ViewForward {
+            // The same view: draw only chunks it has newly come near.
+            for i : 0; i < Chunks.Len; i++ {
+                if Chunks[i].Valid && !Chunks[i].Viewed && NearFocus(i) { return ViewChunks(world, -1) }
+            }
+            return true
+        }
+        ViewForward = f
+        PlayView = play
+        return ViewChunks(world, -1)
+    }
+
+    // Whether a chunk lies within ViewReach of ViewFocus.
+    -bool NearFocus(int slot)
+    {
+        float size = (float)ChunkColumns * Cell
+        float lowX = (float)Chunks[slot].X * size
+        float lowZ = (float)Chunks[slot].Z * size
+        float dx = Math.Max(0.0, Math.Max(lowX - ViewFocus.X, ViewFocus.X - (lowX + size)))
+        float dz = Math.Max(0.0, Math.Max(lowZ - ViewFocus.Z, ViewFocus.Z - (lowZ + size)))
+        return dx * dx + dz * dz <= ViewReach * ViewReach
+    }
+
+    // Whether the terrain is drawn for the play view.
+    bool ViewIsPlay() { return PlayView }
+
+    // Draws the loaded chunks again for the current view: all of them, or
+    // only Only when it is a slot.
+    -bool ViewChunks(QuaxelWorld& world, int only)
+    {
+        if PlayView {
+            for i : 0; i < Chunks.Len; i++ {
+                if !Chunks[i].Valid || !Chunks[i].Viewed || (only >= 0 && i != only) { continue }
+                for n : 0; n < ChunkColumns * ChunkColumns; n++ { Chunks[i].Heights[n] = Chunks[i].PlayHeights[n] }
+                Chunks[i].Viewed = false
+                if !RewriteChunk(world, i, true) { return false }
+            }
+            return true
+        }
+        SweepView()
+        for i : 0; i < Chunks.Len; i++ {
+            if !Chunks[i].Valid || (only >= 0 && i != only) { continue }
+            if !NearFocus(i) {
+                // Far from the shot: kept as built, and drawn back if it was viewed.
+                for n : 0; n < ChunkColumns * ChunkColumns; n++ { Chunks[i].Heights[n] = Chunks[i].PlayHeights[n] }
+                if Chunks[i].Viewed {
+                    Chunks[i].Viewed = false
+                    if !RewriteChunk(world, i, true) { return false }
+                }
+                continue
+            }
+            Chunks[i].Viewed = true
+            if !RewriteChunk(world, i, false) { return false }
+        }
+        return true
+    }
+
+    // The view ceiling for ViewForward over every loaded chunk, as
+    // SweepCeiling does for the play view: a mountain column may stand no
+    // higher than the ray down the view from it still passes above the lip
+    // over open ground beyond. ceiling(c) = min(seed(c), ceiling(c + step) +
+    // drop), one column a step along the view's major ground axis, the ray
+    // falling drop cells over it. Sets each loaded chunk's Heights.
+    -SweepView()
+    {
+        int lowX = 2147483647
+        int lowZ = 2147483647
+        int highX = -2147483647
+        int highZ = -2147483647
+        for chunk : Chunks {
+            if !chunk.Valid { continue }
+            lowX = Math.Min(lowX, chunk.X)
+            lowZ = Math.Min(lowZ, chunk.Z)
+            highX = Math.Max(highX, chunk.X + 1)
+            highZ = Math.Max(highZ, chunk.Z + 1)
+        }
+        if highX <= lowX { return }
+        int width = (highX - lowX) * ChunkColumns
+        int depth = (highZ - lowZ) * ChunkColumns
+        int count = width * depth
+        float open = 1000000000.0
+        while ViewSeeds.Len < count {
+            ViewSeeds += 0.0
+            ViewCeilings += 0.0
+        }
+        for n : 0; n < count; n++ {
+            ViewSeeds[n] = open
+            ViewCeilings[n] = open
+        }
+        for chunk : Chunks {
+            if !chunk.Valid { continue }
+            int x0 = (chunk.X - lowX) * ChunkColumns
+            int z0 = (chunk.Z - lowZ) * ChunkColumns
+            for x : 0; x < ChunkColumns; x++ {
+                for z : 0; z < ChunkColumns; z++ {
+                    int seed = chunk.Seeds[x * ChunkColumns + z]
+                    if seed >= 0 { ViewSeeds[(x0 + x) * depth + z0 + z] = (float)seed }
+                }
+            }
+        }
+        vec3 f = ViewForward
+        float flat = Math.Hypot(f.X, f.Z)
+        // Straight down, or up, hides nothing.
+        if flat > 0.001 && f.Y < 0.0 {
+            float major = f.Z
+            float minor = f.X
+            int majorCount = depth
+            int minorCount = width
+            int majorStride = 1
+            int minorStride = depth
+            if Math.Abs(f.X) >= Math.Abs(f.Z) {
+                major = f.X
+                minor = f.Z
+                majorCount = width
+                minorCount = depth
+                majorStride = depth
+                minorStride = 1
+            }
+            int step = major < 0.0 ? -1 | 1
+            // The minor axis moves this far, and the ray falls this far, each step.
+            float shift = minor / Math.Abs(major)
+            float drop = (-f.Y / flat) * flat / Math.Abs(major)
+            int along = (int)Math.Floor(shift)
+            float t = shift - (float)along
+            for k : 0; k < majorCount; k++ {
+                // The far end of the view first: each column needs the one beyond it.
+                int m = step > 0 ? majorCount - 1 - k | k
+                int next = m + step
+                bool inside = next >= 0 && next < majorCount
+                for n : 0; n < minorCount; n++ {
+                    int at = m * majorStride + n * minorStride
+                    float carried = open
+                    if inside {
+                        int a = n + along
+                        float first = open
+                        float second = open
+                        if a >= 0 && a < minorCount { first = ViewCeilings[next * majorStride + a * minorStride] }
+                        if a + 1 >= 0 && a + 1 < minorCount { second = ViewCeilings[next * majorStride + (a + 1) * minorStride] }
+                        float beyond = open
+                        if first >= open { beyond = second }
+                        else if second >= open { beyond = first }
+                        else { beyond = first + (second - first) * t }
+                        if beyond < open { carried = beyond + drop }
+                    }
+                    ViewCeilings[at] = Math.Min(ViewSeeds[at], carried)
+                }
+            }
+        }
+        for i : 0; i < Chunks.Len; i++ {
+            if !Chunks[i].Valid { continue }
+            int x0 = (Chunks[i].X - lowX) * ChunkColumns
+            int z0 = (Chunks[i].Z - lowZ) * ChunkColumns
+            for x : 0; x < ChunkColumns; x++ {
+                for z : 0; z < ChunkColumns; z++ {
+                    int n = x * ChunkColumns + z
+                    int height = Chunks[i].Raw[n]
+                    float ceiling = ViewCeilings[(x0 + x) * depth + z0 + z]
+                    if Chunks[i].Kinds[n] == QuaxelTerrainKind.Mountain && ceiling < open {
+                        height = Math.Min(height, Math.Max(0, (int)Math.Floor(ceiling)))
+                    }
+                    Chunks[i].Heights[n] = height
+                }
+            }
+        }
+    }
+
+    // A drawn height of a loaded column, or 0 where none is loaded.
+    -int DrawnAt(int column, int row)
+    {
+        int chunk = FindChunk(QuaxelNoise.FloorDiv(column, ChunkColumns), QuaxelNoise.FloorDiv(row, ChunkColumns))
+        if chunk < 0 { return 0 }
+        int x = column - Chunks[chunk].X * ChunkColumns
+        int z = row - Chunks[chunk].Z * ChunkColumns
+        return Chunks[chunk].Heights[x * ChunkColumns + z]
+    }
+
+    // Writes a chunk's voxels again from its Heights: the play view's shell,
+    // or the cells a ray along ViewForward can reach, those with an empty top
+    // or an empty neighbor on a side that faces the camera.
+    -bool RewriteChunk(QuaxelWorld& world, int slot, bool play)
+    {
+        int volume = Chunks[slot].Volume
+        if !world.ResetVolume(volume) { return false }
+        int worldX = Chunks[slot].X * ChunkColumns
+        int worldZ = Chunks[slot].Z * ChunkColumns
+        vec3 f = ViewForward
+        int sideX = f.X < -0.01 ? 1 | (f.X > 0.01 ? -1 | 0)
+        int sideZ = f.Z < -0.01 ? 1 | (f.Z > 0.01 ? -1 | 0)
+        for x : 0; x < ChunkColumns; x++ {
+            for z : 0; z < ChunkColumns; z++ {
+                int n = x * ChunkColumns + z
+                int height = Math.Min(Chunks[slot].Heights[n], ChunkCells)
+                int low = 0
+                if play { low = Chunks[slot].PlayLows[n] }
+                else {
+                    int sides = height - 1
+                    if sideX != 0 { sides = Math.Min(sides, ViewNeighbor(slot, x + sideX, z)) }
+                    if sideZ != 0 { sides = Math.Min(sides, ViewNeighbor(slot, x, z + sideZ)) }
+                    low = Math.Max(0, sides)
+                }
+                QuaxelTerrainCell cell
+                cell.Surface = Chunks[slot].Surfaces[n]
+                cell.Column = worldX + x
+                cell.Row = worldZ + z
+                cell.Height = height
+                cell.Wall = Chunks[slot].Walls[n]
+                float glow = Chunks[slot].Glows[n]
+                for y : low; y < height; y++ {
+                    int hash = (worldX + x) * 73856093 ^ y * 19349663 ^ (worldZ + z) * 83492791
+                    cell.Hash = (hash ^ (hash >> 13)) & 2147483647
+                    cell.Y = y
+                    cell.Top = y == height - 1
+                    if !world.SetVoxel(volume, x, y, z, Lit(SurfaceColor(cell), glow)) { return false }
+                }
+            }
+        }
+        return true
+    }
+
+    // The drawn height beside a chunk's column, inside it or in the next one.
+    -int ViewNeighbor(int slot, int x, int z)
+    {
+        if x >= 0 && z >= 0 && x < ChunkColumns && z < ChunkColumns { return Chunks[slot].Heights[x * ChunkColumns + z] }
+        return DrawnAt(Chunks[slot].X * ChunkColumns + x, Chunks[slot].Z * ChunkColumns + z)
     }
 
     // Summed light from nearby fires, from 0 to 1.
@@ -1219,6 +1505,10 @@ QuaxelTerrain
     #int Core = 129
     #int ResidentRadius = 2
     #int ResidentChunks = 25
+    // How far from what a camera looks at the terrain is drawn for its view,
+    // in world units. A shot shows less than this around its target: its frame
+    // is at most about 8 units from it on the ground.
+    #float ViewReach = 12.0
     // Columns the camera-side sweep treats as unbounded.
     #int Unlimited = 536870912
     #float FieldCap = 8.0

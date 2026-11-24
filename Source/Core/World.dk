@@ -498,6 +498,20 @@ QuaxelWorld
         return true
     }
 
+    // Swaps the animation a node plays for another with the same clips and
+    // frames, such as a recolored copy of its model, keeping its place in the
+    // clip. False, and nothing changes, when the other has no such frame.
+    bool SwapAnimation(int id, int animation)
+    {
+        if !Has(id, QuaxelComponents.Animator) || animation < 0 || animation >= Animations.Len { return false }
+        QuaxelAnimator animator = Nodes[id - 1].Animator
+        if animator.Clip >= Animations[animation].ClipCount || animator.Frame >= Animations[animation].FrameCount(animator.Clip) { return false }
+        animator.Animation = animation
+        Nodes[id - 1].Animator = animator
+        Nodes[id - 1].Volume = Animations[animation].FrameVolume(animator.Clip, animator.Frame)
+        return true
+    }
+
     // Starts from the clip's first frame, unless that clip is already playing,
     // so a system can request the same clip on every step.
     bool PlayClip(int id, string clipName)

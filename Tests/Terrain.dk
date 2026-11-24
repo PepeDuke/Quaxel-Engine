@@ -148,6 +148,68 @@ T{
         T.IsTrue(open > 1000)
     }
 
+    // Seen from the opposite side, down +X +Z, the terrain is cut for that
+    // view instead; back at the play view, every chunk is as it was built.
+    ViewingFromAnotherSideCutsForItAndThePlayViewGivesTheBuildBack()
+    {
+        QuaxelTerrainConfig config
+        config.Seed = (uint)2
+        QuaxelWorld world()
+        QuaxelTerrain terrain()
+        T.IsTrue(terrain.Configure(config) && terrain.Start(world, vec3(0.0, 0.0, 0.0)))
+        T.IsTrue(terrain.ViewIsPlay())
+        int [] built
+        int [] words
+        for column : -128; column < 128; column += 3 {
+            for row : -128; row < 128; row += 3 { built += terrain.ColumnHeight(column, row) }
+        }
+        // The terrain's own volumes are the first it creates.
+        for i : 0; i < QuaxelTerrain.ResidentChunks; i++ { words += world.VolumeWords(i) }
+        vec3 middle = vec3(0.0, 0.0, 0.0)
+        T.IsTrue(terrain.ViewFrom(world, vec3(1.0, -1.0, 1.0), middle))
+        T.IsFalse(terrain.ViewIsPlay())
+        // From +X +Z looking down +X +Z, column (x, z) hides (x + k, z + k).
+        int open = 0
+        int lowered = 0
+        // Near the middle, so that the ground hidden behind each column, 60
+        // columns on, lies within the reach where the view is drawn.
+        for column : -32; column < 32; column++ {
+            for row : -32; row < 32; row++ {
+                if terrain.ColumnKind(column, row) != QuaxelTerrainKind.Open { continue }
+                open++
+                int height = terrain.ColumnHeight(column, row)
+                for k : 1; k <= 60; k++ {
+                    if terrain.ColumnKind(column - k, row - k) == QuaxelTerrainKind.Mountain {
+                        T.IsTrue(terrain.ColumnHeight(column - k, row - k) - k <= height + config.Lip + 1)
+                    }
+                }
+            }
+        }
+        T.IsTrue(open > 100)
+        int at = 0
+        for column : -128; column < 128; column += 3 {
+            for row : -128; row < 128; row += 3 {
+                if terrain.ColumnHeight(column, row) != built[at] { lowered++ }
+                at++
+            }
+        }
+        T.IsTrue(lowered > 0)
+        // Looking the same way again changes nothing.
+        T.IsTrue(terrain.ViewFrom(world, vec3(2.0, -2.0, 2.0), middle))
+        T.IsTrue(terrain.ViewFrom(world, vec3(-1.0, -1.0, -1.0), middle))
+        T.IsTrue(terrain.ViewIsPlay())
+        at = 0
+        int changed = 0
+        for column : -128; column < 128; column += 3 {
+            for row : -128; row < 128; row += 3 {
+                if terrain.ColumnHeight(column, row) != built[at] { changed++ }
+                at++
+            }
+        }
+        T.AreEqual(changed, 0)
+        for i : 0; i < words.Len; i++ { T.AreEqual(world.VolumeWords(i), words[i]) }
+    }
+
     BlockedColumnsLookBlocked()
     {
         QuaxelTerrainConfig config

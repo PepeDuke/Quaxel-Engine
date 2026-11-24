@@ -569,6 +569,39 @@ T{
         T.AreEqual(few.Error, "the file ended before the last row")
     }
 
+    SwappingToARecoloredCopyKeepsThePlaceInTheClip()
+    {
+        QuaxelWorld world()
+        QuaxelVoxelModelParser calm()
+        calm.FeedText(world, "qvox 1\nsize 1 1 1\ncolor e 202020\nclip idle loop\nframe 100\ne\nframe 100\ne\nframe 100\ne\n")
+        T.IsTrue(calm.Finish(world))
+        QuaxelVoxelModelParser angry()
+        angry.FeedText(world, "qvox 1\nsize 1 1 1\ncolor e FF0000\nclip idle loop\nframe 100\ne\nframe 100\ne\nframe 100\ne\n")
+        T.IsTrue(angry.Finish(world))
+        int node = world.CreateNode()
+        T.IsTrue(world.AttachAnimator(node, calm.Animation))
+        T.IsTrue(world.PlayClip(node, "idle"))
+        world.AdvanceAnimations(0.15)
+        QuaxelAnimator before = world.GetAnimator(node)
+        int drawn = world.VolumeOf(node)
+        T.AreEqual(before.Frame, 1)
+        T.IsTrue(world.SwapAnimation(node, angry.Animation))
+        QuaxelAnimator after = world.GetAnimator(node)
+        T.AreEqual(after.Animation, angry.Animation)
+        T.AreEqual(after.Frame, 1)
+        T.IsTrue(after.Elapsed (0.0001)== before.Elapsed)
+        T.IsTrue(after.Playing)
+        // It draws the copy's frame at once.
+        T.AreNotEqual(world.VolumeOf(node), drawn)
+        // A model without that frame is refused.
+        QuaxelVoxelModelParser brief()
+        brief.FeedText(world, "qvox 1\nsize 1 1 1\ncolor e FF0000\nclip idle loop\nframe 100\ne\n")
+        T.IsTrue(brief.Finish(world))
+        T.IsFalse(world.SwapAnimation(node, brief.Animation))
+        QuaxelAnimator kept = world.GetAnimator(node)
+        T.AreEqual(kept.Animation, angry.Animation)
+    }
+
     AModelWithoutClipsHasNoAnimation()
     {
         QuaxelWorld world()
