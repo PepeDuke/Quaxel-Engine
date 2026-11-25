@@ -1,0 +1,30 @@
+QuaxelTerrain
+{
+    // Sets context.Water, Mountains and Structures to the share of each kind
+    // of ground within radius of a world point, sampled on a 17 by 17 grid.
+    // Columns that are not resident are left out; with none resident the
+    // three are left as they were.
+    SampleSurroundings(float x, float z, float radius, QuaxelMusicContext& context)
+    {
+        int water = 0
+        int mountains = 0
+        int structures = 0
+        int seen = 0
+        float spacing = radius / 8.0
+        for i : -8; i <= 8; i++ {
+            for j : -8; j <= 8; j++ {
+                if i * i + j * j > 64 { continue }
+                QuaxelTerrainKind kind = ColumnKind(ColumnAt(x + (float)i * spacing), ColumnAt(z + (float)j * spacing))
+                if kind == QuaxelTerrainKind.Unloaded { continue }
+                seen++
+                if kind == QuaxelTerrainKind.Water { water++ }
+                else if kind == QuaxelTerrainKind.Mountain { mountains++ }
+                else if kind == QuaxelTerrainKind.Structure { structures++ }
+            }
+        }
+        if seen == 0 { return }
+        context.Water = (float)water / (float)seen
+        context.Mountains = (float)mountains / (float)seen
+        context.Structures = (float)structures / (float)seen
+    }
+}

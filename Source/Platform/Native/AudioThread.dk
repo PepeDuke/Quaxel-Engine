@@ -1,0 +1,152 @@
+// Plays the world's audio on a thread of its own, so the music keeps playing
+// and its synthesis costs the main thread nothing. The thread owns the music
+// engine, fills the audio device's buffers as they come free, and adds the
+// sound effects the main thread mixed. The main thread hands over effects
+// blocks with Queue each step, and the music's settings and surroundings with
+// QuaxelMusic.Exchange each frame. When the main thread stalls, the effects
+// fall silent until it catches up; the music does not stop.
+//
+// Everything the two threads share is touched inside ${ } only: the effects
+// queue, DeviceFailed, and QuaxelMusicLink. The device itself is opened by the
+// main thread before Start and closed after Stop, so only one thread uses it
+// at a time.
+QuaxelAudioThread
+#{
+    extern "C" void Sleep(int milliseconds)
+    extern "C" void* GetCurrentThread()
+    extern "C" int SetThreadPriority(void* thread, int priority)
+
+    -task Worker
+    -bool Running
+    // Effects blocks mixed by the main thread and not yet played, in sample
+    // units: up to three, oldest first. A full queue drops its oldest block,
+    // so a burst of steps after a stall does not delay later sounds.
+    -float [4800] Effects
+    -int EffectsFirst
+    -int EffectsCount
+    // Set by the thread when the device refuses a block; it then stops.
+    -bool DeviceFailed
+
+    // Starts the thread on an audio output that is already open. False where
+    // there are no threads, and the caller mixes on its own thread instead.
+    bool Start()
+    {
+        if Running { return true }
+        ${
+            EffectsFirst = 0
+            EffectsCount = 0
+            DeviceFailed = false
+        }
+        Worker = P{ QuaxelAudioThread.Run() }
+        Running = true
+        return true
+    }
+
+    // Stops the thread and waits for it, before the output is closed.
+    Stop()
+    {
+        if !Running { return }
+        Worker.Stop()
+        Worker.Join()
+        Running = false
+    }
+
+    // True once the device has refused a block and the thread has ended.
+    bool Failed()
+    {
+        bool failed = false
+        ${ failed = DeviceFailed }
+        return failed
+    }
+
+    // Hands over one step's sound effects, from MixEffects.
+    Queue(float [1600]& block)
+    {
+        ${
+            if EffectsCount == 3 {
+                EffectsFirst = (EffectsFirst + 1) % 3
+                EffectsCount--
+            }
+            int at = ((EffectsFirst + EffectsCount) % 3) * 1600
+            for i : 0; i < 1600; i++ { Effects[at + i] = block[i] }
+            EffectsCount++
+        }
+    }
+
+    // Adds the oldest queued effects block to mix, if there is one.
+    -TakeEffects(float [1600]& mix)
+    {
+        ${
+            if EffectsCount > 0 {
+                int at = EffectsFirst * 1600
+                for i : 0; i < 1600; i++ { mix[i] += Effects[at + i] }
+                EffectsFirst = (EffectsFirst + 1) % 3
+                EffectsCount--
+            }
+        }
+    }
+
+    // The thread: one block of music and effects whenever the device has a
+    // buffer free. A block is 1/60 second; polling every 2 ms finds a free
+    // buffer long before the four queued ones run out.
+    -Run()
+    {
+        // Above normal, so a busy main thread does not starve the device.
+        SetThreadPriority(GetCurrentThread(), 2)
+        QuaxelMusicEngine music
+        int16 [1600] block
+        while !P.Stopping
+        {
+            if !QuaxelAudioOutput.Ready() {
+                Sleep(2)
+                continue
+            }
+            QuaxelMusicInbox wanted
+            ${
+                wanted = QuaxelMusicLink.Inbox
+                QuaxelMusicLink.Inbox.Grief = 0.0
+            }
+            music.Receive(wanted)
+            float [1600] mix
+            TakeEffects(mix)
+            music.Mix(mix)
+            for i : 0; i < 1600; i++ { block[i] = (int16)Math.Clamp(mix[i], -32768.0, 32767.0) }
+            if !QuaxelAudioOutput.Submit(block) {
+                ${ DeviceFailed = true }
+                return
+            }
+            QuaxelMusicStatus status = music.Publish()
+            ${ QuaxelMusicLink.Status = status }
+        }
+    }
+}
+
+QuaxelAudioThreadTests
+{
+}
+T{
+    // The music plays on its own: this thread only exchanges with it. Skipped
+    // where there is no audio device, as in headless runs.
+    MusicPlaysOnItsOwnThread()
+    {
+        if !QuaxelAudioOutput.Open() { return }
+        QuaxelWorld world()
+        world.Music.Start((uint)3)
+        world.Music.Connect()
+        T.IsTrue(QuaxelAudioThread.Start())
+        int waited = 0
+        while world.Music.SoundingVoices() == 0 && waited < 300 {
+            QuaxelAudioThread.Sleep(10)
+            world.Music.Exchange()
+            waited++
+        }
+        T.IsTrue(world.Music.SoundingVoices() > 0)
+        T.IsTrue(world.Music.CurrentEnergy() > 0.0)
+        // Effects handed over keep the queue short, however many arrive.
+        float [1600] effects
+        for b : 0; b < 10; b++ { QuaxelAudioThread.Queue(effects) }
+        QuaxelAudioThread.Stop()
+        QuaxelAudioOutput.Close()
+        T.IsFalse(QuaxelAudioThread.Failed())
+    }
+}

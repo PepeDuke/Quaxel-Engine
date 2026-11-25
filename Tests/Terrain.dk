@@ -408,4 +408,22 @@ T{
         T.AreNotEqual(terrain.ColumnKind(3 * 128, 0), QuaxelTerrainKind.Unloaded)
         T.AreEqual(terrain.ColumnKind(-2 * 128, 0), QuaxelTerrainKind.Unloaded)
     }
+
+    SurroundingsAreSharesOfTheNearbyGround()
+    {
+        QuaxelTerrainConfig config
+        QuaxelWorld world()
+        QuaxelTerrain terrain()
+        T.IsTrue(terrain.Configure(config) && terrain.Start(world, vec3(0.0, 0.0, 0.0)))
+        QuaxelMusicContext context
+        terrain.SampleSurroundings(0.0, 0.0, 40.0, context)
+        float total = context.Water + context.Mountains + context.Structures
+        T.IsTrue(context.Water >= 0.0 && context.Mountains >= 0.0 && context.Structures >= 0.0)
+        T.IsTrue(total <= 1.0001)
+        // Nothing is resident out here, so the values stay as they were.
+        QuaxelMusicContext far
+        far.Water = 0.5
+        terrain.SampleSurroundings(100000.0, 0.0, 40.0, far)
+        T.AreEqual(far.Water, 0.5)
+    }
 }

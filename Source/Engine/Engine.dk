@@ -142,6 +142,13 @@ QuaxelEngine
 
         bool success = true
         bool audioOpen = QuaxelAudioOutput.Open()
+        // With an audio thread, the music plays and fills the device there,
+        // and this thread only mixes the sound effects, one block a step.
+        bool threaded = false
+        if audioOpen {
+            world.Music.Connect()
+            threaded = QuaxelAudioThread.Start()
+        }
         int16 [1600] audio
         bool minimized = false
         QuaxelInputState input
@@ -164,9 +171,23 @@ QuaxelEngine
             int steps = stepper.Advance(now, MaxStepsPerFrame())
             for i : 0; i < steps; i++ {
                 Step(game, world, input)
-                if !audioOpen { world.MixAudio(audio) }
+                if threaded {
+                    float [1600] effects
+                    world.MixEffects(effects)
+                    QuaxelAudioThread.Queue(effects)
+                } else if !audioOpen { world.MixAudio(audio) }
             }
-            if audioOpen { audioOpen = PumpAudio(world, audio) }
+            if threaded {
+                world.Music.Exchange()
+                // A device that refused a block is closed, as below, and the
+                // music goes on silently here.
+                if QuaxelAudioThread.Failed() {
+                    QuaxelAudioThread.Stop()
+                    QuaxelAudioOutput.Close()
+                    threaded = false
+                    audioOpen = false
+                }
+            } else if audioOpen { audioOpen = PumpAudio(world, audio) }
 
             game.UpdateUi(ui, world)
             int mouseX = 0
@@ -182,6 +203,8 @@ QuaxelEngine
             // After the frame, so the game can show that it is loading.
             if game.Restarting() { break }
         }
+        // The thread lets go of the device before it is closed.
+        QuaxelAudioThread.Stop()
         QuaxelAudioOutput.Close()
         QuaxelPlatform.ClearRedrawHandler()
         RenderedWorld = null

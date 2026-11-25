@@ -1,0 +1,256 @@
+// Composes and synthesizes the music. It reads what the game wants only from
+// a QuaxelMusicInbox, once a block in Receive, and reports back only through
+// a QuaxelMusicStatus in Publish, so nothing else touches it and it can run
+// on a thread of its own. The composer writes each section a bar before it
+// plays, from the three before it and the listener's surroundings, and the
+// engine turns its notes into synthesized voices with their own reverb.
+QuaxelMusicEngine
+{
+    QuaxelMusicComposer Composer
+    -float Volume = 0.4
+    -int Muted
+    -bool Playing
+    -QuaxelMusicNote [] Notes
+    // The first note not yet started.
+    -int NextNote
+    // Segments[0] is playing; one more is written during its last bar.
+    -QuaxelMusicSegment [] Segments
+    // Sixteenth notes since the music started, and frames into the current one.
+    -long Step
+    -int StepFrame
+    // 10000 frames is a sixteenth note at 72 beats a minute.
+    -int FramesPerStep = 10000
+    -QuaxelMusicVoice [] Voices
+    -QuaxelReverb Reverb
+    -QuaxelMusicLimiter Limiter
+    -uint VoiceSeed = (uint)0x2545F491
+    // What the game last reported, and the smoothed view the music acts on.
+    -QuaxelMusicContext Target
+    -QuaxelMusicContext Heard
+    // Grief from deaths, fading over about a minute; it adds to the game's
+    // own Aftermath.
+    -float Grief
+    // The inbox's Starts and SettingsRevision already acted on.
+    -int StartsSeen
+    -int SettingsSeen
+
+    // Takes what the game has asked for since the last block: levels and
+    // surroundings every time, settings when they changed, then a start or
+    // stop. The sender clears the inbox's Grief once it is handed over.
+    Receive(QuaxelMusicInbox inbox)
+    {
+        Volume = inbox.Volume
+        Muted = inbox.Muted
+        Target = inbox.Target
+        Grief = Math.Min(1.0, Grief + inbox.Grief)
+        if inbox.SettingsRevision != SettingsSeen {
+            SettingsSeen = inbox.SettingsRevision
+            ApplySettings(inbox)
+        }
+        if inbox.Starts != StartsSeen {
+            StartsSeen = inbox.Starts
+            Start(inbox.Seed, inbox.StartContext)
+        }
+        if !inbox.WantPlaying { Playing = false }
+    }
+
+    // Reports what is playing.
+    QuaxelMusicStatus Publish()
+    {
+        QuaxelMusicStatus status
+        status.Section = Segments.Len == 0 ? QuaxelMusicSection.Intro | Segments[0].Section
+        status.Next = Segments.Len < 2 ? Composer.Upcoming() | Segments[1].Section
+        status.Instruments = Segments.Len == 0 ? 0 | Segments[0].Instruments
+        status.Energy = Segments.Len == 0 ? 0.0 | Segments[0].Energy
+        int sounding = 0
+        for i : 0; i < Voices.Len; i++ { if Voices[i].Active { sounding++ } }
+        status.SoundingVoices = sounding
+        status.Heard = Heard
+        return status
+    }
+
+    // The mode first, since a new mode replaces the chords, then the chords
+    // the game set over it.
+    -ApplySettings(QuaxelMusicInbox inbox)
+    {
+        Composer.BaseTempo = inbox.BaseTempo
+        if Composer.CurrentMode() != inbox.Mode { Composer.SetMode(inbox.Mode) }
+        Composer.ClearPreferences()
+        for i : 0; i < QuaxelMusicInstrument.Count; i++ {
+            if inbox.Weighted[i] { Composer.Prefer((QuaxelMusicInstrument)i, inbox.Weights[i]) }
+        }
+        if inbox.ChordsSet {
+            Composer.ClearChords()
+            for i : 0; i < inbox.ChordCount; i++ { Composer.AddChord(inbox.Roots[i], inbox.Thirds[i]) }
+        }
+    }
+
+    // Starts a new piece; the same seed and surroundings play the same music.
+    -Start(uint seed, QuaxelMusicContext heard)
+    {
+        Composer.Begin(seed)
+        Notes.Clear()
+        Segments.Clear()
+        NextNote = 0
+        Step = 0
+        StepFrame = 0
+        Heard = heard
+        Reverb.Clear()
+        Limiter.Clear()
+        AdaptRoom()
+        ComposeAhead(false)
+        ApplyTempo(Segments[0].Tempo)
+        Playing = true
+    }
+
+    // Writes the section after the last written one, first dropping notes
+    // that have already started.
+    -ComposeAhead(bool urgent)
+    {
+        if NextNote > 0 {
+            int kept = (int)Notes.Len - NextNote
+            for i : 0; i < kept; i++ { Notes[i] = Notes[i + NextNote] }
+            while Notes.Len > kept { Notes-- }
+            NextNote = 0
+        }
+        long start = 0
+        if Segments.Len > 0 {
+            QuaxelMusicSegment last = Segments[Segments.Len - 1]
+            start = last.StartStep + (long)(last.Bars * 16)
+        }
+        Composer.Context = Heard
+        QuaxelMusicNote [] written
+        Segments += Composer.ComposeNext(start, written, urgent)
+        for note : written { Notes += note }
+    }
+
+    -ApplyTempo(float beatsPerMinute)
+    {
+        FramesPerStep = (int)(48000.0 * 60.0 / (beatsPerMinute * 4.0) + 0.5)
+    }
+
+    // Moves the smoothed surroundings towards the reported ones. Danger rises
+    // within seconds but settles slowly, so a fight is not forgotten at once.
+    -Listen(float seconds)
+    {
+        Grief *= Math.Exp(-seconds / 60.0)
+        float fast = 1.0 - Math.Exp(-seconds / 1.5)
+        float slow = 1.0 - Math.Exp(-seconds / 12.0)
+        float even = 1.0 - Math.Exp(-seconds / 4.0)
+        Heard.Danger += (Target.Danger - Heard.Danger) * (Target.Danger > Heard.Danger ? fast | slow)
+        // Grief is held back while the fight goes on.
+        float aftermath = Math.Clamp(Target.Aftermath + Grief * (1.0 - Target.Danger), 0.0, 1.0)
+        Heard.Aftermath += (aftermath - Heard.Aftermath) * even
+        Heard.Interior += (Target.Interior - Heard.Interior) * even
+        Heard.Water += (Target.Water - Heard.Water) * even
+        Heard.Mountains += (Target.Mountains - Heard.Mountains) * even
+        Heard.Structures += (Target.Structures - Heard.Structures) * even
+    }
+
+    // Indoors the room is smaller and duller; in the mountains it echoes.
+    -AdaptRoom()
+    {
+        Reverb.Settings.RoomSize = Math.Clamp(0.85 + 0.12 * Heard.Mountains - 0.3 * Heard.Interior, 0.0, 1.0)
+        Reverb.Settings.Damping = Math.Clamp(0.55 + 0.25 * Heard.Interior, 0.0, 1.0)
+        Reverb.Settings.Wet = Math.Clamp(0.35 + 0.1 * Heard.Mountains + 0.05 * Heard.Water, 0.0, 1.0)
+    }
+
+    // True when danger has jumped since the playing section was written and
+    // it is too calm to answer it.
+    -bool MustBreakOff()
+    {
+        if Segments.Len != 1 { return false }
+        QuaxelMusicSegment playing = Segments[0]
+        return Heard.Danger - playing.Context.Danger > 0.35 && playing.Energy < 0.75
+    }
+
+    // Ends the playing section at this bar line and writes the next one to
+    // start here. Held chords let go; plucked notes ring out.
+    -BreakOff()
+    {
+        Segments[0].Bars = (int)((Step - Segments[0].StartStep) / 16)
+        while Notes.Len > NextNote { Notes-- }
+        for i : 0; i < Voices.Len; i++ {
+            if !Voices[i].Active { continue }
+            QuaxelMusicInstrument instrument = Voices[i].Instrument
+            if instrument == QuaxelMusicInstrument.Drone || instrument == QuaxelMusicInstrument.Pad || instrument == QuaxelMusicInstrument.Wind || instrument == QuaxelMusicInstrument.Lead || instrument == QuaxelMusicInstrument.Bass || instrument == QuaxelMusicInstrument.Erhu { Voices[i].Release(2400) }
+        }
+        ComposeAhead(true)
+    }
+
+    // Moves to the next section when this step starts it, writes the one after
+    // during the last bar, and starts this step's notes.
+    -BeginStep()
+    {
+        long intoSection = Step - Segments[0].StartStep
+        if intoSection > 0 && intoSection % 16 == 0 && MustBreakOff() { BreakOff() }
+        if Segments.Len > 1 && Step >= Segments[1].StartStep {
+            Segments -= [0]
+            ApplyTempo(Segments[0].Tempo)
+        }
+        if Segments.Len == 1 && Step >= Segments[0].StartStep + (long)(Segments[0].Bars * 16 - 16) { ComposeAhead(false) }
+        while NextNote < Notes.Len && Notes[NextNote].Step <= Step {
+            if Notes[NextNote].Step == Step { StartVoice(Notes[NextNote]) }
+            NextNote++
+        }
+    }
+
+    -StartVoice(QuaxelMusicNote note)
+    {
+        // A string struck again stops ringing its last note, as a real one does.
+        bool restrike = note.Instrument == QuaxelMusicInstrument.Pluck || note.Instrument == QuaxelMusicInstrument.Dulcimer
+        int active = 0
+        int quietest = -1
+        for i : 0; i < Voices.Len; i++ {
+            if !Voices[i].Active { continue }
+            active++
+            if restrike && Voices[i].Instrument == note.Instrument && Voices[i].Pitch == note.Pitch { Voices[i].FadeOut(240) }
+            if quietest < 0 || Voices[i].Loudness() < Voices[quietest].Loudness() { quietest = i }
+        }
+        // Crowded: the quietest voice fades out quickly to make room.
+        if active >= 96 && quietest >= 0 { Voices[quietest].FadeOut(240) }
+        int slot = 0
+        while slot < Voices.Len && Voices[slot].Active { slot++ }
+        if slot == 128 {
+            // Only when every slot is taken does a voice end at once.
+            slot = Math.Max(quietest, 0)
+        }
+        if slot == Voices.Len { Voices++ }
+        VoiceSeed = VoiceSeed * (uint)1664525 + (uint)1013904223
+        Voices[slot].Start(note, FramesPerStep, VoiceSeed)
+    }
+
+    // Adds a block of 800 stereo frames to the mix, in sample units.
+    Mix(float [1600]& mix)
+    {
+        if !Playing {
+            bool sounding = false
+            for i : 0; i < Voices.Len; i++ { if Voices[i].Active { sounding = true } }
+            if !sounding { return }
+        }
+        Listen(800.0 / 48000.0)
+        AdaptRoom()
+        float [1600] music
+        float [800] send
+        int done = 0
+        while done < 800 {
+            if StepFrame == 0 && Playing { BeginStep() }
+            int count = Math.Min(800 - done, FramesPerStep - StepFrame)
+            for i : 0; i < Voices.Len; i++ {
+                if Voices[i].Active { Voices[i].Render(music, send, done, count, (Muted & (1 << Voices[i].Instrument.Value)) != 0 ? 0.0 | 1.0) }
+            }
+            done += count
+            StepFrame += count
+            if StepFrame >= FramesPerStep {
+                StepFrame = 0
+                Step++
+            }
+        }
+        Reverb.Process(send, music)
+        // Headroom for the full band; the limiter catches what is left.
+        for i : 0; i < 1600; i++ { music[i] *= 0.8 }
+        Limiter.Process(music)
+        float volume = Math.Clamp(Volume, 0.0, 1.0)
+        for i : 0; i < 1600; i++ { mix[i] += music[i] * volume }
+    }
+}

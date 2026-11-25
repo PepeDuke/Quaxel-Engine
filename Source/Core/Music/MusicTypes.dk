@@ -1,0 +1,121 @@
+// The high-level parts of a song. The composer picks each one from the three
+// before it and writes it out a section ahead of playback.
+QuaxelMusicSection : int
+#@{
+    Intro, Verse, PreChorus, Chorus, PostChorus, Bridge, Instrumental, Breakdown, Outro
+}
+
+// Every part the band can play. Each section decides which of them play and
+// which stay silent.
+QuaxelMusicInstrument : int
+#@{
+    // A low tonic pedal of detuned saws that breathes under everything.
+    Drone,
+    // Slow chords of detuned saws, like a dark string or choir bed.
+    Pad,
+    // Chord roots, a sine with a little saw.
+    Bass,
+    // The riff: a plucked string (Karplus-Strong), like a nylon guitar.
+    Pluck,
+    // Sparse high chord tones from an FM bell.
+    Bell,
+    // A hollow, breathy reed melody with vibrato.
+    Lead,
+    // Resonant filtered noise swelling on the chord root.
+    Wind,
+    // Inharmonic clangs, like chains or a struck anvil far away.
+    Metal,
+    // A taiko-like low drum with a falling pitch.
+    LowDrum,
+    // A dry frame drum or snare on the half-time backbeat.
+    FrameDrum,
+    // High noise ticks.
+    Shaker,
+    // Water drops tuned to the chord, for caves and shores.
+    Drip,
+    // A two-string bowed fiddle: nasal, sliding into its notes, with a wide
+    // vibrato. A lamenting melody.
+    Erhu,
+    // Struck strings in pairs, ringing without dampers: shimmering arpeggios
+    // and tremolos.
+    Dulcimer
+}
+
+// What surrounds the listener, each value from 0 to 1. The music smooths
+// changes over a few seconds and writes the next section to suit them.
+// QuaxelTerrain.SampleSurroundings fills in Water, Mountains and Structures.
+// Interior and Danger come from the game.
+QuaxelMusicContext
+{
+    // 1 inside a building, cave or dungeon.
+    float Interior
+    // The share of water nearby.
+    float Water
+    // The share of mountains nearby.
+    float Mountains
+    // The share of buildings and ruins nearby.
+    float Structures
+    // How threatening the nearby enemies are: 0 alone, 1 in a hard fight.
+    float Danger
+    // How recently enemies died. QuaxelMusic.EnemyDied raises it and it fades
+    // over a minute, so the music turns sombre after a fight.
+    float Aftermath
+}
+
+// One note on the song's timeline. Steps are sixteenth notes from the start
+// of the music.
+QuaxelMusicNote
+{
+    long Step
+    // In sixteenth notes.
+    int Length
+    // MIDI note number: 60 is middle C.
+    int Pitch
+    // From 0 to 1.
+    float Velocity
+    QuaxelMusicInstrument Instrument
+}
+
+// A section placed on the timeline.
+QuaxelMusicSegment
+{
+    QuaxelMusicSection Section
+    long StartStep
+    int Bars
+    // From 0 (sparse, quiet) to 1 (full band).
+    float Energy
+    // Bit n set when instrument n plays in this section.
+    int Instruments
+    // Beats a minute.
+    float Tempo
+    // The surroundings the section was written for.
+    QuaxelMusicContext Context
+}
+
+// Two bars of one instrument's part, in sixteenth notes. A section repeats it
+// over its bars and fits it to each bar's chord.
+QuaxelMusicPattern
+{
+    // Velocity in percent, or 0 for no note at that step.
+    int [32] Hits
+    // What to play: a chord tone or scale degree, depending on the instrument.
+    int [32] Degree
+    // In sixteenth notes. Zero lasts until the end of the section.
+    int [32] Length
+}
+
+// The scale the music is written in, each with chord progressions of its own.
+// Major is bright; the others darken in order of how far they lean away.
+QuaxelMusicMode : int
+#@{
+    // Bright and settled: the default, for towns.
+    Major,
+    // Minor with a raised sixth: grim but noble.
+    Dorian,
+    // Natural minor: dark and epic.
+    Minor,
+    // Minor with a lowered second: ancient dread.
+    Phrygian,
+    // Minor with a leading tone: tragic, driving.
+    HarmonicMinor
+}

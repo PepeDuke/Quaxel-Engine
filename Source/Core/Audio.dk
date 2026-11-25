@@ -64,7 +64,8 @@ QuaxelReverb
                     float echo = Lines[at]
                     Store[c] = echo * (1.0 - damp) + Store[c] * damp
                     Lines[at] = input + Store[c] * feedback
-                    Cursor[c] = (Cursor[c] + 1) % Length[c]
+                    Cursor[c]++
+                    if Cursor[c] == Length[c] { Cursor[c] = 0 }
                     sum += echo
                 }
                 for k : 0; k < 2; k++ {
@@ -73,7 +74,8 @@ QuaxelReverb
                     float delayed = Lines[at]
                     Lines[at] = sum + delayed * 0.5
                     sum = delayed - sum
-                    Cursor[a] = (Cursor[a] + 1) % Length[a]
+                    Cursor[a]++
+                    if Cursor[a] == Length[a] { Cursor[a] = 0 }
                 }
                 mix[2 * i + side] += sum * wet
             }
@@ -361,10 +363,21 @@ QuaxelWorld
         return false
     }
 
-    // 1/60 second of interleaved 48 kHz stereo per block.
+    // 1/60 second of interleaved 48 kHz stereo per block: the sound effects
+    // and the music.
     MixAudio(int16 [1600]& output)
     {
         float [1600] mix
+        MixEffects(mix)
+        Music.Mix(mix)
+        for i : 0; i < 1600; i++ { output[i] = (int16)Math.Clamp(mix[i], -32768.0, 32767.0) }
+    }
+
+    // Adds one block of the sound effects alone, with their reverb, to mix in
+    // sample units. With an audio thread the main thread mixes these each
+    // step and the thread adds the music; see QuaxelMusic.Exchange.
+    MixEffects(float [1600]& mix)
+    {
         float [800] send
         vec3 eye
         vec3 right
@@ -397,7 +410,6 @@ QuaxelWorld
             Voices[i] = voice
         }
         if ReverbActive { Reverb.Process(send, mix) }
-        for i : 0; i < 1600; i++ { output[i] = (int16)Math.Clamp(mix[i], -32768.0, 32767.0) }
     }
 
 }

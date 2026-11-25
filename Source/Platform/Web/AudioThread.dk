@@ -1,0 +1,9 @@
+// The browser build has no threads, so the audio is mixed on the main thread
+// as before; see Source/Platform/Native/AudioThread.dk for the threaded one.
+QuaxelAudioThread
+#{
+    bool Start() { return false }
+    Stop() {}
+    bool Failed() { return false }
+    Queue(float [1600]& block) {}
+}

@@ -1,0 +1,958 @@
+// Decides the song's form one section at a time and writes each section's
+// notes. The next section is chosen from the three before it. Each instrument
+// keeps one two-bar pattern per kind of section, so a chorus that comes back
+// brings its riff back, slightly varied. The surroundings in Context steer
+// every choice: danger brings drums and big sections, a fight's aftermath
+// brings sombre ones, water brings drips and wind dies down indoors.
+QuaxelMusicComposer
+{
+    // What the next section is written for.
+    QuaxelMusicContext Context
+    // Beats a minute with no danger or aftermath.
+    float BaseTempo = 72.0
+    -QuaxelRandom Random
+    // The latest sections as QuaxelMusicSection values, newest first; -1 when unset.
+    -int [3] History
+    // The section chosen to follow the one composed last, or -1, and the
+    // surroundings it was chosen for.
+    -int Pending = -1
+    -QuaxelMusicContext PendingContext
+    // Sections composed since the current song's intro.
+    -int SectionsInSong
+    // The instruments the last composed section used.
+    -int LastInstruments
+    // One pattern per section and instrument, at section * 12 + instrument.
+    -QuaxelMusicPattern [] Patterns
+    -bool [] Made
+    // The chord progression, one chord a bar: each root in semitones above the
+    // key, and the size of its third (4 major, 3 minor).
+    -int [8] Roots
+    -int [8] Thirds
+    -int ChordCount
+    // The key's tonic as a pitch class: 0 is C.
+    -int Key
+    // The scale melodies are written in, set with SetMode, and its steps in
+    // semitones above the tonic.
+    -QuaxelMusicMode Mode = QuaxelMusicMode.Major
+    -int [7] Scale
+    // See Prefer.
+    -float [14] Weights
+    -bool [14] Weighted
+
+    // Starts over in C, in the mode set last: C, G, Am, F in C major.
+    Begin(uint seed)
+    {
+        Random.Begin(seed)
+        for i : 0; i < 3; i++ { History[i] = -1 }
+        Pending = -1
+        LastInstruments = 0
+        Key = 0
+        UseScale()
+        PickProgression()
+        StartSong()
+    }
+
+    QuaxelMusicMode CurrentMode() { return Mode }
+
+    // Writes from the next section on in the mode's scale, over one of its
+    // progressions; each new song in a minor mode picks one afresh. It
+    // replaces chords set with AddChord.
+    SetMode(QuaxelMusicMode mode)
+    {
+        if mode == Mode && ChordCount > 0 { return }
+        Mode = mode
+        UseScale()
+        PickProgression()
+    }
+
+    -UseScale()
+    {
+        int [7] steps = {0, 2, 4, 5, 7, 9, 11}
+        Switch (Mode)
+        {
+            case QuaxelMusicMode.Dorian:
+                steps = {0, 2, 3, 5, 7, 9, 10}
+                break
+            case QuaxelMusicMode.Minor:
+                steps = {0, 2, 3, 5, 7, 8, 10}
+                break
+            case QuaxelMusicMode.Phrygian:
+                steps = {0, 1, 3, 5, 7, 8, 10}
+                break
+            case QuaxelMusicMode.HarmonicMinor:
+                steps = {0, 2, 3, 5, 7, 8, 11}
+                break
+            default:
+                break
+        }
+        for i : 0; i < 7; i++ { Scale[i] = steps[i] }
+    }
+
+    // One of the mode's progressions, as (root, third) pairs. Major has one,
+    // so it takes nothing from Random and a major score stays as it was.
+    -PickProgression()
+    {
+        ChordCount = 0
+        Switch (Mode)
+        {
+            case QuaxelMusicMode.Dorian:
+                if Random.Below(2) == 0 { Chords(0, 3, 5, 4, 10, 4, 0, 3) }
+                else { Chords(0, 3, 10, 4, 3, 4, 5, 4) }
+                break
+            case QuaxelMusicMode.Minor:
+                int pick = Random.Below(3)
+                if pick == 0 { Chords(0, 3, 8, 4, 3, 4, 10, 4) }
+                else if pick == 1 { Chords(0, 3, 10, 4, 8, 4, 10, 4) }
+                else { Chords(0, 3, 5, 3, 8, 4, 10, 4) }
+                break
+            case QuaxelMusicMode.Phrygian:
+                if Random.Below(2) == 0 { Chords(0, 3, 1, 4, 0, 3, 10, 3) }
+                else { Chords(0, 3, 1, 4, 3, 4, 1, 4) }
+                break
+            case QuaxelMusicMode.HarmonicMinor:
+                if Random.Below(2) == 0 { Chords(0, 3, 5, 3, 7, 4, 0, 3) }
+                else { Chords(0, 3, 8, 4, 5, 3, 7, 4) }
+                break
+            default:
+                Chords(0, 4, 7, 4, 9, 3, 5, 4)
+                break
+        }
+    }
+
+    -Chords(int r1, int t1, int r2, int t2, int r3, int t3, int r4, int t4)
+    {
+        AddChord(r1, t1)
+        AddChord(r2, t2)
+        AddChord(r3, t3)
+        AddChord(r4, t4)
+    }
+
+    // Appends a chord to the progression, up to eight. Root is in semitones
+    // above the key; third is 4 for major or 3 for minor.
+    bool AddChord(int root, int third)
+    {
+        if ChordCount == 8 || root < 0 || root > 11 || (third != 3 && third != 4) { return false }
+        Roots[ChordCount] = root
+        Thirds[ChordCount] = third
+        ChordCount++
+        return true
+    }
+
+    // Forgets the progression so AddChord can build a new one. It applies from
+    // the next composed section.
+    ClearChords() { ChordCount = 0 }
+
+    // How much more or less often an instrument plays than the section and
+    // surroundings call for: 1 as written, 2 about twice as often, 0 never.
+    // A zone's palette sets these to give it its own band. Applies from the
+    // next section written.
+    Prefer(QuaxelMusicInstrument instrument, float weight)
+    {
+        Weights[instrument.Value] = Math.Max(0.0, weight)
+        Weighted[instrument.Value] = true
+    }
+
+    float Preference(QuaxelMusicInstrument instrument) { return Weight(instrument.Value) }
+
+    // Every instrument back to 1.
+    ClearPreferences()
+    {
+        for i : 0; i < QuaxelMusicInstrument.Count; i++ { Weighted[i] = false }
+    }
+
+    -float Weight(int instrument) { return Weighted[instrument] ? Weights[instrument] | 1.0 }
+
+    // Of the instruments in mask, the one preferred most, or -1 when every
+    // one of them is unwanted. Ties go to the first.
+    -int Favourite(int mask)
+    {
+        int best = -1
+        for i : 0; i < QuaxelMusicInstrument.Count; i++ {
+            if (mask & (1 << i)) == 0 || Weight(i) <= 0.0 { continue }
+            if best < 0 || Weight(i) > Weight(best) { best = i }
+        }
+        return best
+    }
+
+    // a or b, picked in proportion to how much each is preferred, with a
+    // picked share of the time when both are preferred equally.
+    -int Either(int a, int b, float share)
+    {
+        float wa = Weight(a) * share
+        float wb = Weight(b) * (1.0 - share)
+        if wa + wb <= 0.0 { return a }
+        return Chance01(wa / (wa + wb)) ? a | b
+    }
+
+    -StartSong()
+    {
+        SectionsInSong = 0
+        Patterns.Clear()
+        Made.Clear()
+        for i : 0; i < QuaxelMusicSection.Count * QuaxelMusicInstrument.Count; i++ {
+            Patterns++
+            Made += false
+        }
+    }
+
+    // The section the composer has chosen to come after the last composed one.
+    QuaxelMusicSection Upcoming()
+    {
+        if Pending < 0 { return QuaxelMusicSection.Intro }
+        return (QuaxelMusicSection)Pending
+    }
+
+    // Writes the next section, starting at the given step, and appends its
+    // notes to the timeline in step order. The section chosen earlier is kept
+    // unless the surroundings have changed a lot since, or urgent is set
+    // because the music broke off to answer them.
+    QuaxelMusicSegment ComposeNext(long start, QuaxelMusicNote []& notes, bool urgent)
+    {
+        if ChordCount == 0 { AddChord(0, 4) }
+        bool stale = Math.Abs(Context.Danger - PendingContext.Danger) > 0.25 || Math.Abs(Context.Aftermath - PendingContext.Aftermath) > 0.25 || Math.Abs(Context.Interior - PendingContext.Interior) > 0.5
+        // An intro chosen after an outro stays: the old song has ended.
+        if Pending == QuaxelMusicSection.Intro.Value { stale = false }
+        int section = Pending >= 0 && !urgent && !stale ? Pending | ChooseNext().Value
+        if section == QuaxelMusicSection.Intro.Value && SectionsInSong > 0 {
+            StartSong()
+            if Mode != QuaxelMusicMode.Major { PickProgression() }
+        }
+        History[2] = History[1]
+        History[1] = History[0]
+        History[0] = section
+        SectionsInSong++
+        Pending = ChooseNext().Value
+        PendingContext = Context
+        return Compose((QuaxelMusicSection)section, (QuaxelMusicSection)Pending, start, notes)
+    }
+
+    // Picks what follows History[0], weighing the usual song forms against
+    // what the last three sections already did.
+    QuaxelMusicSection ChooseNext()
+    {
+        if History[0] < 0 { return QuaxelMusicSection.Intro }
+        float [9] weights
+        BaseWeights((QuaxelMusicSection)History[0], weights)
+        float total = 0.0
+        for s : 0; s < 9; s++ {
+            weights[s] *= HistoryFactor(s) * ContextFactor((QuaxelMusicSection)s)
+            total += weights[s]
+        }
+        if total <= 0.0 { return QuaxelMusicSection.Verse }
+        float pick = Random.Unit() * total
+        for s : 0; s < 9; s++ {
+            pick -= weights[s]
+            if pick < 0.0 && weights[s] > 0.0 { return (QuaxelMusicSection)s }
+        }
+        return QuaxelMusicSection.Verse
+    }
+
+    -W(float [9]& weights, QuaxelMusicSection section, float weight) { weights[section.Value] = weight }
+
+    // How often each section follows the last one in a typical song.
+    -BaseWeights(QuaxelMusicSection last, float [9]& w)
+    {
+        Switch (last)
+        {
+            case QuaxelMusicSection.Intro:
+                W(w, QuaxelMusicSection.Verse, 6.0)
+                W(w, QuaxelMusicSection.Instrumental, 1.0)
+                W(w, QuaxelMusicSection.Breakdown, 1.0)
+                // Rare, unless danger calls for it at once.
+                W(w, QuaxelMusicSection.Chorus, 0.3)
+                break
+            case QuaxelMusicSection.Verse:
+                W(w, QuaxelMusicSection.PreChorus, 5.0)
+                W(w, QuaxelMusicSection.Chorus, 3.0)
+                W(w, QuaxelMusicSection.Verse, 1.0)
+                W(w, QuaxelMusicSection.Instrumental, 0.5)
+                // Rare, unless grief turns the song inward.
+                W(w, QuaxelMusicSection.Bridge, 0.4)
+                W(w, QuaxelMusicSection.Breakdown, 0.3)
+                break
+            case QuaxelMusicSection.PreChorus:
+                W(w, QuaxelMusicSection.Chorus, 10.0)
+                break
+            case QuaxelMusicSection.Chorus:
+                W(w, QuaxelMusicSection.PostChorus, 3.0)
+                W(w, QuaxelMusicSection.Verse, 3.0)
+                W(w, QuaxelMusicSection.Bridge, 2.0)
+                W(w, QuaxelMusicSection.Instrumental, 1.5)
+                W(w, QuaxelMusicSection.Breakdown, 1.5)
+                W(w, QuaxelMusicSection.Outro, 1.0)
+                W(w, QuaxelMusicSection.Chorus, 0.5)
+                break
+            case QuaxelMusicSection.PostChorus:
+                W(w, QuaxelMusicSection.Verse, 4.0)
+                W(w, QuaxelMusicSection.Bridge, 2.0)
+                W(w, QuaxelMusicSection.Instrumental, 1.5)
+                W(w, QuaxelMusicSection.Breakdown, 1.5)
+                W(w, QuaxelMusicSection.Outro, 1.0)
+                break
+            case QuaxelMusicSection.Bridge:
+                W(w, QuaxelMusicSection.Chorus, 5.0)
+                W(w, QuaxelMusicSection.Instrumental, 2.0)
+                W(w, QuaxelMusicSection.Breakdown, 1.0)
+                W(w, QuaxelMusicSection.PreChorus, 1.0)
+                break
+            case QuaxelMusicSection.Instrumental:
+                W(w, QuaxelMusicSection.Chorus, 3.0)
+                W(w, QuaxelMusicSection.Verse, 2.0)
+                W(w, QuaxelMusicSection.Breakdown, 1.5)
+                W(w, QuaxelMusicSection.Bridge, 1.0)
+                W(w, QuaxelMusicSection.Outro, 1.0)
+                break
+            case QuaxelMusicSection.Breakdown:
+                W(w, QuaxelMusicSection.Chorus, 3.0)
+                W(w, QuaxelMusicSection.Verse, 2.0)
+                W(w, QuaxelMusicSection.Instrumental, 2.0)
+                W(w, QuaxelMusicSection.PreChorus, 1.0)
+                W(w, QuaxelMusicSection.Outro, 1.0)
+                break
+            case QuaxelMusicSection.Outro:
+                // A new song follows.
+                W(w, QuaxelMusicSection.Intro, 1.0)
+                break
+        }
+    }
+
+    // Scales a candidate's weight by the last three sections.
+    -float HistoryFactor(int candidate)
+    {
+        int h0 = History[0]
+        int h1 = History[1]
+        int h2 = History[2]
+        int intro = QuaxelMusicSection.Intro.Value
+        int chorus = QuaxelMusicSection.Chorus.Value
+        if candidate == intro { return h0 == QuaxelMusicSection.Outro.Value ? 1.0 | 0.0 }
+        // Never three of the same in a row.
+        if candidate == h0 && candidate == h1 { return 0.0 }
+        float factor = 1.0
+        bool recent = candidate == h0 || candidate == h1 || candidate == h2
+        bool core = candidate == QuaxelMusicSection.Verse.Value || candidate == chorus || candidate == QuaxelMusicSection.PreChorus.Value || candidate == QuaxelMusicSection.PostChorus.Value
+        // Bridges, solos and breakdowns are events; they should not come back soon.
+        // Grief lets the quiet ones return sooner, a fight the solo.
+        if recent && !core {
+            float allowance = candidate == QuaxelMusicSection.Instrumental.Value ? Context.Danger | Context.Aftermath
+            factor *= 0.15 + 0.45 * allowance
+        }
+        // A B A then B would start a loop.
+        if candidate == h1 && h0 == h2 { factor *= 0.4 }
+        // Three sections without a chorus leave the song without a payoff.
+        bool chorusRecently = h0 == chorus || h1 == chorus || h2 == chorus
+        if !chorusRecently && h0 != intro && h1 != intro {
+            // Grief may leave the song without one.
+            float push = 1.0 - Context.Aftermath
+            if candidate == chorus { factor *= 1.0 + 1.5 * push }
+            if candidate == QuaxelMusicSection.PreChorus.Value { factor *= 1.0 + 0.5 * push }
+        }
+        if candidate == QuaxelMusicSection.Outro.Value {
+            if SectionsInSong < 7 { return 0.0 }
+            factor *= 0.4 * (float)(SectionsInSong - 6)
+        }
+        return factor
+    }
+
+    // Scales a candidate's weight by the surroundings: danger favours the big
+    // sections, a fight's aftermath and interiors the quiet ones, and no song
+    // ends in the middle of a fight.
+    -float ContextFactor(QuaxelMusicSection candidate)
+    {
+        float d = Context.Danger
+        float a = Context.Aftermath
+        float i = Context.Interior
+        Switch (candidate)
+        {
+            case QuaxelMusicSection.Chorus: return (1.0 + 2.0 * d) * (1.0 - 0.6 * a)
+            case QuaxelMusicSection.Instrumental: return (1.0 + 1.5 * d) * (1.0 - 0.6 * a)
+            case QuaxelMusicSection.PreChorus: return (1.0 + d) * (1.0 - 0.6 * a)
+            case QuaxelMusicSection.PostChorus: return (1.0 + 0.5 * d) * (1.0 - 0.4 * a)
+            case QuaxelMusicSection.Breakdown: return (1.0 + 2.0 * a + 0.5 * i) * (1.0 - 0.8 * d)
+            case QuaxelMusicSection.Bridge: return (1.0 + a) * (1.0 - 0.5 * d)
+            case QuaxelMusicSection.Outro: return (1.0 + a) * (1.0 - 0.9 * d)
+            case QuaxelMusicSection.Verse: return 1.0 + 0.5 * i + 0.5 * a
+            default: return 1.0
+        }
+    }
+
+    // How much an instrument's chance changes with the surroundings.
+    -float ContextScale(int instrument)
+    {
+        float d = Context.Danger
+        float a = Context.Aftermath
+        float i = Context.Interior
+        float w = Context.Water
+        float m = Context.Mountains
+        float s = Context.Structures
+        Switch ((QuaxelMusicInstrument)instrument)
+        {
+            case QuaxelMusicInstrument.Drone: return 1.0 + 0.5 * m + 0.3 * i + 0.3 * a
+            case QuaxelMusicInstrument.Pad: return 1.0 + 0.6 * a
+            case QuaxelMusicInstrument.Bass: return 1.0 + 0.3 * d - 0.3 * a
+            case QuaxelMusicInstrument.Pluck: return (1.0 + 0.4 * s) * (1.0 - 0.5 * a)
+            case QuaxelMusicInstrument.Bell: return (1.0 + 0.6 * a + 0.4 * w) * (1.0 - 0.5 * d)
+            case QuaxelMusicInstrument.Lead: return 1.0 + 0.5 * d + 0.4 * a
+            // No wind indoors; mountain passes howl.
+            case QuaxelMusicInstrument.Wind: return (1.0 + m) * (1.0 - 0.9 * i)
+            case QuaxelMusicInstrument.Metal: return 1.0 + d + 0.8 * i
+            case QuaxelMusicInstrument.LowDrum: return (1.0 + 2.0 * d) * (1.0 - 0.7 * a)
+            case QuaxelMusicInstrument.FrameDrum: return (1.0 + 2.0 * d) * (1.0 - 0.8 * a) * (1.0 - 0.3 * i)
+            case QuaxelMusicInstrument.Shaker: return (1.0 + d) * (1.0 - 0.8 * a)
+            case QuaxelMusicInstrument.Drip: return 1.0 + 2.5 * w + 2.0 * i
+            // The erhu laments: it answers grief most of all.
+            case QuaxelMusicInstrument.Erhu: return 1.0 + 1.5 * a + 0.3 * d
+            case QuaxelMusicInstrument.Dulcimer: return (1.0 + 0.3 * w + 0.3 * s) * (1.0 - 0.4 * d)
+            default: return 1.0
+        }
+    }
+
+    -bool IsDrum(int instrument)
+    {
+        return instrument == QuaxelMusicInstrument.LowDrum.Value || instrument == QuaxelMusicInstrument.FrameDrum.Value || instrument == QuaxelMusicInstrument.Shaker.Value
+    }
+
+    -int BarsOf(QuaxelMusicSection section)
+    {
+        Switch (section)
+        {
+            case QuaxelMusicSection.Intro, QuaxelMusicSection.PreChorus, QuaxelMusicSection.PostChorus, QuaxelMusicSection.Breakdown, QuaxelMusicSection.Outro:
+                return 4
+            default:
+                return 8
+        }
+    }
+
+    -float EnergyOf(QuaxelMusicSection section)
+    {
+        Switch (section)
+        {
+            case QuaxelMusicSection.Intro: return 0.2
+            case QuaxelMusicSection.Verse: return 0.45
+            case QuaxelMusicSection.PreChorus: return 0.6
+            case QuaxelMusicSection.Chorus: return 0.85
+            case QuaxelMusicSection.PostChorus: return 0.65
+            case QuaxelMusicSection.Bridge: return 0.5
+            case QuaxelMusicSection.Instrumental: return 0.75
+            case QuaxelMusicSection.Breakdown: return 0.25
+            default: return 0.2
+        }
+    }
+
+    // The chance an instrument plays in a section. Rows are sections, columns
+    // are Drone, Pad, Bass, Pluck, Bell, Lead, Wind, Metal, LowDrum, FrameDrum,
+    // Shaker, Drip, Erhu, Dulcimer.
+    -float Chance(QuaxelMusicSection section, int instrument)
+    {
+        float [126] table = {
+            0.9, 0.5, 0.2, 0.7, 0.6, 0.1, 0.9, 0.4, 0.3, 0.0, 0.0, 0.3, 0.2, 0.5,
+            0.8, 0.6, 0.9, 1.0, 0.3, 0.1, 0.4, 0.3, 0.8, 0.5, 0.4, 0.2, 0.3, 0.4,
+            0.7, 0.9, 0.9, 0.8, 0.3, 0.2, 0.4, 0.3, 0.9, 0.7, 0.6, 0.1, 0.2, 0.4,
+            0.7, 1.0, 1.0, 1.0, 0.4, 0.7, 0.3, 0.5, 1.0, 0.9, 0.7, 0.1, 0.3, 0.4,
+            0.8, 0.8, 0.8, 1.0, 0.5, 0.3, 0.4, 0.4, 0.7, 0.5, 0.5, 0.2, 0.3, 0.5,
+            0.9, 0.9, 0.6, 0.5, 0.6, 0.4, 0.5, 0.4, 0.5, 0.3, 0.2, 0.3, 0.5, 0.4,
+            0.7, 0.8, 1.0, 0.6, 0.3, 1.0, 0.3, 0.4, 0.9, 0.8, 0.6, 0.1, 0.5, 0.4,
+            1.0, 0.4, 0.2, 0.6, 0.7, 0.0, 0.9, 0.6, 0.3, 0.0, 0.1, 0.5, 0.4, 0.4,
+            1.0, 0.6, 0.3, 0.7, 0.6, 0.1, 0.9, 0.4, 0.2, 0.0, 0.0, 0.4, 0.3, 0.5
+        }
+        return table[section.Value * QuaxelMusicInstrument.Count + instrument]
+    }
+
+    // Decides who plays. Instruments already playing are a little more likely
+    // to carry on, so the band does not change completely at every section.
+    -int ChooseInstruments(QuaxelMusicSection section)
+    {
+        int mask = 0
+        for i : 0; i < QuaxelMusicInstrument.Count; i++ {
+            float chance = Math.Clamp(Chance(section, i) * ContextScale(i) * Weight(i), 0.0, 1.0)
+            if chance > 0.0 && (LastInstruments & (1 << i)) != 0 { chance = Math.Min(1.0, chance + 0.15) }
+            if Random.Unit() < chance { mask |= 1 << i }
+        }
+        // A fight always has a drum, the low one unless the palette has none.
+        int drums = (1 << QuaxelMusicInstrument.LowDrum.Value) | (1 << QuaxelMusicInstrument.FrameDrum.Value)
+        if Context.Danger > 0.5 {
+            if Weight(QuaxelMusicInstrument.LowDrum.Value) > 0.0 { mask |= 1 << QuaxelMusicInstrument.LowDrum.Value }
+            else if (mask & drums) == 0 && Favourite(drums) >= 0 { mask |= 1 << Favourite(drums) }
+        }
+        // Something carries the harmony and something sits under it: the
+        // palette's favourite of each when the dice gave none.
+        int melodic = (1 << QuaxelMusicInstrument.Pad.Value) | (1 << QuaxelMusicInstrument.Pluck.Value) | (1 << QuaxelMusicInstrument.Lead.Value) | (1 << QuaxelMusicInstrument.Bell.Value) | (1 << QuaxelMusicInstrument.Erhu.Value) | (1 << QuaxelMusicInstrument.Dulcimer.Value)
+        if (mask & melodic) == 0 {
+            int pick = Weight(QuaxelMusicInstrument.Pluck.Value) >= 1.0 ? QuaxelMusicInstrument.Pluck.Value | Favourite(melodic)
+            if pick >= 0 { mask |= 1 << pick }
+        }
+        int low = (1 << QuaxelMusicInstrument.Drone.Value) | (1 << QuaxelMusicInstrument.Bass.Value)
+        if (mask & low) == 0 {
+            int pick = Weight(QuaxelMusicInstrument.Drone.Value) >= 1.0 ? QuaxelMusicInstrument.Drone.Value | Favourite(low)
+            if pick >= 0 { mask |= 1 << pick }
+        }
+        // Two melodies at once would argue: the erhu and the reed take turns,
+        // and so do the two arpeggiating strings, the preferred one more often.
+        int lead = 1 << QuaxelMusicInstrument.Lead.Value
+        int erhu = 1 << QuaxelMusicInstrument.Erhu.Value
+        if (mask & lead) != 0 && (mask & erhu) != 0 { mask &= ~(Either(QuaxelMusicInstrument.Erhu.Value, QuaxelMusicInstrument.Lead.Value, 0.5) == QuaxelMusicInstrument.Erhu.Value ? lead | erhu) }
+        int pluck = 1 << QuaxelMusicInstrument.Pluck.Value
+        int dulcimer = 1 << QuaxelMusicInstrument.Dulcimer.Value
+        if (mask & pluck) != 0 && (mask & dulcimer) != 0 { mask &= ~(Either(QuaxelMusicInstrument.Dulcimer.Value, QuaxelMusicInstrument.Pluck.Value, 0.5) == QuaxelMusicInstrument.Dulcimer.Value ? pluck | dulcimer) }
+        // A solo needs its soloist, unless the palette wants neither.
+        if section == QuaxelMusicSection.Instrumental && (mask & (lead | erhu)) == 0 && Weight(QuaxelMusicInstrument.Lead.Value) + Weight(QuaxelMusicInstrument.Erhu.Value) > 0.0 {
+            mask |= 1 << Either(QuaxelMusicInstrument.Erhu.Value, QuaxelMusicInstrument.Lead.Value, 0.4 + 0.4 * Context.Aftermath)
+        }
+        return mask
+    }
+
+    // Which section's pattern a section borrows the first time it plays, so
+    // related sections share material. -1 when it writes its own.
+    -int RelatedSection(QuaxelMusicSection section)
+    {
+        Switch (section)
+        {
+            case QuaxelMusicSection.PostChorus: return QuaxelMusicSection.Chorus.Value
+            case QuaxelMusicSection.Outro: return QuaxelMusicSection.Intro.Value
+            case QuaxelMusicSection.PreChorus: return QuaxelMusicSection.Verse.Value
+            default: return -1
+        }
+    }
+
+    -bool IsMelodic(int instrument)
+    {
+        return instrument == QuaxelMusicInstrument.Pluck.Value || instrument == QuaxelMusicInstrument.Lead.Value || instrument == QuaxelMusicInstrument.Bell.Value || instrument == QuaxelMusicInstrument.Erhu.Value || instrument == QuaxelMusicInstrument.Dulcimer.Value
+    }
+
+    // The pattern this section plays on an instrument. A section that has
+    // played before reuses its pattern with a small variation.
+    -QuaxelMusicPattern PatternFor(QuaxelMusicSection section, int instrument, float energy)
+    {
+        int index = section.Value * QuaxelMusicInstrument.Count + instrument
+        QuaxelMusicPattern pattern
+        // Water never drips the same way twice.
+        if !Made[index] || instrument == QuaxelMusicInstrument.Drip.Value {
+            int related = RelatedSection(section)
+            if related >= 0 && Made[related * QuaxelMusicInstrument.Count + instrument] && IsMelodic(instrument) {
+                pattern = Patterns[related * QuaxelMusicInstrument.Count + instrument]
+                Mutate(pattern, instrument, 0.35)
+            }
+            else { pattern = MakePattern(instrument, energy) }
+            Made[index] = true
+        }
+        else {
+            pattern = Patterns[index]
+            Mutate(pattern, instrument, 0.08)
+        }
+        Patterns[index] = pattern
+        return pattern
+    }
+
+    -Hit(QuaxelMusicPattern& p, int step, int velocity, int degree, int length)
+    {
+        p.Hits[step] = velocity
+        p.Degree[step] = degree
+        p.Length[step] = length
+    }
+
+    -bool Chance01(float chance) { return Random.Unit() < chance }
+
+    // Sets each note to last until the next one, up to a maximum.
+    -FillLengths(QuaxelMusicPattern& p, int longest)
+    {
+        for step : 0; step < 32; step++ {
+            if p.Hits[step] == 0 { continue }
+            int length = 1
+            while step + length < 32 && p.Hits[step + length] == 0 && length < longest { length++ }
+            p.Length[step] = length
+        }
+    }
+
+    // A melodic random walk: mostly steps, sometimes a skip, rarely a repeat,
+    // as melodies tend to move (Temperley's small-interval principle).
+    -int Walk(int degree, int low, int high)
+    {
+        float roll = Random.Unit()
+        int move = roll < 0.7 ? 1 | (roll < 0.9 ? 2 | 0)
+        if Random.Unit() < 0.5 { move = -move }
+        int next = degree + move
+        if next < low || next > high { next = degree - move }
+        return Math.Clamp(next, low, high)
+    }
+
+    -QuaxelMusicPattern MakePattern(int instrument, float energy)
+    {
+        QuaxelMusicPattern p
+        Switch ((QuaxelMusicInstrument)instrument)
+        {
+            case QuaxelMusicInstrument.Drone:
+                // Zero length: one note for the whole section.
+                Hit(p, 0, 70, 0, 0)
+                break
+            case QuaxelMusicInstrument.Pad:
+                Hit(p, 0, 60 + (int)(energy * 30.0), 0, 17)
+                Hit(p, 16, 60 + (int)(energy * 30.0), 0, 17)
+                break
+            case QuaxelMusicInstrument.Wind:
+                Hit(p, 0, 70, 0, 32)
+                break
+            case QuaxelMusicInstrument.Bass:
+                MakeBass(p, energy)
+                break
+            case QuaxelMusicInstrument.Pluck:
+                MakeRiff(p, energy)
+                break
+            case QuaxelMusicInstrument.Bell:
+                MakeBell(p)
+                break
+            case QuaxelMusicInstrument.Lead:
+                MakeMelody(p, energy)
+                break
+            case QuaxelMusicInstrument.Metal:
+                if Chance01(0.7) { Hit(p, 0, 60, Random.Below(4), 24) }
+                if Chance01(0.3) { Hit(p, 16 + 2 * Random.Below(6), 45, Random.Below(4), 16) }
+                break
+            case QuaxelMusicInstrument.LowDrum:
+                MakeLowDrum(p, energy)
+                break
+            case QuaxelMusicInstrument.FrameDrum:
+                Hit(p, 8, 85, 0, 2)
+                Hit(p, 24, 85, 0, 2)
+                for step : 0; step < 32; step++ {
+                    if (step % 8 == 7 || step % 8 == 5) && Chance01(energy * 0.35) { Hit(p, step, 30, 0, 1) }
+                }
+                break
+            case QuaxelMusicInstrument.Erhu:
+                MakeErhu(p, energy)
+                break
+            case QuaxelMusicInstrument.Dulcimer:
+                MakeDulcimer(p, energy)
+                break
+            case QuaxelMusicInstrument.Drip:
+                for step : 0; step < 32; step++ {
+                    if Chance01(0.12) { Hit(p, step, 30 + Random.Below(50), 4 + Random.Below(5), 1) }
+                }
+                break
+            case QuaxelMusicInstrument.Shaker:
+                for step : 0; step < 32; step++ {
+                    if step % 4 == 2 { Hit(p, step, 45, 0, 1) }
+                    else if step % 2 == 0 { Hit(p, step, 28, 0, 1) }
+                    else if Chance01(energy * 0.3) { Hit(p, step, 18, 0, 1) }
+                }
+                break
+            default:
+                break
+        }
+        return p
+    }
+
+    // Roots on the bar and half bar, with a fifth leading into the next bar
+    // when the energy is up.
+    -MakeBass(QuaxelMusicPattern& p, float energy)
+    {
+        for half : 0; half < 2; half++ {
+            int bar = half * 16
+            Hit(p, bar, 90, 0, 16)
+            if energy > 0.35 && Chance01(energy * 0.8) { Hit(p, bar + 8, 75, 0, 8) }
+            if energy > 0.35 && Chance01(energy * 0.6) { Hit(p, bar + 14, 65, 2, 2) }
+            if energy > 0.6 && Chance01(0.4) { Hit(p, bar + 6, 60, 0, 2) }
+        }
+        FillLengths(p, 16)
+    }
+
+    // A one-bar riff in chord tones, answered by a second bar that mostly
+    // repeats it and changes its end: call and response. Degree counts chord
+    // tones upwards (0 root, 1 third, 2 fifth, 3 the root an octave up...).
+    -MakeRiff(QuaxelMusicPattern& p, float energy)
+    {
+        float density = 0.25 + energy * 0.45
+        int degree = 2 + Random.Below(3)
+        for step : 0; step < 16; step++ {
+            float chance = step % 8 == 0 ? 0.95 | (step % 4 == 0 ? 0.6 | (step % 2 == 0 ? density | density * 0.35))
+            if step == 0 || Chance01(chance) {
+                Hit(p, step, step % 4 == 0 ? 85 | 55 + Random.Below(20), degree, 1)
+                degree = Walk(degree, 0, 7)
+            }
+        }
+        for step : 16; step < 32; step++ {
+            // The answer keeps the first half and rewrites the last quarter.
+            bool rewrite = step >= 28 || Chance01(0.15)
+            if !rewrite {
+                if p.Hits[step - 16] > 0 { Hit(p, step, p.Hits[step - 16], p.Degree[step - 16], 1) }
+                continue
+            }
+            if Chance01(step % 4 == 0 ? 0.7 | density * 0.6) {
+                Hit(p, step, 50 + Random.Below(30), degree, 1)
+                degree = Walk(degree, 0, 7)
+            }
+        }
+        FillLengths(p, 8)
+    }
+
+    -MakeBell(QuaxelMusicPattern& p)
+    {
+        int [6] spots = {0, 6, 10, 16, 22, 26}
+        int count = 1 + Random.Below(3)
+        for i : 0; i < count; i++ {
+            int step = spots[Random.Below(6)]
+            Hit(p, step, 50 + Random.Below(25), 3 + Random.Below(4), 12)
+        }
+    }
+
+    // A melody in scale degrees above middle C (0 is C4, 7 is C5). Strong
+    // beats are moved to chord tones when the notes are placed.
+    -MakeMelody(QuaxelMusicPattern& p, float energy)
+    {
+        int degree = 4 + Random.Below(2)
+        for step : 0; step < 32; step++ {
+            float chance = step % 8 == 0 ? 0.8 | (step % 4 == 0 ? 0.5 | (step % 2 == 0 ? 0.3 * energy | 0.1 * energy))
+            if step == 0 || Chance01(chance) {
+                Hit(p, step, 60 + Random.Below(30), degree, 1)
+                degree = Walk(degree, 0, 11)
+            }
+        }
+        FillLengths(p, 8)
+    }
+
+    // A slow, singing line in scale degrees: few notes, held long, so the
+    // slides and vibrato have time to speak. Strong beats land on chord tones.
+    -MakeErhu(QuaxelMusicPattern& p, float energy)
+    {
+        int degree = 4 + Random.Below(3)
+        for step : 0; step < 32; step++ {
+            float chance = step % 8 == 0 ? 0.75 | (step % 4 == 0 ? 0.3 + 0.3 * energy | (step % 2 == 0 ? 0.12 * energy | 0.0))
+            if step == 0 || Chance01(chance) {
+                Hit(p, step, 60 + Random.Below(30), degree, 1)
+                degree = Walk(degree, 1, 11)
+            }
+        }
+        FillLengths(p, 12)
+    }
+
+    // Hammered arpeggios: eighth notes running up and down the chord, with
+    // sixteenth fills and, sometimes, a tremolo on one note as the hammers
+    // bounce.
+    -MakeDulcimer(QuaxelMusicPattern& p, float energy)
+    {
+        int degree = 3 + Random.Below(2)
+        int direction = 1
+        for step : 0; step < 32; step++ {
+            bool eighth = step % 2 == 0
+            if !eighth && !Chance01(energy * 0.45) { continue }
+            Hit(p, step, step % 4 == 0 ? 80 | 55 + Random.Below(20), degree, 2)
+            if degree + direction > 8 || degree + direction < 3 { direction = -direction }
+            degree += direction
+        }
+        // A tremolo: the same note struck on every sixteenth for half a bar.
+        if Chance01(0.25 + 0.35 * energy) {
+            int at = 8 + 16 * Random.Below(2)
+            int held = 4 + Random.Below(4)
+            for step : at; step < at + 8; step++ { Hit(p, step, 45 + Random.Below(15), held, 1) }
+        }
+        FillLengths(p, 4)
+    }
+
+    -MakeLowDrum(QuaxelMusicPattern& p, float energy)
+    {
+        Hit(p, 0, 100, 0, 2)
+        Hit(p, 16, 90, 0, 2)
+        for half : 0; half < 2; half++ {
+            int bar = half * 16
+            if Chance01(0.3 + energy * 0.5) { Hit(p, bar + 10, 70, 1, 2) }
+            if Chance01(energy * 0.4) { Hit(p, bar + 6, 55, 1, 2) }
+            if Chance01(energy * 0.5) { Hit(p, bar + 14, 60, 1, 2) }
+        }
+        if Chance01(0.3) { Hit(p, 30, 65, 0, 2) }
+    }
+
+    // Nudges a pattern so a returning section is the same riff, not a copy.
+    -Mutate(QuaxelMusicPattern& p, int instrument, float amount)
+    {
+        bool melodic = IsMelodic(instrument)
+        bool drum = instrument == QuaxelMusicInstrument.LowDrum.Value || instrument == QuaxelMusicInstrument.FrameDrum.Value
+        if !melodic && !drum { return }
+        int high = instrument == QuaxelMusicInstrument.Lead.Value || instrument == QuaxelMusicInstrument.Erhu.Value ? 11 | (instrument == QuaxelMusicInstrument.Dulcimer.Value ? 8 | 7)
+        for step : 0; step < 32; step++ {
+            if melodic && p.Hits[step] > 0 && step % 8 != 0 && Chance01(amount) { p.Degree[step] = Walk(p.Degree[step], 0, high) }
+            // Weak steps may gain or lose a note.
+            if step % 4 != 0 && Chance01(amount * 0.4) {
+                if p.Hits[step] > 0 { p.Hits[step] = 0 }
+                else if step % 2 == 0 {
+                    int before = step - 1
+                    while before > 0 && p.Hits[before] == 0 { before-- }
+                    Hit(p, step, drum ? 40 | 55, p.Degree[before], 1)
+                }
+            }
+        }
+        if melodic { FillLengths(p, instrument == QuaxelMusicInstrument.Bell.Value ? 12 | 8) }
+    }
+
+    // The root a chord is voiced from: within a fifth below to a fifth above
+    // the tonic, so the chords move by small steps.
+    -int RootOffset(int chord)
+    {
+        int root = (Key + Roots[chord]) % 12
+        return root > 6 ? root - 12 | root
+    }
+
+    // Chord tone `index` of a chord: 0 root, 1 third, 2 fifth, then the same an
+    // octave higher, from base.
+    -int ChordTone(int chord, int index, int base)
+    {
+        int octave = index / 3
+        int k = index - octave * 3
+        int interval = k == 0 ? 0 | (k == 1 ? Thirds[chord] | 7)
+        return base + RootOffset(chord) + interval + 12 * octave
+    }
+
+    -int ScaleTone(int degree)
+    {
+        int octave = degree / 7
+        return 60 + Key + Scale[degree - octave * 7] + 12 * octave
+    }
+
+    // The chord tone nearest a pitch.
+    -int NearestChordTone(int chord, int pitch)
+    {
+        int best = pitch
+        int distance = 99
+        for index : 0; index < 12; index++ {
+            int tone = ChordTone(chord, index, 36)
+            int d = Math.Abs(tone - pitch)
+            if d < distance {
+                distance = d
+                best = tone
+            }
+        }
+        return best
+    }
+
+    // Places a pitch class in [low, low + 12).
+    -int Place(int pitchClass, int low)
+    {
+        int pitch = low - low % 12 + pitchClass
+        if pitch < low { pitch += 12 }
+        return pitch
+    }
+
+    -Emit(QuaxelMusicNote []& notes, long step, int length, int pitch, float velocity, int instrument)
+    {
+        QuaxelMusicNote note
+        note.Step = step
+        note.Length = Math.Max(1, length)
+        note.Pitch = Math.Clamp(pitch, 12, 108)
+        note.Velocity = Math.Clamp(velocity, 0.0, 1.0)
+        note.Instrument = (QuaxelMusicInstrument)instrument
+        notes += note
+    }
+
+    -QuaxelMusicSegment Compose(QuaxelMusicSection section, QuaxelMusicSection next, long start, QuaxelMusicNote []& notes)
+    {
+        QuaxelMusicSegment segment
+        segment.Section = section
+        segment.StartStep = start
+        segment.Bars = BarsOf(section)
+        float d = Context.Danger
+        float a = Context.Aftermath
+        segment.Energy = Math.Clamp(EnergyOf(section) + Random.Range(-0.05, 0.05) + 0.35 * d - 0.25 * a - 0.15 * Context.Interior, 0.05, 1.0)
+        // Fights push the tempo; their aftermath drags it.
+        segment.Tempo = Math.Clamp(BaseTempo * (1.0 + 0.22 * d - 0.08 * a), 40.0, 200.0)
+        segment.Context = Context
+        segment.Instruments = ChooseInstruments(section)
+        LastInstruments = segment.Instruments
+        QuaxelMusicPattern [] parts
+        for i : 0; i < QuaxelMusicInstrument.Count; i++ {
+            parts += PatternFor(section, i, segment.Energy)
+        }
+        // The bridge starts on the relative minor for a change of colour. Danger
+        // and grief start every section there, so the same chords turn minor:
+        // Am F C G, with the bridge on F.
+        bool dark = a > 0.4 || d > 0.5
+        int rotation = section == QuaxelMusicSection.Bridge ? (dark ? 3 | 2) | (dark ? 2 | 0)
+        bool rising = EnergyOf(next) > EnergyOf(section) + 0.1 || next == QuaxelMusicSection.Chorus
+        bool falling = next == QuaxelMusicSection.Breakdown || next == QuaxelMusicSection.Outro || next == QuaxelMusicSection.Intro
+        int totalSteps = segment.Bars * 16
+        float loudness = 0.6 + 0.4 * segment.Energy
+        // The drum that plays the roll, or -1.
+        int roll = -1
+        if (segment.Instruments & (1 << QuaxelMusicInstrument.FrameDrum.Value)) != 0 { roll = QuaxelMusicInstrument.FrameDrum.Value }
+        if (segment.Instruments & (1 << QuaxelMusicInstrument.LowDrum.Value)) != 0 { roll = QuaxelMusicInstrument.LowDrum.Value }
+        for bar : 0; bar < segment.Bars; bar++ {
+            int chord = (bar + rotation) % ChordCount
+            bool lastBar = bar == segment.Bars - 1
+            for step : 0; step < 16; step++ {
+                long at = start + (long)(bar * 16 + step)
+                int ps = (bar % 2) * 16 + step
+                for i : 0; i < QuaxelMusicInstrument.Count; i++ {
+                    if (segment.Instruments & (1 << i)) == 0 { continue }
+                    bool drum = IsDrum(i)
+                    if lastBar && drum && step >= 12 && (rising || falling) { continue }
+                    int hit = parts[i].Hits[ps]
+                    if hit == 0 { continue }
+                    int length = parts[i].Length[ps]
+                    // Zero-length notes span the section and sound once.
+                    if length == 0 {
+                        if bar > 0 || step > 0 { continue }
+                        length = totalSteps
+                    }
+                    length = Math.Min(length, totalSteps - (bar * 16 + step) + 2)
+                    float velocity = (float)hit / 100.0 * loudness * Random.Range(0.92, 1.0)
+                    EmitPart(notes, i, at, length, chord, parts[i].Degree[ps], step, velocity)
+                }
+                // Drums roll into a bigger section.
+                if lastBar && rising && roll >= 0 && step >= 12 {
+                    float velocity = (0.45 + 0.12 * (float)(step - 12)) * loudness
+                    Emit(notes, at, 1, step % 2 == 0 ? 36 | 41, velocity, roll)
+                }
+            }
+        }
+        return segment
+    }
+
+    -EmitPart(QuaxelMusicNote []& notes, int instrument, long at, int length, int chord, int degree, int step, float velocity)
+    {
+        Switch ((QuaxelMusicInstrument)instrument)
+        {
+            case QuaxelMusicInstrument.Drone:
+                Emit(notes, at, length, 36 + Key, velocity, instrument)
+                Emit(notes, at, length, 43 + Key, velocity * 0.6, instrument)
+                break
+            case QuaxelMusicInstrument.Pad:
+                Emit(notes, at, length, Place((Key + Roots[chord]) % 12, 52), velocity, instrument)
+                Emit(notes, at, length, Place((Key + Roots[chord] + Thirds[chord]) % 12, 55), velocity * 0.9, instrument)
+                Emit(notes, at, length, Place((Key + Roots[chord] + 7) % 12, 58), velocity * 0.9, instrument)
+                break
+            case QuaxelMusicInstrument.Bass:
+                Emit(notes, at, length, ChordTone(chord, degree, 36), velocity, instrument)
+                break
+            case QuaxelMusicInstrument.Pluck:
+                Emit(notes, at, length, ChordTone(chord, degree, 48), velocity, instrument)
+                break
+            case QuaxelMusicInstrument.Bell:
+                Emit(notes, at, length, ChordTone(chord, degree, 60), velocity, instrument)
+                break
+            case QuaxelMusicInstrument.Lead:
+                int pitch = ScaleTone(degree)
+                if step % 8 == 0 { pitch = NearestChordTone(chord, pitch) }
+                Emit(notes, at, length, pitch, velocity, instrument)
+                break
+            case QuaxelMusicInstrument.Wind:
+                Emit(notes, at, length, 72 + RootOffset(chord), velocity, instrument)
+                break
+            case QuaxelMusicInstrument.Metal:
+                Emit(notes, at, length, 45 + degree * 5, velocity, instrument)
+                break
+            case QuaxelMusicInstrument.LowDrum:
+                Emit(notes, at, length, degree == 0 ? 36 | 41, velocity, instrument)
+                break
+            case QuaxelMusicInstrument.Drip:
+                Emit(notes, at, length, ChordTone(chord, degree, 60), velocity, instrument)
+                break
+            case QuaxelMusicInstrument.Erhu:
+                int line = ScaleTone(degree)
+                if step % 8 == 0 { line = NearestChordTone(chord, line) }
+                Emit(notes, at, length, line, velocity, instrument)
+                break
+            case QuaxelMusicInstrument.Dulcimer:
+                Emit(notes, at, length, ChordTone(chord, degree, 48), velocity, instrument)
+                break
+            default:
+                Emit(notes, at, length, 60, velocity, instrument)
+                break
+        }
+    }
+}

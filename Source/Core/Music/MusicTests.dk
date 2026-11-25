@@ -1,0 +1,371 @@
+QuaxelMusicComposer
+{
+}
+T{
+    FormFollowsTheRules()
+    {
+        for seed : 1; seed <= 20; seed++ {
+            QuaxelMusicComposer composer
+            composer.Begin((uint)seed)
+            int [3] last = {-1, -1, -1}
+            int inSong = 0
+            long start = 0
+            for n : 0; n < 60; n++ {
+                QuaxelMusicNote [] notes
+                QuaxelMusicSegment segment = composer.ComposeNext(start, notes, false)
+                int s = segment.Section.Value
+                T.AreEqual(segment.StartStep, start)
+                if n == 0 { T.AreEqual(s, QuaxelMusicSection.Intro.Value) }
+                // Never three of a kind in a row.
+                T.IsFalse(s == last[0] && s == last[1])
+                if last[0] == QuaxelMusicSection.PreChorus.Value { T.AreEqual(s, QuaxelMusicSection.Chorus.Value) }
+                if n > 0 && s == QuaxelMusicSection.Intro.Value { T.AreEqual(last[0], QuaxelMusicSection.Outro.Value) }
+                if last[0] == QuaxelMusicSection.Outro.Value { T.AreEqual(s, QuaxelMusicSection.Intro.Value) }
+                if s == QuaxelMusicSection.Intro.Value { inSong = 0 }
+                inSong++
+                if s == QuaxelMusicSection.Outro.Value { T.IsTrue(inSong >= 8) }
+                last[2] = last[1]
+                last[1] = last[0]
+                last[0] = s
+                start += (long)(segment.Bars * 16)
+            }
+        }
+    }
+
+    NotesStayInOrderInsideTheirSectionAndBand()
+    {
+        QuaxelMusicComposer composer
+        composer.Begin((uint)5)
+        long start = 0
+        for n : 0; n < 12; n++ {
+            QuaxelMusicNote [] notes
+            QuaxelMusicSegment segment = composer.ComposeNext(start, notes, false)
+            long end = start + (long)(segment.Bars * 16)
+            T.IsTrue(notes.Len > 0)
+            long previous = start
+            for note : notes {
+                T.IsTrue(note.Step >= previous && note.Step < end)
+                T.IsTrue((segment.Instruments & (1 << note.Instrument.Value)) != 0)
+                T.IsTrue(note.Pitch >= 12 && note.Pitch <= 108)
+                previous = note.Step
+            }
+            start = end
+        }
+    }
+
+    SameSeedWritesTheSameMusic()
+    {
+        QuaxelMusicComposer first
+        QuaxelMusicComposer second
+        first.Begin((uint)77)
+        second.Begin((uint)77)
+        long start = 0
+        for n : 0; n < 6; n++ {
+            QuaxelMusicNote [] a
+            QuaxelMusicNote [] b
+            QuaxelMusicSegment sa = first.ComposeNext(start, a, false)
+            QuaxelMusicSegment sb = second.ComposeNext(start, b, false)
+            T.AreEqual(sa.Section.Value, sb.Section.Value)
+            T.AreEqual(a.Len, b.Len)
+            for i : 0; i < a.Len; i++ {
+                T.AreEqual(a[i].Pitch, b[i].Pitch)
+                T.IsTrue(a[i].Step == b[i].Step)
+            }
+            start += (long)(sa.Bars * 16)
+        }
+    }
+
+    WorldPlaysTheMusic()
+    {
+        QuaxelWorld world()
+        int16 [1600] block
+        world.MixAudio(block)
+        for i : 0; i < 1600; i++ { T.AreEqual((int)block[i], 0) }
+        world.Music.Start((uint)3)
+        T.IsTrue(world.Music.IsPlaying())
+        T.AreEqual(world.Music.CurrentSection().Value, QuaxelMusicSection.Intro.Value)
+        int loudest = 0
+        // Ten seconds: past the drone's slow attack.
+        for b : 0; b < 600; b++ {
+            world.MixAudio(block)
+            for i : 0; i < 1600; i++ { loudest = Math.Max(loudest, Math.Abs((int)block[i])) }
+        }
+        T.IsTrue(loudest > 1000)
+        // The limiter keeps the band off the rails.
+        T.IsTrue(loudest < 32767)
+        world.Music.Stop()
+        T.IsFalse(world.Music.IsPlaying())
+    }
+}
+
+QuaxelMusic
+{
+}
+T{
+    DangerBringsBigSectionsAndGriefQuietOnes()
+    {
+        int fightBig = 0
+        int fightDrums = 0
+        int griefBig = 0
+        int griefDrums = 0
+        int griefQuiet = 0
+        int fightQuiet = 0
+        float fightEnergy = 0.0
+        float griefEnergy = 0.0
+        for seed : 1; seed <= 10; seed++ {
+            for mood : 0; mood < 2; mood++ {
+                QuaxelMusicComposer composer
+                composer.Begin((uint)seed)
+                if mood == 0 { composer.Context.Danger = 1.0 }
+                else { composer.Context.Aftermath = 1.0 }
+                long start = 0
+                for n : 0; n < 30; n++ {
+                    QuaxelMusicNote [] notes
+                    QuaxelMusicSegment segment = composer.ComposeNext(start, notes, false)
+                    start += (long)(segment.Bars * 16)
+                    QuaxelMusicSection s = segment.Section
+                    bool large = s == QuaxelMusicSection.Chorus || s == QuaxelMusicSection.Instrumental || s == QuaxelMusicSection.PreChorus
+                    bool quiet = s == QuaxelMusicSection.Breakdown || s == QuaxelMusicSection.Bridge || s == QuaxelMusicSection.Outro
+                    bool drums = (segment.Instruments & (1 << QuaxelMusicInstrument.FrameDrum.Value)) != 0
+                    if mood == 0 {
+                        if large { fightBig++ }
+                        if quiet { fightQuiet++ }
+                        if drums { fightDrums++ }
+                        fightEnergy += segment.Energy
+                        T.IsTrue(segment.Tempo > 80.0)
+                        T.IsTrue((segment.Instruments & (1 << QuaxelMusicInstrument.LowDrum.Value)) != 0)
+                    }
+                    else {
+                        if large { griefBig++ }
+                        if quiet { griefQuiet++ }
+                        if drums { griefDrums++ }
+                        griefEnergy += segment.Energy
+                        T.IsTrue(segment.Tempo < 72.0)
+                    }
+                }
+            }
+        }
+        T.IsTrue(fightBig * 2 > griefBig * 3)
+        T.IsTrue(griefQuiet > fightQuiet * 2)
+        T.IsTrue(fightDrums > griefDrums * 3)
+        T.IsTrue(fightEnergy > griefEnergy + 60.0)
+    }
+
+    WaterDripsAndInteriorsHaveNoWind()
+    {
+        int caveDrips = 0
+        int caveWind = 0
+        int fieldDrips = 0
+        int fieldWind = 0
+        for seed : 1; seed <= 10; seed++ {
+            for place : 0; place < 2; place++ {
+                QuaxelMusicComposer composer
+                composer.Begin((uint)seed)
+                if place == 0 {
+                    composer.Context.Interior = 1.0
+                    composer.Context.Water = 1.0
+                }
+                else { composer.Context.Mountains = 1.0 }
+                long start = 0
+                for n : 0; n < 20; n++ {
+                    QuaxelMusicNote [] notes
+                    QuaxelMusicSegment segment = composer.ComposeNext(start, notes, false)
+                    start += (long)(segment.Bars * 16)
+                    bool drip = (segment.Instruments & (1 << QuaxelMusicInstrument.Drip.Value)) != 0
+                    bool wind = (segment.Instruments & (1 << QuaxelMusicInstrument.Wind.Value)) != 0
+                    if place == 0 {
+                        if drip { caveDrips++ }
+                        if wind { caveWind++ }
+                    }
+                    else {
+                        if drip { fieldDrips++ }
+                        if wind { fieldWind++ }
+                    }
+                }
+            }
+        }
+        T.IsTrue(caveDrips > 150)
+        T.IsTrue(caveWind < 40)
+        T.IsTrue(fieldWind > 120)
+        T.IsTrue(fieldDrips < caveDrips / 2)
+    }
+
+    DangerBreaksOffACalmSection()
+    {
+        QuaxelMusic music
+        music.Start((uint)4)
+        float [1600] mix
+        // Two seconds into the four-bar intro.
+        for b : 0; b < 120; b++ { music.Mix(mix) }
+        T.AreEqual(music.CurrentSection().Value, QuaxelMusicSection.Intro.Value)
+        QuaxelMusicContext fight
+        fight.Danger = 1.0
+        music.SetSurroundings(fight)
+        // The intro would run to 13 seconds; the next bar line is at 3.3.
+        int changedAt = -1
+        for b : 0; b < 300 && changedAt < 0; b++ {
+            music.Mix(mix)
+            if music.CurrentSection().Value != QuaxelMusicSection.Intro.Value { changedAt = b }
+        }
+        T.IsTrue(changedAt >= 0 && changedAt < 120)
+        T.IsTrue(music.CurrentEnergy() > 0.6)
+        QuaxelMusicContext heard = music.Surroundings()
+        T.IsTrue(heard.Danger > 0.5)
+    }
+
+    DeathsTurnSombreOnlyOnceTheFightIsOver()
+    {
+        QuaxelMusic music
+        music.Start((uint)2)
+        float [1600] mix
+        QuaxelMusicContext fight
+        fight.Danger = 1.0
+        music.SetSurroundings(fight)
+        music.EnemyDied(1.0)
+        for b : 0; b < 300; b++ { music.Mix(mix) }
+        QuaxelMusicContext heard = music.Surroundings()
+        T.IsTrue(heard.Aftermath < 0.05)
+        QuaxelMusicContext calm
+        music.SetSurroundings(calm)
+        for b : 0; b < 600; b++ { music.Mix(mix) }
+        heard = music.Surroundings()
+        T.IsTrue(heard.Aftermath > 0.5)
+        T.IsTrue(heard.Danger < 0.5)
+    }
+}
+
+QuaxelMusicVoice
+{
+}
+T{
+    EveryInstrumentSoundsAndEnds()
+    {
+        for instrument : QuaxelMusicInstrument {
+            QuaxelMusicNote note
+            note.Instrument = instrument
+            note.Pitch = 62
+            note.Length = 4
+            note.Velocity = 0.8
+            QuaxelMusicVoice voice
+            voice.Start(note, 10000, (uint)99)
+            float loudest = 0.0
+            int blocks = 0
+            // Forty seconds: the drone takes about 25 to fade out.
+            while voice.Active && blocks < 2400 {
+                float [1600] mix
+                float [800] send
+                voice.Render(mix, send, 0, 800, 1.0)
+                for i : 0; i < 1600; i++ {
+                    T.IsTrue(mix[i] (0.0)== mix[i])
+                    loudest = Math.Max(loudest, Math.Abs(mix[i]))
+                }
+                blocks++
+            }
+            T.IsTrue(loudest > 100.0)
+            T.IsTrue(loudest < 40000.0)
+            T.IsFalse(voice.Active)
+        }
+    }
+
+    // A palette that bans the metal, the pluck and the reed never hears them,
+    // even in a fight or a solo, and one that favours the bell hears it more.
+    PreferencesShapeTheBand()
+    {
+        int bellsAsWritten = 0
+        int bellsPreferred = 0
+        for seed : 1; seed <= 10; seed++ {
+            for preferred : 0; preferred < 2; preferred++ {
+                QuaxelMusicComposer composer
+                composer.Begin((uint)seed)
+                if preferred == 1 {
+                    composer.Prefer(QuaxelMusicInstrument.Metal, 0.0)
+                    composer.Prefer(QuaxelMusicInstrument.Pluck, 0.0)
+                    composer.Prefer(QuaxelMusicInstrument.Lead, 0.0)
+                    composer.Prefer(QuaxelMusicInstrument.Bell, 3.0)
+                }
+                long start = 0
+                for n : 0; n < 20; n++ {
+                    composer.Context.Danger = n % 4 == 0 ? 0.9 | 0.0
+                    QuaxelMusicNote [] notes
+                    QuaxelMusicSegment segment = composer.ComposeNext(start, notes, false)
+                    start += (long)(segment.Bars * 16)
+                    int mask = segment.Instruments
+                    bool hasBell = (mask & (1 << QuaxelMusicInstrument.Bell.Value)) != 0
+                    if preferred == 1 {
+                        T.AreEqual(mask & (1 << QuaxelMusicInstrument.Metal.Value), 0)
+                        T.AreEqual(mask & (1 << QuaxelMusicInstrument.Pluck.Value), 0)
+                        T.AreEqual(mask & (1 << QuaxelMusicInstrument.Lead.Value), 0)
+                        if hasBell { bellsPreferred++ }
+                    }
+                    else if hasBell { bellsAsWritten++ }
+                }
+            }
+        }
+        T.IsTrue(bellsPreferred > bellsAsWritten + 20)
+        QuaxelMusicComposer cleared
+        cleared.Prefer(QuaxelMusicInstrument.Bell, 3.0)
+        cleared.ClearPreferences()
+        T.AreEqual(cleared.Preference(QuaxelMusicInstrument.Bell), 1.0)
+    }
+
+    // Every pitched note keeps to the mode's scale, through several songs and
+    // the progressions each one picks.
+    ModesKeepToTheirScales()
+    {
+        for mode : QuaxelMusicMode {
+            int [7] steps = {0, 2, 4, 5, 7, 9, 11}
+            if mode == QuaxelMusicMode.Dorian { steps = {0, 2, 3, 5, 7, 9, 10} }
+            if mode == QuaxelMusicMode.Minor { steps = {0, 2, 3, 5, 7, 8, 10} }
+            if mode == QuaxelMusicMode.Phrygian { steps = {0, 1, 3, 5, 7, 8, 10} }
+            if mode == QuaxelMusicMode.HarmonicMinor { steps = {0, 2, 3, 5, 7, 8, 11} }
+            bool [12] inScale
+            for s : steps { inScale[s] = true }
+            for seed : 1; seed <= 4; seed++ {
+                QuaxelMusicComposer composer
+                composer.SetMode(mode)
+                composer.Begin((uint)seed)
+                T.IsTrue(composer.CurrentMode() == mode)
+                long start = 0
+                for n : 0; n < 30; n++ {
+                    composer.Context.Danger = n % 5 == 0 ? 0.9 | 0.0
+                    QuaxelMusicNote [] notes
+                    QuaxelMusicSegment segment = composer.ComposeNext(start, notes, false)
+                    start += (long)(segment.Bars * 16)
+                    for note : notes {
+                        int i = note.Instrument.Value
+                        if i == QuaxelMusicInstrument.Metal.Value || i == QuaxelMusicInstrument.LowDrum.Value || i == QuaxelMusicInstrument.FrameDrum.Value || i == QuaxelMusicInstrument.Shaker.Value { continue }
+                        T.IsTrue(inScale[note.Pitch % 12])
+                    }
+                }
+            }
+        }
+    }
+
+    ErhuAndReedNeverPlayTogether()
+    {
+        int erhu = 0
+        int dulcimer = 0
+        for seed : 1; seed <= 10; seed++ {
+            QuaxelMusicComposer composer
+            composer.Begin((uint)seed)
+            composer.Context.Aftermath = 0.5
+            long start = 0
+            for n : 0; n < 20; n++ {
+                QuaxelMusicNote [] notes
+                QuaxelMusicSegment segment = composer.ComposeNext(start, notes, false)
+                start += (long)(segment.Bars * 16)
+                int mask = segment.Instruments
+                bool hasErhu = (mask & (1 << QuaxelMusicInstrument.Erhu.Value)) != 0
+                bool hasLead = (mask & (1 << QuaxelMusicInstrument.Lead.Value)) != 0
+                bool hasDulcimer = (mask & (1 << QuaxelMusicInstrument.Dulcimer.Value)) != 0
+                bool hasPluck = (mask & (1 << QuaxelMusicInstrument.Pluck.Value)) != 0
+                T.IsFalse(hasErhu && hasLead)
+                T.IsFalse(hasDulcimer && hasPluck)
+                if hasErhu { erhu++ }
+                if hasDulcimer { dulcimer++ }
+            }
+        }
+        T.IsTrue(erhu > 20)
+        T.IsTrue(dulcimer > 20)
+    }
+}

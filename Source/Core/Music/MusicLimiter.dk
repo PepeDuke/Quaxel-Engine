@@ -1,0 +1,71 @@
+// A look-ahead peak limiter. The signal is delayed by 2 ms while its gain
+// eases down ahead of any peak over the ceiling, then recovers over a few
+// hundred milliseconds. It only ever scales the signal, so the waveform is
+// never bent; below the ceiling it changes nothing.
+QuaxelMusicLimiter
+{
+    // The highest peak let through, as a fraction of full scale.
+    float Ceiling = 0.9
+    // 96 stereo frames of delay.
+    -float [192] Delay
+    -int Cursor
+    -float Gain = 1.0
+
+    // Limits a block of interleaved stereo in place, in sample units.
+    Process(float [1600]& block)
+    {
+        // The gain falls with a quarter of the look-ahead as its time
+        // constant, so it is fully down when the peak leaves the delay.
+        float attack = 1.0 - Math.Exp(-1.0 / 24.0)
+        float release = 1.0 - Math.Exp(-1.0 / (0.25 * 48000.0))
+        float ceiling = Ceiling * 32767.0
+        for i : 0; i < 800; i++ {
+            float left = block[2 * i]
+            float right = block[2 * i + 1]
+            float peak = Math.Max(Math.Abs(left), Math.Abs(right))
+            float target = peak > ceiling ? ceiling / peak | 1.0
+            Gain += (target - Gain) * (target < Gain ? attack | release)
+            int at = 2 * Cursor
+            block[2 * i] = Delay[at] * Gain
+            block[2 * i + 1] = Delay[at + 1] * Gain
+            Delay[at] = left
+            Delay[at + 1] = right
+            Cursor = (Cursor + 1) % 96
+        }
+    }
+
+    Clear()
+    {
+        for i : 0; i < 192; i++ { Delay[i] = 0.0 }
+        Cursor = 0
+        Gain = 1.0
+    }
+}
+T{
+    QuietSignalsPassUnchanged()
+    {
+        QuaxelMusicLimiter limiter
+        float [1600] block
+        for i : 0; i < 1600; i++ { block[i] = 10000.0 * Math.Sin((float)i * 0.05) }
+        float [1600] original = block
+        limiter.Process(block)
+        // Delayed by 96 frames, otherwise identical.
+        for i : 192; i < 1600; i++ { T.AreEqual(block[i], original[i - 192]) }
+    }
+
+    LoudPeaksStayUnderTheCeiling()
+    {
+        QuaxelMusicLimiter limiter
+        float loudest = 0.0
+        for b : 0; b < 20; b++ {
+            float [1600] block
+            for i : 0; i < 1600; i++ { block[i] = 60000.0 * Math.Sin((float)(b * 1600 + i) * 0.01) }
+            limiter.Process(block)
+            if b > 0 {
+                for i : 0; i < 1600; i++ { loudest = Math.Max(loudest, Math.Abs(block[i])) }
+            }
+        }
+        T.IsTrue(loudest < 0.92 * 32767.0)
+        T.IsTrue(loudest > 0.8 * 32767.0)
+    }
+}

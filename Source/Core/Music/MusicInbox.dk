@@ -1,0 +1,62 @@
+// What the game asks of the music, as plain data. The game writes it through
+// QuaxelMusic and the engine copies it once a block, so the engine can later
+// run on its own thread and only this copy has to be synchronized.
+QuaxelMusicInbox
+{
+    // Output level from 0 to 1, and bit n set to silence instrument n.
+    float Volume = 0.4
+    int Muted
+    // The listener's surroundings as last reported, clamped to 0 to 1.
+    QuaxelMusicContext Target
+    // Enemy deaths since the engine last looked; it takes and clears this.
+    float Grief
+    // Whether the game wants the music playing, and a count of Start calls
+    // with the seed of the last one, so a restart is never missed. The piece
+    // begins from the surroundings reported before Start.
+    bool WantPlaying
+    int Starts
+    uint Seed
+    QuaxelMusicContext StartContext
+    // Bumped whenever a setting below changes, so the engine applies them
+    // only then.
+    int SettingsRevision
+    float BaseTempo = 72.0
+    QuaxelMusicMode Mode = QuaxelMusicMode.Major
+    // See QuaxelMusicComposer.Prefer: unset instruments play as written.
+    float [14] Weights
+    bool [14] Weighted
+    // A progression set with AddChord, which replaces the mode's own until
+    // the mode changes.
+    bool ChordsSet
+    int [8] Roots
+    int [8] Thirds
+    int ChordCount
+
+    float Weight(QuaxelMusicInstrument instrument)
+    {
+        return Weighted[instrument.Value] ? Weights[instrument.Value] | 1.0
+    }
+}
+
+// Where the game and an audio thread meet when the music plays on its own
+// thread: QuaxelMusic.Exchange hands over the inbox and takes the status,
+// once a frame, and the thread takes the inbox and gives its status once a
+// block. Shared by two threads, so every access is inside ${ }.
+QuaxelMusicLink
+#{
+    QuaxelMusicInbox Inbox
+    QuaxelMusicStatus Status
+}
+
+// What the engine reports back, as plain data, published once a block.
+QuaxelMusicStatus
+{
+    QuaxelMusicSection Section = QuaxelMusicSection.Intro
+    QuaxelMusicSection Next = QuaxelMusicSection.Intro
+    // Bit n set when instrument n plays in the current section.
+    int Instruments
+    float Energy
+    int SoundingVoices
+    // The smoothed surroundings the music is playing to.
+    QuaxelMusicContext Heard
+}

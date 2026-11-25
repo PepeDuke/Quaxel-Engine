@@ -1,0 +1,11 @@
+version = 1
+references = ["../../Quaxel.dkp"]
+
+[project]
+name = "MusicPreview"
+entry = "musicpreview"
+build_dir = "../../.duck/musicpreview"
+
+[modules.musicpreview]
+sources = ["Main.dk"]
+depends = ["quaxel_core"]

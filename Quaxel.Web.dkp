@@ -10,7 +10,7 @@ sources = ["Source/Platform/Api/**/*.dk"]
 depends = ["quaxel_platform_backend"]
 
 [modules.quaxel_engine]
-sources = ["Source/Engine/**/*.dk"]
+sources = ["Source/Engine/**/*.dk", "Source/Platform/Web/AudioThread.dk"]
 depends = ["quaxel_core", "quaxel_platform"]
 
 [modules.quaxel_platform_backend]

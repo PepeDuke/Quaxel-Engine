@@ -1,0 +1,656 @@
+// One sounding note of a synthesized instrument at 48 kHz. Every instrument
+// is built from oscillators, filtered noise and a plucked-string delay line,
+// so the music needs no samples.
+QuaxelMusicVoice
+{
+    bool Active
+    QuaxelMusicInstrument Instrument
+    // In hertz.
+    float Frequency
+    // MIDI note number.
+    int Pitch
+    float Velocity
+    // Frames since the note started.
+    int Age
+    // Frames the note is held before it releases.
+    int Hold
+    // Output level in sample units, and the stereo position from -1 to 1.
+    float Gain
+    float Pan
+    // The share sent to the music's reverb.
+    float Send
+    // Per-frame smoothing of the envelope towards 1 while held and 0 after.
+    -float AttackRate
+    -float ReleaseRate
+    -float Level
+    // Exponential decays, multiplied every frame.
+    -float DecayA
+    -float DecayB
+    -float DecayC
+    -float RateA
+    -float RateB
+    -float RateC
+    -float [6] Phase
+    // State-variable filter memories.
+    -float Low
+    -float Band
+    // A second filter, for a second formant.
+    -float Low2
+    -float Band2
+    // A one-pole memory for noise colouring.
+    -float Smooth
+    -uint Noise
+    // Karplus-Strong string, long enough for 40 Hz.
+    -float [1200] Delay
+    -int DelayLength
+    -int Cursor
+    // The dulcimer's second string, at Delay[600].
+    -int DelayLength2
+    -int Cursor2
+    // A fade to silence in progress: frames left of FadeTotal, or 0 for none.
+    -int FadeLeft
+    // The offset blocker's last input.
+    -float DcIn
+    -int FadeTotal
+
+    Start(QuaxelMusicNote note, int framesPerStep, uint seed)
+    {
+        Active = true
+        Instrument = note.Instrument
+        Pitch = note.Pitch
+        Frequency = 440.0 * Math.Pow(2.0, (float)(note.Pitch - 69) / 12.0)
+        Velocity = note.Velocity
+        Age = 0
+        Hold = note.Length * framesPerStep
+        Level = 0.0
+        FadeLeft = 0
+        FadeTotal = 0
+        Low = 0.0
+        Band = 0.0
+        Low2 = 0.0
+        Band2 = 0.0
+        Smooth = 0.0
+        DcIn = 0.0
+        Noise = seed | (uint)1
+        for k : 0; k < 6; k++ { Phase[k] = 0.0 }
+        DecayA = 1.0
+        DecayB = 1.0
+        DecayC = 1.0
+        float attack = 0.005
+        float release = 0.1
+        float tauA = 1000.0
+        float tauB = 1000.0
+        float tauC = 1000.0
+        Pan = 0.0
+        Switch (Instrument)
+        {
+            case QuaxelMusicInstrument.Drone:
+                Gain = 0.20
+                Send = 0.35
+                attack = 3.0
+                release = 4.0
+                break
+            case QuaxelMusicInstrument.Pad:
+                Gain = 0.07
+                Send = 0.55
+                attack = 1.2
+                release = 2.0
+                Pan = note.Pitch % 3 == 0 ? -0.35 | (note.Pitch % 3 == 1 ? 0.35 | 0.0)
+                break
+            case QuaxelMusicInstrument.Bass:
+                Gain = 0.30
+                Send = 0.08
+                attack = 0.01
+                release = 0.25
+                tauA = 1.2
+                break
+            case QuaxelMusicInstrument.Pluck:
+                Gain = 0.45
+                Send = 0.4
+                Pan = -0.25
+                StartString()
+                break
+            case QuaxelMusicInstrument.Bell:
+                Gain = 0.09
+                Send = 0.7
+                Pan = 0.4
+                release = 3.0
+                tauA = 2.5
+                tauB = 0.5
+                tauC = 0.9
+                // A bell rings out past its note.
+                Hold += 48000
+                break
+            case QuaxelMusicInstrument.Lead:
+                Gain = 0.12
+                Send = 0.5
+                Pan = 0.1
+                attack = 0.12
+                release = 0.35
+                break
+            case QuaxelMusicInstrument.Wind:
+                Gain = 0.55
+                Send = 0.6
+                attack = 2.0
+                release = 3.0
+                Pan = Math.Mod((float)note.Pitch * 0.37, 1.2) - 0.6
+                break
+            case QuaxelMusicInstrument.Metal:
+                Gain = 0.06
+                Send = 0.85
+                Pan = -0.45
+                tauA = 2.5
+                tauB = 0.6
+                tauC = 0.012
+                Hold += 96000
+                break
+            case QuaxelMusicInstrument.LowDrum:
+                Gain = 0.60
+                Send = 0.3
+                tauA = 0.5
+                tauB = 0.03
+                tauC = 0.008
+                Hold = 36000
+                break
+            case QuaxelMusicInstrument.FrameDrum:
+                Gain = 0.22
+                Send = 0.35
+                Pan = 0.15
+                tauA = 0.12
+                tauB = 0.02
+                tauC = 0.07
+                Hold = 14400
+                break
+            case QuaxelMusicInstrument.Drip:
+                Gain = 0.10
+                Send = 0.8
+                Pan = Math.Mod((float)note.Pitch * 0.61 + Velocity * 3.0, 1.6) - 0.8
+                tauA = 0.07
+                tauB = 0.025
+                Hold = 9600
+                break
+            case QuaxelMusicInstrument.Erhu:
+                Gain = 0.13
+                Send = 0.45
+                Pan = -0.15
+                attack = 0.09
+                release = 0.25
+                // The slide into the note.
+                tauB = 0.05
+                break
+            case QuaxelMusicInstrument.Dulcimer:
+                Gain = 0.32
+                Send = 0.5
+                Pan = 0.3
+                StartCourse()
+                break
+            case QuaxelMusicInstrument.Shaker:
+                Gain = 0.06
+                Send = 0.2
+                Pan = 0.35
+                tauA = 0.05
+                tauB = 0.003
+                Hold = 4800
+                break
+        }
+        Gain *= 32767.0 * Velocity
+        AttackRate = 1.0 - Math.Exp(-1.0 / (attack * 48000.0))
+        ReleaseRate = 1.0 - Math.Exp(-1.0 / (release * 48000.0))
+        RateA = Math.Exp(-1.0 / (tauA * 48000.0))
+        RateB = Math.Exp(-1.0 / (tauB * 48000.0))
+        RateC = Math.Exp(-1.0 / (tauC * 48000.0))
+    }
+
+    // Roughly how loud the voice is now, in sample units.
+    float Loudness() { return Level * Gain }
+
+    // Lets a held note go within the given number of frames, as when the
+    // music breaks off.
+    Release(int frames)
+    {
+        Hold = Math.Min(Hold, Age + frames)
+    }
+
+    -StartString()
+    {
+        DelayLength = Math.Clamp((int)(48000.0 / Frequency), 2, 1199)
+        Cursor = 0
+        // Softer notes start from duller noise.
+        float brightness = 0.25 + 0.55 * Velocity
+        float y = 0.0
+        for i : 0; i < DelayLength; i++ {
+            y += brightness * (White() - y)
+            Delay[i] = y
+        }
+        RemoveOffset(0, DelayLength)
+    }
+
+    // Two strings to a course, tuned a hair apart so they beat and shimmer,
+    // each in its own half of the delay line, struck by the same hammer.
+    -StartCourse()
+    {
+        DelayLength = Math.Clamp((int)(48000.0 / Frequency), 2, 599)
+        DelayLength2 = Math.Clamp((int)(48000.0 / (Frequency * 1.0018)), 2, 599)
+        Cursor = 0
+        Cursor2 = 0
+        // A hammer is harder than a finger, but felt keeps it from hissing.
+        float brightness = 0.3 + 0.4 * Velocity
+        float y = 0.0
+        for i : 0; i < DelayLength; i++ {
+            y += brightness * (White() - y)
+            Delay[i] = y
+        }
+        for i : 0; i < DelayLength2; i++ {
+            y += brightness * (White() - y)
+            Delay[600 + i] = y
+        }
+        RemoveOffset(0, DelayLength)
+        RemoveOffset(600, DelayLength2)
+    }
+
+    // A string's loop passes a constant offset unchanged, so a burst of
+    // noise with a nonzero average would ring on as a slowly fading offset and
+    // thump when the note starts and ends. This takes the average out.
+    -RemoveOffset(int first, int length)
+    {
+        float sum = 0.0
+        for i : 0; i < length; i++ { sum += Delay[first + i] }
+        float mean = sum / (float)length
+        for i : 0; i < length; i++ { Delay[first + i] -= mean }
+    }
+
+    // A one-pole high pass at about 20 Hz that removes any offset left.
+    -float BlockOffset(float x)
+    {
+        Smooth = x - DcIn + 0.9974 * Smooth
+        DcIn = x
+        return Smooth
+    }
+
+    -float White()
+    {
+        Noise = Noise ^ (Noise << 13)
+        Noise = Noise ^ (Noise >> 17)
+        Noise = Noise ^ (Noise << 5)
+        return (float)(Noise & (uint)0xFFFF) / 32768.0 - 1.0
+    }
+
+    // A band-limited sawtooth (PolyBLEP).
+    -float Saw(int k, float frequency)
+    {
+        float dt = frequency / 48000.0
+        float p = Phase[k]
+        float value = 2.0 * p - 1.0
+        if p < dt {
+            float x = p / dt
+            value -= x + x - x * x - 1.0
+        }
+        else if p > 1.0 - dt {
+            float x = (p - 1.0) / dt
+            value -= x * x + x + x + 1.0
+        }
+        p += dt
+        if p >= 1.0 { p -= 1.0 }
+        Phase[k] = p
+        return value
+    }
+
+    -float Sine(int k, float frequency)
+    {
+        float p = Phase[k] + frequency / 48000.0
+        if p >= 1.0 { p -= 1.0 }
+        Phase[k] = p
+        return Turn(p)
+    }
+
+    // sin(2 pi turns) for turns from 0 to 1, several times cheaper than
+    // Math.Sin and within 4e-6 of it, far under the quietest sample. The turn
+    // is folded into a quarter either side of zero, where a short odd series
+    // is exact enough. Wrap anything else with Wrap first.
+    -float Turn(float turns)
+    {
+        float p = turns
+        if p > 0.75 { p -= 1.0 }
+        else if p > 0.25 { p = 0.5 - p }
+        float x = 6.2831853 * p
+        float x2 = x * x
+        return x * (1.0 + x2 * (-0.16666667 + x2 * (0.0083333333 + x2 * (-0.00019841270 + x2 * 0.0000027557319))))
+    }
+
+    -float Wrap(float turns) { return turns - Math.Floor(turns) }
+
+    // A Chamberlin state-variable filter. Coefficient is 2 sin(pi fc / rate),
+    // damping runs from about 0.1 (ringing) to 1.4 (soft). Returns the low
+    // pass; the band pass is left in Band.
+    -float Filter(float input, float coefficient, float damping)
+    {
+        Low += coefficient * Band
+        float high = input - Low - damping * Band
+        Band += coefficient * high
+        return Low
+    }
+
+    -float Filter2(float input, float coefficient, float damping)
+    {
+        Low2 += coefficient * Band2
+        float high = input - Low2 - damping * Band2
+        Band2 += coefficient * high
+        return Low2
+    }
+
+    -float Coefficient(float cutoff)
+    {
+        return 2.0 * Math.Sin(3.14159265 * Math.Clamp(cutoff, 20.0, 7000.0) / 48000.0)
+    }
+
+    -float Envelope()
+    {
+        if Age < Hold { Level += (1.0 - Level) * AttackRate }
+        else { Level -= Level * ReleaseRate }
+        Age++
+        DecayA *= RateA
+        DecayB *= RateB
+        DecayC *= RateC
+        return Level
+    }
+
+    // Adds count frames, starting at frame from of the block, to the stereo
+    // mix and the mono reverb send.
+    Render(float [1600]& mix, float [800]& send, int from, int count, float volume)
+    {
+        float [800] out
+        float seconds = (float)Age / 48000.0
+        Switch (Instrument)
+        {
+            case QuaxelMusicInstrument.Drone:
+                RenderDrone(out, count, seconds)
+                break
+            case QuaxelMusicInstrument.Pad:
+                RenderPad(out, count, seconds)
+                break
+            case QuaxelMusicInstrument.Bass:
+                RenderBass(out, count)
+                break
+            case QuaxelMusicInstrument.Pluck:
+                RenderPluck(out, count)
+                break
+            case QuaxelMusicInstrument.Bell:
+                RenderBell(out, count)
+                break
+            case QuaxelMusicInstrument.Lead:
+                RenderLead(out, count)
+                break
+            case QuaxelMusicInstrument.Wind:
+                RenderWind(out, count, seconds)
+                break
+            case QuaxelMusicInstrument.Metal:
+                RenderMetal(out, count)
+                break
+            case QuaxelMusicInstrument.LowDrum:
+                RenderLowDrum(out, count)
+                break
+            case QuaxelMusicInstrument.FrameDrum:
+                RenderFrameDrum(out, count)
+                break
+            case QuaxelMusicInstrument.Shaker:
+                RenderShaker(out, count)
+                break
+            case QuaxelMusicInstrument.Drip:
+                RenderDrip(out, count)
+                break
+            case QuaxelMusicInstrument.Erhu:
+                RenderErhu(out, count)
+                break
+            case QuaxelMusicInstrument.Dulcimer:
+                RenderDulcimer(out, count)
+                break
+        }
+        float gain = Gain * volume
+        float left = gain * Math.Sqrt(0.5 * (1.0 - Pan))
+        float right = gain * Math.Sqrt(0.5 * (1.0 + Pan))
+        float wet = gain * Send
+        for i : 0; i < count; i++ {
+            float value = out[i]
+            if FadeTotal > 0 {
+                value *= (float)Math.Max(FadeLeft, 0) / (float)FadeTotal
+                FadeLeft--
+            }
+            int at = from + i
+            mix[2 * at] += value * left
+            mix[2 * at + 1] += value * right
+            send[at] += value * wet
+        }
+        if FadeTotal > 0 && FadeLeft <= 0 { Active = false }
+        // Long releases spend most of their time far under the band: 50 dB
+        // below its peak a voice fades out over 50 ms and frees its slot,
+        // and under half a sample step it ends at once.
+        if Age >= Hold && Level < 0.003 { FadeOut(2400) }
+        if Age >= Hold && Level * Gain < 0.5 { Active = false }
+    }
+
+    // Ends the voice with a short linear fade instead of a click.
+    FadeOut(int frames)
+    {
+        int length = Math.Max(1, frames)
+        if FadeTotal > 0 && FadeLeft <= length { return }
+        FadeLeft = length
+        FadeTotal = length
+    }
+
+    // Two detuned saws and a sine under a slowly breathing low pass.
+    -RenderDrone(float [800]& out, int count, float seconds)
+    {
+        float lfo = 0.5 + 0.5 * Math.Sin(6.2831853 * 0.07 * seconds + Frequency)
+        float c = Coefficient(140.0 + 420.0 * lfo * (0.5 + Velocity))
+        float f = Frequency
+        for i : 0; i < count; i++ {
+            // The sine doubles the fundamental rather than an octave below it:
+            // 33 Hz rattles small speakers instead of being heard.
+            float s = Saw(0, f * 0.997) + Saw(1, f * 1.003) + 0.6 * Sine(2, f)
+            out[i] = Filter(s * 0.5, c, 0.6) * Envelope()
+        }
+    }
+
+    // Three detuned saws, a dark string-like bed.
+    -RenderPad(float [800]& out, int count, float seconds)
+    {
+        float c = Coefficient(500.0 + 1200.0 * Velocity + 250.0 * Math.Sin(6.2831853 * 0.11 * seconds))
+        float f = Frequency
+        for i : 0; i < count; i++ {
+            float s = Saw(0, f * 0.995) + Saw(1, f) + Saw(2, f * 1.005)
+            out[i] = Filter(s * 0.33, c, 0.9) * Envelope()
+        }
+    }
+
+    -RenderBass(float [800]& out, int count)
+    {
+        float c = Coefficient(220.0 + 300.0 * Velocity)
+        float f = Frequency
+        for i : 0; i < count; i++ {
+            float env = Envelope()
+            float s = Sine(0, f) + 0.35 * Saw(1, f)
+            out[i] = Filter(s, c, 1.0) * env * (0.7 + 0.3 * DecayA)
+        }
+    }
+
+    // Karplus-Strong: the delay line is the string, the two-tap average its
+    // loss. A released note is damped quickly, like a lifted finger.
+    -RenderPluck(float [800]& out, int count)
+    {
+        float loss = Age < Hold ? 0.4985 | 0.46
+        for i : 0; i < count; i++ {
+            int next = Cursor + 1
+            if next == DelayLength { next = 0 }
+            float value = Delay[Cursor]
+            Delay[Cursor] = loss * (value + Delay[next])
+            Cursor = next
+            // The string decays by itself; the envelope only ends the voice.
+            Level = Math.Max(Level * 0.9995, Math.Abs(value))
+            Age++
+            out[i] = BlockOffset(Filter(value, 0.6, 1.2))
+        }
+        if Age >= Hold + 9600 { FadeOut(480) }
+    }
+
+    // Phase-modulated sine with a falling index, plus an inharmonic partial.
+    -RenderBell(float [800]& out, int count)
+    {
+        float f = Frequency
+        // High notes get less modulation, so their sidebands stay under
+        // 14 kHz instead of folding back as grit.
+        float most = Math.Max(0.3, 14000.0 / (3.5 * f) - 1.0)
+        for i : 0; i < count; i++ {
+            float env = Envelope()
+            float index = Math.Min(0.4 + 2.6 * DecayB, most)
+            float modulator = Sine(1, f * 3.5)
+            float p = Phase[0] + f / 48000.0
+            if p >= 1.0 { p -= 1.0 }
+            Phase[0] = p
+            float carrier = Turn(Wrap(p + index * modulator * 0.15915494))
+            out[i] = (carrier * DecayA + 0.25 * Sine(2, f * 2.76) * DecayC) * Math.Min(env * 20.0, 1.0)
+        }
+        // The ring, not the envelope, is what is heard.
+        if DecayA < 0.003 { FadeOut(2400) }
+        if DecayA * Gain < 0.5 { Level = 0.0 }
+    }
+
+    // Odd harmonics sound hollow, like a reed; breath noise rides on top and
+    // vibrato fades in.
+    -RenderLead(float [800]& out, int count)
+    {
+        float breathC = Coefficient(Frequency * 2.0)
+        for i : 0; i < count; i++ {
+            float seconds = (float)Age / 48000.0
+            float depth = Math.Min(1.0, seconds / 0.6) * 0.005
+            float f = Frequency * (1.0 + depth * Turn(Wrap(5.2 * seconds)))
+            float env = Envelope()
+            float tone = Sine(0, f) + 0.33 * Sine(1, f * 3.0) + 0.12 * Sine(2, f * 5.0)
+            Filter(White(), breathC, 0.4)
+            out[i] = (tone * 0.6 + Band * 0.35) * env
+        }
+    }
+
+    // Noise through a narrow resonant band pass on the chord root, drifting,
+    // over a low rumble.
+    -RenderWind(float [800]& out, int count, float seconds)
+    {
+        float drift = 1.0 + 0.2 * Math.Sin(6.2831853 * 0.13 * seconds + Frequency) + 0.08 * Math.Sin(6.2831853 * 0.31 * seconds)
+        float c = Coefficient(Frequency * drift)
+        for i : 0; i < count; i++ {
+            float white = White()
+            Filter(white, c, 0.08)
+            Smooth += 0.01 * (white - Smooth)
+            out[i] = (Band * 0.5 + Smooth * 2.0) * Envelope()
+        }
+    }
+
+    // Five inharmonic partials; the upper ones die first. A short noise burst
+    // is the strike.
+    -RenderMetal(float [800]& out, int count)
+    {
+        float f = Frequency
+        for i : 0; i < count; i++ {
+            Envelope()
+            float body = Sine(0, f) + 0.6 * Sine(1, f * 2.76)
+            float shimmer = 0.4 * Sine(2, f * 5.40) + 0.25 * Sine(3, f * 8.93) + 0.15 * Sine(4, f * 13.34)
+            out[i] = body * DecayA + shimmer * DecayB + White() * DecayC * 0.5
+        }
+        Level = DecayA
+    }
+
+    // A sine whose pitch falls quickly after the hit, with a dull click.
+    -RenderLowDrum(float [800]& out, int count)
+    {
+        float f = Frequency
+        for i : 0; i < count; i++ {
+            Envelope()
+            float tone = Sine(0, f * (1.0 + 1.5 * DecayB))
+            Smooth += 0.08 * (White() - Smooth)
+            out[i] = tone * DecayA + Smooth * DecayC * 2.0
+        }
+        Level = DecayA
+    }
+
+    // A noise band for the skin and a short sine for the body.
+    -RenderFrameDrum(float [800]& out, int count)
+    {
+        float c = Coefficient(1500.0)
+        for i : 0; i < count; i++ {
+            Envelope()
+            Filter(White(), c, 0.7)
+            float body = Sine(0, 190.0 * (1.0 + 0.5 * DecayB))
+            out[i] = Band * DecayA * 1.5 + body * DecayC * 0.6
+        }
+        Level = DecayA
+    }
+
+    // A bowed string through two nasal formants, as the snakeskin of the
+    // erhu's resonator colours it. Each note slides up from a semitone below
+    // and its vibrato widens as it is held; the bow adds a little hiss.
+    -RenderErhu(float [800]& out, int count)
+    {
+        float first = Coefficient(1050.0)
+        float second = Coefficient(2700.0)
+        for i : 0; i < count; i++ {
+            float seconds = (float)Age / 48000.0
+            float depth = Math.Clamp((seconds - 0.12) / 0.5, 0.0, 1.0) * 0.011
+            float f = Frequency * (1.0 - 0.055 * DecayB) * (1.0 + depth * Turn(Wrap(5.6 * seconds)))
+            float env = Envelope()
+            float bow = Saw(0, f) + 0.07 * White()
+            float body = Filter(bow, first, 0.45)
+            Filter2(bow, second, 0.6)
+            out[i] = (Band * 1.1 + Band2 * 0.55 + body * 0.25) * env
+        }
+    }
+
+    // Two Karplus-Strong strings per note. Nothing damps them, so a held note
+    // and a released one both ring on and fade by themselves.
+    -RenderDulcimer(float [800]& out, int count)
+    {
+        float loss = Age < Hold ? 0.4996 | 0.4990
+        float dull = Coefficient(5000.0)
+        for i : 0; i < count; i++ {
+            int next = Cursor + 1
+            if next == DelayLength { next = 0 }
+            float a = Delay[Cursor]
+            Delay[Cursor] = loss * (a + Delay[next])
+            Cursor = next
+            int next2 = Cursor2 + 1
+            if next2 == DelayLength2 { next2 = 0 }
+            float b = Delay[600 + Cursor2]
+            Delay[600 + Cursor2] = loss * (b + Delay[600 + next2])
+            Cursor2 = next2
+            float value = 0.5 * (a + b)
+            Level = Math.Max(Level * 0.9997, Math.Abs(value))
+            Age++
+            out[i] = BlockOffset(Filter(value, dull, 1.2))
+        }
+        if Age >= Hold + 144000 { FadeOut(2400) }
+    }
+
+    // A water drop: a sine that rises in pitch as it dies away.
+    -RenderDrip(float [800]& out, int count)
+    {
+        float f = Frequency
+        for i : 0; i < count; i++ {
+            Envelope()
+            out[i] = Sine(0, f * (0.6 + 0.8 * (1.0 - DecayB))) * DecayA
+        }
+        Level = DecayA
+    }
+
+    // Noise in a band around 4 kHz, then rolled off above 6 kHz: a soft
+    // shh of seeds, without the hiss of a cymbal.
+    -RenderShaker(float [800]& out, int count)
+    {
+        float band = Coefficient(4000.0)
+        float top = Coefficient(6000.0)
+        for i : 0; i < count; i++ {
+            Envelope()
+            Filter(White(), band, 0.8)
+            float shaped = Filter2(Band, top, 1.2)
+            out[i] = shaped * 2.2 * DecayA * (1.0 - DecayB)
+        }
+        Level = DecayA
+    }
+}

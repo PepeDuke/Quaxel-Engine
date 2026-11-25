@@ -193,4 +193,31 @@ All values range from 0 to 1, and out-of-range values are refused. The tail keep
 
 To choose a group by what is underfoot, `terrain.SurfaceAt(x, z)` gives the surface of the column under a world point: a `QuaxelTerrainSurface` value or a game's own, or -1 where no chunk is loaded.
 
-Windows queues up to four blocks of 800 stereo frames, about 67 ms in total. Position changes and stops affect newly mixed blocks. A render stall longer than the queued audio can cause a gap. Headless runs and Windows runs without an output device advance the mixer once per simulation step.
+### Generated music
+
+`world.Music` composes and synthesizes background music while it plays, with no audio files:
+
+```duck
+world.Music.Start((uint)1)   // the same seed plays the same music
+world.Music.Volume = 0.6
+QuaxelMusicSection now = world.Music.CurrentSection()
+```
+
+The composer builds a song from `QuaxelMusicSection` parts: intro, verse, pre-chorus, chorus, post-chorus, bridge, instrumental, breakdown and outro. It picks each section from the three before it and writes it one section ahead of playback. Each section decides which `QuaxelMusicInstrument` parts play: drone, pad, bass, plucked riff, bell, reed lead, wind, metal, low drum, frame drum and shaker. Each instrument keeps a two-bar pattern for every kind of section, so a returning chorus brings back its riff, slightly varied. The chords default to C, G, Am and F, one a bar. `Music.ClearChords()` and `Music.AddChord(root, third)` replace them from the next section on, and `Music.SetMode(mode)` writes in another scale with its own progressions. `SetTempo(bpm)` changes the tempo, which defaults to 72. After an outro a new song starts with new riffs.
+
+Each section is written during the last bar of the one before, so it also answers the listener's surroundings, given as a `QuaxelMusicContext` with values from 0 to 1:
+
+```duck
+QuaxelMusicContext around
+terrain.SampleSurroundings(player.X, player.Z, 40.0, around)   // Water, Mountains, Structures
+around.Interior = insideBuilding ? 1.0 | 0.0
+around.Danger = Math.Min(1.0, nearbyEnemyThreat)
+world.Music.SetSurroundings(around)        // every frame; the music smooths it
+world.Music.EnemyDied(0.3)                 // 1 for a boss
+```
+
+Danger favours choruses and solos, adds drums, raises the tempo by up to a fifth and turns the chords minor (Am F C G). A jump in danger cuts a calm section off at the next bar line. Deaths turn the music sombre once the danger has passed: it brings breakdowns and bridges, bells and pads, fewer drums and a slower tempo, fading over about a minute. Interiors silence the wind and bring clangs, drips and a smaller room; water brings drips; mountains bring wind, drones and a longer echo. `Music.Prefer(instrument, weight)` gives a place its own band: 1 plays an instrument as written, 2 about twice as often, and 0 never, even where a fight would add a drum or a solo its soloist. `Music.ClearPreferences()` sets every instrument back to 1. Like the chords and tempo, preferences apply from the next section. `Music.Muted` silences instruments by bit without changing what is written.
+
+`QuaxelMusic` only records what the game asks for and reports what is playing: the composer and voices live in a `QuaxelMusicEngine` that reads a plain-data `QuaxelMusicInbox` once a block and publishes a `QuaxelMusicStatus`. Settings take effect from the next mixed block at the earliest. `Tools/MusicPreview` renders four minutes of a walk, a fight and a cave to `MusicPreview.wav`, then the same piece once per instrument as `Stem-<Instrument>.wav`.
+
+On Windows the audio plays on a thread of its own (`QuaxelAudioThread`, started by the engine's main loop with a `P{ }` task). That thread owns the music engine and the output device: it fills each of the device's four buffers of 800 stereo frames (about 67 ms in all) as it comes free. The main thread mixes the sound effects once a simulation step with `world.MixEffects` and queues them for the thread, and hands the music its settings and surroundings once a frame with `world.Music.Exchange()`. A slow frame therefore delays sound effects, and a queue of three blocks drops its oldest so a burst of steps catches up rather than lagging, but the music keeps playing, even while the window is being resized. Position changes and stops affect newly mixed blocks. If the device refuses a block, the thread ends and the device closes. The browser build has no threads and mixes everything on the main thread, as headless runs and runs without an output device do: they advance the mixer once per simulation step with `world.MixAudio`.

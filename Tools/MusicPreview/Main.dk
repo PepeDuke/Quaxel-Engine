@@ -1,0 +1,93 @@
+// Renders the generated music to MusicPreview.wav in the working directory,
+// printing the second and name of each section as it starts, so the composer
+// can be heard without running a game. The listener walks the hills, fights
+// from 60 to 100 seconds, killing three enemies, and enters a wet cave at 160.
+// Then it renders each instrument alone as Stem-<Instrument>.wav, the same
+// piece with the others muted, to find which part makes a sound.
+// Change the seed passed to Music.Start for another piece.
+
+PutWord(uint8 [44]& header, int at, int value)
+{
+    header[at] = (uint8)(value & 255)
+    header[at + 1] = (uint8)((value >> 8) & 255)
+    header[at + 2] = (uint8)((value >> 16) & 255)
+    header[at + 3] = (uint8)((value >> 24) & 255)
+}
+
+// Renders seconds of music with the muted instruments silent. Sections are
+// printed when verbose.
+bool Render(name path, int seconds, int muted, bool verbose)
+{
+    int blocks = 60 * seconds
+    int bytes = blocks * 1600 * 2
+    uint8 [44] header
+    PutWord(header, 0, 0x46464952)
+    PutWord(header, 4, 36 + bytes)
+    PutWord(header, 8, 0x45564157)
+    PutWord(header, 12, 0x20746D66)
+    PutWord(header, 16, 16)
+    // PCM, two channels, 48 kHz, four bytes a frame, 16 bits.
+    PutWord(header, 20, 1 | (2 << 16))
+    PutWord(header, 24, 48000)
+    PutWord(header, 28, 48000 * 4)
+    PutWord(header, 32, 4 | (16 << 16))
+    PutWord(header, 36, 0x61746164)
+    PutWord(header, 40, bytes)
+    file output
+    if !output.Create(path) {
+        Print("Could not create")
+        Print(path)
+        return false
+    }
+    output.Write(header)
+    QuaxelWorld world()
+    world.Music.Muted = muted
+    world.Music.Start((uint)1)
+    int section = -1
+    int16 [1600] block
+    for b : 0; b < blocks; b++ {
+        Scene(world.Music, b / 60, b % 60 == 0, verbose)
+        int current = world.Music.CurrentSection().Value
+        if current != section && verbose {
+            Print(b / 60)
+            Print(world.Music.CurrentSection())
+        }
+        section = current
+        world.MixAudio(block)
+        output.Write(block)
+    }
+    return true
+}
+
+Main()
+{
+    if !Render((name)"MusicPreview.wav", 240, 0, true) { return }
+    Print("Wrote MusicPreview.wav")
+    for instrument : QuaxelMusicInstrument {
+        int all = (1 << QuaxelMusicInstrument.Count) - 1
+        name path = (name)"Stem-" + instrument.Name + (name)".wav"
+        if !Render(path, 240, all & ~(1 << instrument.Value), false) { return }
+    }
+    Print("Wrote a stem for each instrument")
+}
+
+// A walk through the hills, a fight, its aftermath and a cave, so the music's
+// answers to its surroundings can be heard.
+Scene(QuaxelMusic& music, int second, bool onTheSecond, bool verbose)
+{
+    QuaxelMusicContext context
+    context.Mountains = 0.4
+    if second >= 60 && second < 100 { context.Danger = 0.9 }
+    // Deaths are counted once, on the first block of their second.
+    if onTheSecond && (second == 75 || second == 85 || second == 95) { music.EnemyDied(0.4) }
+    if second >= 160 {
+        context.Mountains = 0.0
+        context.Interior = 1.0
+        context.Water = 0.6
+    }
+    if verbose && onTheSecond && (second == 60 || second == 100 || second == 160) {
+        Print("-- scene change at second")
+        Print(second)
+    }
+    music.SetSurroundings(context)
+}

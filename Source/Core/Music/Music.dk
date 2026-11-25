@@ -1,0 +1,195 @@
+// Generated music, as the game sees it. Every call here only records what
+// the game wants in an inbox, and every query reads what the engine last
+// reported, so the game never touches the composer or the voices. A world
+// mixes it under its sound effects: Mix hands the inbox to the engine,
+// renders a block and takes back its status. Settings apply from the next
+// block at the earliest, and from the next section where the composer uses
+// them.
+QuaxelMusic
+{
+    -QuaxelMusicInbox Inbox
+    -QuaxelMusicStatus Status
+    -QuaxelMusicEngine Engine
+
+    // Starts a new piece from the next block; the same seed and surroundings
+    // play the same music.
+    Start(uint seed)
+    {
+        Inbox.Seed = seed
+        Inbox.StartContext = Inbox.Target
+        Inbox.Starts++
+        Inbox.WantPlaying = true
+    }
+
+    // Stops writing new notes; voices already sounding ring out.
+    Stop() { Inbox.WantPlaying = false }
+
+    // Whether the game asked for the music to play.
+    bool IsPlaying() { return Inbox.WantPlaying }
+
+    // Beats a minute with no danger or aftermath, from 40 to 200. It applies
+    // from the next section.
+    bool SetTempo(float beatsPerMinute)
+    {
+        if !(beatsPerMinute >= 40.0 && beatsPerMinute <= 200.0) { return false }
+        Inbox.BaseTempo = beatsPerMinute
+        Inbox.SettingsRevision++
+        return true
+    }
+
+    float BaseTempo() { return Inbox.BaseTempo }
+
+    // Plays an instrument more or less often than the music would by itself:
+    // 1 as written, 2 about twice as often, 0 never. A game sets a palette for
+    // each place so it has its own band; see QuaxelMusicComposer.Prefer. It
+    // applies from the next section.
+    Prefer(QuaxelMusicInstrument instrument, float weight)
+    {
+        Inbox.Weights[instrument.Value] = Math.Max(0.0, weight)
+        Inbox.Weighted[instrument.Value] = true
+        Inbox.SettingsRevision++
+    }
+
+    float Preference(QuaxelMusicInstrument instrument) { return Inbox.Weight(instrument) }
+
+    // Every instrument back to as written.
+    ClearPreferences()
+    {
+        for i : 0; i < QuaxelMusicInstrument.Count; i++ { Inbox.Weighted[i] = false }
+        Inbox.SettingsRevision++
+    }
+
+    // The scale and chords, from the next section: Major for towns, the
+    // minor modes darker; see QuaxelMusicMode. It lasts through Start. A new
+    // mode replaces chords set with AddChord.
+    SetMode(QuaxelMusicMode mode)
+    {
+        if mode != Inbox.Mode { Inbox.ChordsSet = false }
+        Inbox.Mode = mode
+        Inbox.SettingsRevision++
+    }
+
+    QuaxelMusicMode CurrentMode() { return Inbox.Mode }
+
+    // Forgets the progression so AddChord can build a new one. It applies from
+    // the next section.
+    ClearChords()
+    {
+        Inbox.ChordsSet = true
+        Inbox.ChordCount = 0
+        Inbox.SettingsRevision++
+    }
+
+    // Appends a chord, one a bar, up to eight. Root is in semitones above the
+    // key; third is 4 for major or 3 for minor. The first one since the mode
+    // was set starts a new progression.
+    bool AddChord(int root, int third)
+    {
+        if !Inbox.ChordsSet {
+            Inbox.ChordsSet = true
+            Inbox.ChordCount = 0
+        }
+        if Inbox.ChordCount == 8 || root < 0 || root > 11 || (third != 3 && third != 4) { return false }
+        Inbox.Roots[Inbox.ChordCount] = root
+        Inbox.Thirds[Inbox.ChordCount] = third
+        Inbox.ChordCount++
+        Inbox.SettingsRevision++
+        return true
+    }
+
+    // Reports the listener's surroundings, every frame or whenever they
+    // change. Values outside 0 to 1 are clamped.
+    SetSurroundings(QuaxelMusicContext context)
+    {
+        Inbox.Target.Interior = Math.Clamp(context.Interior, 0.0, 1.0)
+        Inbox.Target.Water = Math.Clamp(context.Water, 0.0, 1.0)
+        Inbox.Target.Mountains = Math.Clamp(context.Mountains, 0.0, 1.0)
+        Inbox.Target.Structures = Math.Clamp(context.Structures, 0.0, 1.0)
+        Inbox.Target.Danger = Math.Clamp(context.Danger, 0.0, 1.0)
+        Inbox.Target.Aftermath = Math.Clamp(context.Aftermath, 0.0, 1.0)
+    }
+
+    // An enemy died near the listener. Weight is how much it mattered: 0.2 for
+    // a minion, 1 for a boss. Once the fight is over the music turns sombre.
+    EnemyDied(float weight)
+    {
+        Inbox.Grief = Math.Min(1.0, Inbox.Grief + Math.Clamp(weight, 0.0, 1.0))
+    }
+
+    // The smoothed surroundings the music is playing to.
+    QuaxelMusicContext Surroundings() { return Status.Heard }
+
+    QuaxelMusicSection CurrentSection() { return Status.Section }
+
+    // The section planned to follow the current one. Until the last bar of
+    // the current section it can still change with the surroundings.
+    QuaxelMusicSection NextSection() { return Status.Next }
+
+    // Bit n is set when instrument n plays in the current section.
+    int CurrentInstruments() { return Status.Instruments }
+
+    // How many voices are sounding, for profiling.
+    int SoundingVoices() { return Status.SoundingVoices }
+
+    float CurrentEnergy() { return Status.Energy }
+
+    // With an audio thread (see QuaxelAudioThread), hands what the game asked
+    // for to the thread and takes what it last reported, instead of Mix. Once
+    // a frame is enough: settings apply from a block, and deaths add up until
+    // the thread takes them.
+    Exchange()
+    {
+        QuaxelMusicInbox sent = Inbox
+        Inbox.Grief = 0.0
+        QuaxelMusicStatus heard
+        ${
+            sent.Grief = Math.Min(1.0, QuaxelMusicLink.Inbox.Grief + sent.Grief)
+            QuaxelMusicLink.Inbox = sent
+            heard = QuaxelMusicLink.Status
+        }
+        Status = heard
+    }
+
+    // Before an audio thread starts: the link carries this music only, with
+    // nothing left from an earlier world.
+    Connect()
+    {
+        QuaxelMusicInbox sent = Inbox
+        Inbox.Grief = 0.0
+        QuaxelMusicStatus fresh
+        ${
+            QuaxelMusicLink.Inbox = sent
+            QuaxelMusicLink.Status = fresh
+        }
+        Status = fresh
+    }
+
+    // Adds a block of 800 stereo frames to the mix, in sample units, playing
+    // the music on this thread.
+    Mix(float [1600]& mix)
+    {
+        // The engine works on copies; grief is handed over once.
+        Engine.Receive(Inbox)
+        Inbox.Grief = 0.0
+        Engine.Mix(mix)
+        Status = Engine.Publish()
+    }
+}
+@{
+    // Output level from 0 to 1.
+    Volume: Inbox.Volume
+    // Bit n set silences instrument n. The music is written the same either
+    // way, so solo stems of one piece line up.
+    Muted: Inbox.Muted
+}
+={
+    Volume: Inbox.Volume = value
+    Muted: Inbox.Muted = value
+}
+
+QuaxelWorld
+{
+    // Generated background music, mixed under the world's sounds. Call
+    // Music.Start(seed) to begin.
+    QuaxelMusic Music
+}
