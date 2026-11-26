@@ -7,6 +7,10 @@ layout(push_constant) uniform Params {
     int base;  // First word of the volume in the buffer: 0, or an effect slot.
     // World normals of the box's +X, +Y and +Z faces, three floats each.
     float axes[9];
+    // Occupied bricks, packed x | y << 10 | z << 20: the first brick and one
+    // past the last. high == 0 means the whole grid, as for effects.
+    int low;
+    int high;
 } pc;
 // Per pixel: albedo RGB with ambient occlusion in the top byte, then depth,
 // then the world normal as signed bytes. VoxelLight.comp turns it into color.
@@ -27,6 +31,8 @@ ivec3 enteringCell(vec3 position, vec3 direction) {
 
 ivec3 dims;
 ivec3 bricks;
+
+ivec3 unpackBricks(int packed) { return ivec3(packed & 1023, (packed >> 10) & 1023, (packed >> 20) & 1023); }
 
 // First word of the brick holding cell c, or 0 when it is empty or outside.
 int brickAt(ivec3 c) {
@@ -82,19 +88,26 @@ void main() {
     ivec3 positive = max(stepDir, ivec3(0));
     int depthIndex = index + pc.extent.x * pc.extent.y;
     int normalIndex = depthIndex + pc.extent.x * pc.extent.y;
+    // Clip the ray to the occupied bricks. Everything outside them is empty,
+    // so the hit, its depth and its face are the same as for the whole grid.
+    ivec3 low = ivec3(0), high = dims;
+    if (pc.high != 0) {
+        low = unpackBricks(pc.low) * 8;
+        high = min(unpackBricks(pc.high) * 8, dims);
+    }
     float t = 0.0, end = uintBitsToFloat(frame[depthIndex]);
     int face = 1;
     for (int a = 0; a < 3; ++a) {
         if (dir[a] == 0.0) {
-            if (origin[a] < 0 || origin[a] >= dims[a]) return;
+            if (origin[a] < low[a] || origin[a] >= high[a]) return;
         } else {
-            float t0 = -origin[a] * invDir[a], t1 = (dims[a] - origin[a]) * invDir[a];
+            float t0 = (low[a] - origin[a]) * invDir[a], t1 = (high[a] - origin[a]) * invDir[a];
             if (min(t0,t1) > t) { t = min(t0,t1); face = a; }
             end = min(end, max(t0,t1));
         }
     }
     if (t >= end) return;
-    ivec3 cell = clamp(enteringCell(origin + t * dir, dir), ivec3(0), dims-1);
+    ivec3 cell = clamp(enteringCell(origin + t * dir, dir), low, high - 1);
     while (all(greaterThanEqual(cell, ivec3(0))) && all(lessThan(cell, dims))) {
         ivec3 brick = cell / 8;
         int offset = words[pc.base + 3 + brick.x + bricks.x * (brick.y + bricks.y * brick.z)];

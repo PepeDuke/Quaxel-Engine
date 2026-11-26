@@ -23,6 +23,10 @@ VkVoxelParams
     int Base
     // World normals of the box's +X, +Y and +Z faces.
     float [9] Axes
+    // Occupied bricks, packed x | y << 10 | z << 20: first, and one past the
+    // last. High 0 traces the whole grid.
+    int Low
+    int High
 }
 
 // Push constants of Shaders/VoxelLight.comp.
@@ -114,6 +118,10 @@ QuaxelVulkan
     -long ShadowPipeline
     -VkStorage ShadowAtlas
     -int [4096] VolumeRevision
+    // Occupied brick bounds per volume, as VkVoxelParams packs them. High 0
+    // until SetVolumeBounds, which traces the whole grid.
+    -int [4096] VolumeLow
+    -int [4096] VolumeHigh
     -int [256] CasterRevisions
     -int [256] PreviousRevisions
     -int [4096] PreviousMatrices
@@ -143,7 +151,7 @@ QuaxelVulkan
         long [2] sets = {StorageLayout, StorageLayout}
         VkPushConstantRange params
         params.stageFlags = 32
-        params.vkSize = 120
+        params.vkSize = 128
         VkPipelineLayoutCreateInfo layout
         layout.setLayoutCount = 2
         layout.pSetLayouts = &sets[0]
@@ -377,6 +385,9 @@ QuaxelVulkan
             ReleaseStorage(storage)
             return -1
         }
+        int replaced = previous < 0 ? (int)Volumes.Count | previous
+        VolumeLow[replaced] = 0
+        VolumeHigh[replaced] = 0
         if previous < 0 {
             Volumes.Items[Volumes.Count] = storage
             Volumes.Count++
@@ -386,6 +397,16 @@ QuaxelVulkan
         RetireStorage(old)
         Volumes.Items[previous] = storage
         return previous
+    }
+
+    // Low and high are brick coordinates, packed x | y << 10 | z << 20: the
+    // first occupied brick and one past the last on each axis. Traces skip
+    // the empty space outside them.
+    SetVolumeBounds(int handle, int low, int high)
+    {
+        if handle < 0 || handle >= Volumes.Count { return }
+        VolumeLow[handle] = low
+        VolumeHigh[handle] = high
     }
 
     UnmapVolume(int handle)
@@ -447,11 +468,11 @@ QuaxelVulkan
         if !FrameOpen { return Device != 0 }
         if !ComputeFrame || handle < 0 || handle >= Volumes.Count { return false }
         VkStorage storage = Volumes.Items[handle]
-        return Trace(storage.Descriptor, 0, matrix, left, top, right, bottom, axes)
+        return Trace(storage.Descriptor, 0, VolumeLow[handle], VolumeHigh[handle], matrix, left, top, right, bottom, axes)
     }
 
     // Traces one volume that starts at word `base` of the buffer behind descriptor.
-    -bool Trace(long descriptor, int base, void* matrix, float left, float top, float right, float bottom, void* axes)
+    -bool Trace(long descriptor, int base, int low, int high, void* matrix, float left, float top, float right, float bottom, void* axes)
     {
         FlushEffects()
         MarkTraceStart()
@@ -464,6 +485,8 @@ QuaxelVulkan
         int endX = (int)(right * (float)Extent.width) + 1
         int endY = (int)(bottom * (float)Extent.height) + 1
         params.Base = base
+        params.Low = low
+        params.High = high
         memcpy(&params.Axes[0], axes, 36)
         if UiBound || EffectBound || LightBound {
             UiBound = false
@@ -487,7 +510,7 @@ QuaxelVulkan
         for k : 0; k < 4; k++ { TraceBatch[4 * TraceBatchCount + k] = rect[k] }
         TraceBatchCount++
         Vk.CmdBindDescriptorSets(Command, 1, ComputeLayout, 1, 1, &descriptor, 0, null)
-        Vk.CmdPushConstants(Command, ComputeLayout, 32, 0, 120, &params)
+        Vk.CmdPushConstants(Command, ComputeLayout, 32, 0, 128, &params)
         Vk.CmdDispatch(Command, groupsX, groupsY, 1)
         return true
     }

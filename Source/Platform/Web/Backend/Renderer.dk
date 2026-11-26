@@ -13,6 +13,7 @@ QuaxelPlatformBackend
     bool StartRenderer() { return QuaxelBrowser.Start() != 0 }
     int MapVolume(int previous, int words, void*& mapped) { return QuaxelBrowser.Map(previous, words, mapped) }
     UnmapVolume(int handle) { QuaxelBrowser.Upload(handle) }
+    SetVolumeBounds(int handle, int low, int high) {  }
     bool BeginVoxelFrame() { return QuaxelBrowser.Begin(null) != 0 }
     bool TraceVolume(int handle, void* boxFromClip, float left, float top, float right, float bottom, void* axes) { return QuaxelBrowser.Trace(handle, boxFromClip, left, top, right, bottom, axes) != 0 }
     int BeginProbeField(bool uniformUpdates) { return 0 }

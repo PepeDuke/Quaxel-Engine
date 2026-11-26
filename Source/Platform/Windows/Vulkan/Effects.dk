@@ -298,7 +298,7 @@ QuaxelVulkan
         if !FrameOpen { return Device != 0 }
         if !SlotReady(slot) { return false }
         VkStorage page = EffectPages.Items[slot / SlotsPerPage]
-        return Trace(page.Descriptor, SlotBase(slot), matrix, left, top, right, bottom, axes)
+        return Trace(page.Descriptor, SlotBase(slot), 0, 0, matrix, left, top, right, bottom, axes)
     }
 
     // Copies the first `words` words of a slot to destination, waiting for the

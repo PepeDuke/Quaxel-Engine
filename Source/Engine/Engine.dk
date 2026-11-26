@@ -1,8 +1,21 @@
 // One volume or effect slot to trace this frame. Near is the clip-space depth
 // of its box's closest point.
+// The occupied part of an uploaded volume, in cells: Low inclusive, High
+// exclusive, on brick boundaries. Occupied is false when the volume has no bricks,
+// or before its first upload.
+QuaxelVolumeBounds
+{
+    ivec3 Low
+    ivec3 High
+    ivec3 Dims
+    bool Occupied
+}
+
 QuaxelTraceItem
 {
     mat4 Clip
+    // Clip of the occupied part only. It bounds the pixels the trace can write.
+    mat4 OccupiedClip
     mat4 BoxFromWorld
     vec3 BoundsCenter
     vec3 BoundsHalf
@@ -22,6 +35,8 @@ QuaxelEngine
     -bool RedrawFailed
     // Reused every frame so ordering the traces allocates nothing.
     -QuaxelTraceItem [] TraceOrder
+    // Indexed by renderer volume handle.
+    -QuaxelVolumeBounds [] VolumeBounds
 
     // Frames slower than this many steps drop the excess instead of catching up.
     -int MaxStepsPerFrame() { return 5 }
@@ -268,7 +283,18 @@ QuaxelEngine
                 int handle = QuaxelRenderer.MapVolume(world.VolumeHandle(volume), world.VolumeWords(volume), mapped)
                 if handle < 0 { return false }
                 world.CopyVolume(volume, mapped)
+                QuaxelVolumeBounds bounds = OccupiedBounds(mapped)
                 QuaxelRenderer.UnmapVolume(handle)
+                if bounds.Occupied {
+                    ivec3 lowBrick = bounds.Low / 8
+                    ivec3 highBrick = (bounds.High + 7) / 8
+                    QuaxelRenderer.SetVolumeBounds(handle, lowBrick.X | (lowBrick.Y << 10) | (lowBrick.Z << 20), highBrick.X | (highBrick.Y << 10) | (highBrick.Z << 20))
+                }
+                while VolumeBounds.Len <= handle {
+                    QuaxelVolumeBounds unknown
+                    VolumeBounds += unknown
+                }
+                VolumeBounds[handle] = bounds
                 world.SetVolumeHandle(volume, handle)
             }
         }
@@ -293,14 +319,17 @@ QuaxelEngine
             // Exact: a small model has a tiny but valid determinant.
             if model.Determinant() (0.0)== 0.0 { continue }
             QuaxelTraceItem item
+            item.Handle = world.VolumeHandle(world.VolumeOf(id))
+            // A volume with no voxels can neither be seen nor cast a shadow.
+            if item.Handle >= 0 && item.Handle < VolumeBounds.Len && !VolumeBounds[item.Handle].Occupied { continue }
             item.Clip = viewProjection * model
+            item.OccupiedClip = item.Handle >= 0 && item.Handle < VolumeBounds.Len ? item.Clip * OccupiedBox(VolumeBounds[item.Handle]) | item.Clip
             item.BoxFromWorld = model.Inverse()
             item.BoundsCenter = vec3(model[3])
             for axis : 0; axis < 3; axis++ {
                 item.BoundsHalf[axis] = 0.5 * (Math.Abs(model[0][axis]) + Math.Abs(model[1][axis]) + Math.Abs(model[2][axis]))
             }
             item.Node = id
-            item.Handle = world.VolumeHandle(world.VolumeOf(id))
             item.Slot = -1
             item.Near = NearDepth(item.Clip)
             TraceOrder += item
@@ -311,6 +340,7 @@ QuaxelEngine
             if model.Determinant() (0.0)== 0.0 { continue }
             QuaxelTraceItem item
             item.Clip = viewProjection * model
+            item.OccupiedClip = item.Clip
             item.BoxFromWorld = model.Inverse()
             item.Handle = -1
             item.Slot = slot
@@ -338,7 +368,7 @@ QuaxelEngine
         }
         if !sortBeforeCasters { SortByNear(TraceOrder) }
         for item : TraceOrder {
-            if !Trace(item.Clip, item.BoxFromWorld, item.Handle, item.Slot) { return false }
+            if !Trace(item.Clip, item.OccupiedClip, item.BoxFromWorld, item.Handle, item.Slot) { return false }
         }
         if !Light(world, viewProjection) { return false }
         for i : 0; i < ui.CommandCount; i++ {
@@ -346,6 +376,50 @@ QuaxelEngine
             if !QuaxelRenderer.DrawUi(command.X, command.Y, command.Width, command.Height, command.Color, command.GlyphFirst, command.GlyphLast, command.Cell) { return false }
         }
         return QuaxelRenderer.EndFrame()
+    }
+
+    // Bounds of the bricks the uploaded words hold, in cells.
+    -QuaxelVolumeBounds OccupiedBounds(void* mapped)
+    {
+        QuaxelVoxelUpload* upload = (QuaxelVoxelUpload*)mapped
+        QuaxelVolumeBounds bounds
+        bounds.Dims = ivec3(upload.Words[0], upload.Words[1], upload.Words[2])
+        ivec3 bricks = (bounds.Dims + 7) / 8
+        ivec3 low = bricks
+        ivec3 high = ivec3(0, 0, 0)
+        int b = 0
+        for z : 0; z < bricks.Z; z++ {
+            for y : 0; y < bricks.Y; y++ {
+                for x : 0; x < bricks.X; x++ {
+                    if upload.Words[3 + b] != 0 {
+                        low = ivec3(Math.Min(low.X, x), Math.Min(low.Y, y), Math.Min(low.Z, z))
+                        high = ivec3(Math.Max(high.X, x + 1), Math.Max(high.Y, y + 1), Math.Max(high.Z, z + 1))
+                    }
+                    b++
+                }
+            }
+        }
+        if high.X == 0 { return bounds }
+        bounds.Occupied = true
+        bounds.Low = low * 8
+        bounds.High = ivec3(Math.Min(high.X * 8, bounds.Dims.X), Math.Min(high.Y * 8, bounds.Dims.Y), Math.Min(high.Z * 8, bounds.Dims.Z))
+        return bounds
+    }
+
+    // Places the occupied cells inside the unit box, centred on 0, that a
+    // volume's model scales to the whole grid.
+    -mat4 OccupiedBox(QuaxelVolumeBounds bounds)
+    {
+        if !bounds.Occupied || bounds.Dims.X <= 0 { return mat4.Identity() }
+        vec3 dims = vec3((float)bounds.Dims.X, (float)bounds.Dims.Y, (float)bounds.Dims.Z)
+        vec3 low = vec3((float)bounds.Low.X, (float)bounds.Low.Y, (float)bounds.Low.Z) / dims
+        vec3 high = vec3((float)bounds.High.X, (float)bounds.High.Y, (float)bounds.High.Z) / dims
+        mat4 box = mat4.Identity()
+        box[0][0] = high.X - low.X
+        box[1][1] = high.Y - low.Y
+        box[2][2] = high.Z - low.Z
+        box[3] = vec4((low + high) * 0.5 - vec3(0.5, 0.5, 0.5), 1.0)
+        return box
     }
 
     // Clip-space depth of the closest corner of the unit box placed by clip.
@@ -430,14 +504,16 @@ QuaxelEngine
 
     // Traces a unit box placed by clip: a volume when handle >= 0, otherwise an
     // effect slot. Off-screen and degenerate boxes are skipped.
-    -bool Trace(mat4 clip, mat4 boxFromWorld, int handle, int slot)
+    // The screen rectangle comes from occupied, the part of the box that holds
+    // voxels; the ray still maps through the whole box.
+    -bool Trace(mat4 clip, mat4 occupied, mat4 boxFromWorld, int handle, int slot)
     {
-        float rx = (Math.Abs(clip[0][0]) + Math.Abs(clip[1][0]) + Math.Abs(clip[2][0])) * 0.5
-        float ry = (Math.Abs(clip[0][1]) + Math.Abs(clip[1][1]) + Math.Abs(clip[2][1])) * 0.5
-        float left = Math.Clamp((clip[3][0] - rx + 1.0) * 0.5, 0.0, 1.0)
-        float right = Math.Clamp((clip[3][0] + rx + 1.0) * 0.5, 0.0, 1.0)
-        float top = Math.Clamp((clip[3][1] - ry + 1.0) * 0.5, 0.0, 1.0)
-        float bottom = Math.Clamp((clip[3][1] + ry + 1.0) * 0.5, 0.0, 1.0)
+        float rx = (Math.Abs(occupied[0][0]) + Math.Abs(occupied[1][0]) + Math.Abs(occupied[2][0])) * 0.5
+        float ry = (Math.Abs(occupied[0][1]) + Math.Abs(occupied[1][1]) + Math.Abs(occupied[2][1])) * 0.5
+        float left = Math.Clamp((occupied[3][0] - rx + 1.0) * 0.5, 0.0, 1.0)
+        float right = Math.Clamp((occupied[3][0] + rx + 1.0) * 0.5, 0.0, 1.0)
+        float top = Math.Clamp((occupied[3][1] - ry + 1.0) * 0.5, 0.0, 1.0)
+        float bottom = Math.Clamp((occupied[3][1] + ry + 1.0) * 0.5, 0.0, 1.0)
         if left >= right || top >= bottom { return true }
         if clip.Determinant() (0.0)== 0.0 { return true } // Exact: a small model has a tiny but valid determinant.
         mat4 boxFromClip = clip.Inverse()

@@ -17,6 +17,9 @@ QuaxelRenderer
     // Unmap before dispatch. All handles expire when the renderer stops.
     int MapVolume(int previous, int words, void*& mapped) { return QuaxelPlatformBackend.MapVolume(previous, words, mapped) }
     UnmapVolume(int handle) { QuaxelPlatformBackend.UnmapVolume(handle) }
+    // The volume's occupied bricks, packed x | y << 10 | z << 20: the first
+    // and one past the last. Lets traces skip empty space; optional.
+    SetVolumeBounds(int handle, int low, int high) { QuaxelPlatformBackend.SetVolumeBounds(handle, low, high) }
     bool BeginVoxelFrame() { return QuaxelPlatformBackend.BeginVoxelFrame() }
     // Writes albedo, ambient occlusion, depth and normal for each pixel the
     // volume wins. Axes points at 9 floats: the world normals of the volume's

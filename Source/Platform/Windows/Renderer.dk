@@ -23,6 +23,7 @@ QuaxelPlatformBackend
 
     int MapVolume(int previous, int words, void*& mapped) { return QuaxelVulkan.MapVolume(previous, words, mapped) }
     UnmapVolume(int handle) { QuaxelVulkan.UnmapVolume(handle) }
+    SetVolumeBounds(int handle, int low, int high) { QuaxelVulkan.SetVolumeBounds(handle, low, high) }
     bool BeginVoxelFrame() { return BeginFrame(null) }
     bool TraceVolume(int handle, void* boxFromClip, float left, float top, float right, float bottom, void* axes)
     {
