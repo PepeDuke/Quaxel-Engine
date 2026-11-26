@@ -1075,9 +1075,9 @@ QuaxelGameInstance
     // A .ico file for the window's title bar and taskbar button, relative to
     // the working directory. Empty keeps the system's default icon.
     string WindowIcon() { return "" }
-    // True for a game that must keep drawing while its window is minimized,
-    // such as a benchmark: the engine restores the window instead of waiting.
-    bool KeepsWindowRestored() { return false }
+    // True while the game runs a benchmark. It must keep drawing, so a
+    // minimized window is restored instead of pausing the game.
+    bool IsBenchmarkEnabled() { return false }
 
     // Steps to simulate when no window is available, as there is nothing to close.
     int HeadlessSteps() { return 3 }

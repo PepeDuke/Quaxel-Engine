@@ -162,7 +162,7 @@ QuaxelEngine
                 // as a benchmark does, brings its window back instead; the gap
                 // still resets the clock below.
                 minimized = true
-                if game.KeepsWindowRestored() && QuaxelPlatform.RestoreWindow() {
+                if game.IsBenchmarkEnabled() && QuaxelPlatform.RestoreWindow() {
                     minimized = false
                     restored = true
                 }
