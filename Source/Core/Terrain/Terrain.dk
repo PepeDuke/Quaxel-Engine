@@ -504,6 +504,30 @@ QuaxelTerrain
         }
     }
 
+    // Runs more offers for one clearing through the same checks as the
+    // modules' own, once the layout's placements are resolved: for something a
+    // game places last, clear of everything placed before it. Returns how many
+    // groups found a place. A game calls it from its Configure, after the
+    // engine's, so it is redone whenever the layout is.
+    int PlaceOffers(int siteIndex, QuaxelTerrainPlacer& placer)
+    {
+        if siteIndex < 0 || siteIndex >= Layout.Sites.Len || placer.Offers.Len == 0 { return 0 }
+        QuaxelTerrainSite site = Layout.Sites[siteIndex]
+        float reach = site.Radius + 16.0
+        CollectNear(site.X - reach, site.Z - reach, site.X + reach, site.Z + reach)
+        int [] filled
+        for o : 0; o < placer.Offers.Len; o++ {
+            QuaxelTerrainOffer offer = placer.Offers[o]
+            bool done = false
+            for f : 0; f < filled.Len; f++ {
+                if filled[f] == offer.Group { done = true }
+            }
+            if done { continue }
+            if TryPlace(site, offer) { filled += offer.Group }
+        }
+        return (int)filled.Len
+    }
+
     -bool TryPlace(QuaxelTerrainSite site, QuaxelTerrainOffer offer)
     {
         float x = 0.0
@@ -608,13 +632,17 @@ QuaxelTerrain
     -int ChunkOf(float position) { return QuaxelNoise.FloorDiv((int)Math.Floor(position / Cell), ChunkColumns) }
 
     // True when every chunk around focus is built and none is in progress.
-    bool IsReady(vec3 focus)
+    bool IsReady(vec3 focus) { return IsReadyWithin(focus, ResidentRadius) }
+
+    // Whether every chunk within Radius chunks of a point is built, as for
+    // placing something there long before the player stands beside it.
+    bool IsReadyWithin(vec3 focus, int radius)
     {
         if BuildPhase != 0 { return false }
         int centerX = ChunkOf(focus.X)
         int centerZ = ChunkOf(focus.Z)
-        for z : centerZ - ResidentRadius; z <= centerZ + ResidentRadius; z++ {
-            for x : centerX - ResidentRadius; x <= centerX + ResidentRadius; x++ {
+        for z : centerZ - radius; z <= centerZ + radius; z++ {
+            for x : centerX - radius; x <= centerX + radius; x++ {
                 if FindChunk(x, z) < 0 { return false }
             }
         }

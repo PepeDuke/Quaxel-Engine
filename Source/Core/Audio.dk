@@ -173,6 +173,9 @@ QuaxelWorld
     -QuaxelReverb Reverb
     // True from the first send until the reverb is cleared, so the tail rings out.
     -bool ReverbActive
+    // Every sound effect's level, from 0 (silent) to 1, as a game's options
+    // set it. The music has its own, Music.Volume.
+    float EffectsVolume = 1.0
 
     // Clip handles start at one. Samples are signed interleaved PCM.
     int AddSound(QuaxelSoundClip& clip)
@@ -389,8 +392,9 @@ QuaxelWorld
         for i : 0; i < Voices.Len; i++ {
             QuaxelVoice voice = Voices[i]
             if voice.Id == 0 { continue }
-            float left = voice.Gain
-            float r = voice.Gain
+            float level = voice.Gain * Math.Clamp(EffectsVolume, 0.0, 1.0)
+            float left = level
+            float r = level
             if voice.Node != 0 {
                 if !Has(voice.Node, QuaxelComponents.AudioSource) {
                     Voices[i].Id = 0
@@ -400,7 +404,7 @@ QuaxelWorld
                 vec3 offset = WorldPosition(voice.Node) - eye
                 float distance = offset.Length()
                 float t = Math.Clamp((distance - source.InnerRadius) / (source.OuterRadius - source.InnerRadius), 0.0, 1.0)
-                float volume = listener ? voice.Gain * (1.0 - t * t * (3.0 - 2.0 * t)) | 0.0
+                float volume = listener ? level * (1.0 - t * t * (3.0 - 2.0 * t)) | 0.0
                 float pan = distance > 0.00001 ? Math.Clamp(Math.Dot(offset, right) / distance, -1.0, 1.0) | 0.0
                 left = volume * Math.Sqrt(0.5 * (1.0 - pan))
                 r = volume * Math.Sqrt(0.5 * (1.0 + pan))
