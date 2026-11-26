@@ -20,20 +20,27 @@ var<private> gl_FragDepth: f32 = 0f;
 fn mortonvi3_(p: ptr<function, vec3<i32>>) -> i32 {
     var bits: vec3<i32>;
 
-    let _e27 = (*p);
-    let _e30 = (*p);
-    let _e37 = (*p);
-    bits = (((_e27 & vec3(1i)) | ((_e30 & vec3(2i)) << bitcast<vec3<u32>>(vec3(2i)))) | ((_e37 & vec3(4i)) << bitcast<vec3<u32>>(vec3(4i))));
-    let _e45 = bits[0u];
-    let _e47 = bits[1u];
-    let _e52 = bits[2u];
-    return ((_e45 | (_e47 << bitcast<u32>(1i))) | (_e52 << bitcast<u32>(2i)));
+    let _e32 = (*p);
+    let _e35 = (*p);
+    let _e42 = (*p);
+    bits = (((_e32 & vec3(1i)) | ((_e35 & vec3(2i)) << bitcast<vec3<u32>>(vec3(2i)))) | ((_e42 & vec3(4i)) << bitcast<vec3<u32>>(vec3(4i))));
+    let _e50 = bits[0u];
+    let _e52 = bits[1u];
+    let _e57 = bits[2u];
+    return ((_e50 | (_e52 << bitcast<u32>(1i))) | (_e57 << bitcast<u32>(2i)));
+}
+
+fn unpackBricksi1_(packed: ptr<function, i32>) -> vec3<i32> {
+    let _e31 = (*packed);
+    let _e33 = (*packed);
+    let _e37 = (*packed);
+    return vec3<i32>((_e31 & 1023i), ((_e33 >> bitcast<u32>(10i)) & 1023i), ((_e37 >> bitcast<u32>(20i)) & 1023i));
 }
 
 fn wordi1_(at: ptr<function, i32>) -> i32 {
-    let _e26 = (*at);
-    let _e29 = unnamed.gridWords[_e26];
-    return _e29;
+    let _e31 = (*at);
+    let _e34 = unnamed.gridWords[_e31];
+    return _e34;
 }
 
 fn main_1() {
@@ -50,6 +57,10 @@ fn main_1() {
     var parallel: vec3<bool>;
     var inv: vec3<f32>;
     var positive: vec3<i32>;
+    var occupiedFirst: vec3<i32>;
+    var occupiedEnd: vec3<i32>;
+    var param_3: i32;
+    var param_4: i32;
     var t: f32;
     var end: f32;
     var face: i32;
@@ -60,248 +71,293 @@ fn main_1() {
     var cell: vec3<i32>;
     var brick: vec3<i32>;
     var base: i32;
-    var param_3: i32;
-    var index: i32;
-    var param_4: vec3<i32>;
     var param_5: i32;
+    var index: i32;
+    var param_6: vec3<i32>;
+    var mask: i32;
+    var local: i32;
+    var param_7: i32;
     var size: i32;
+    var param_8: i32;
     var low: vec3<i32>;
     var edge: vec3<i32>;
     var exits: vec3<f32>;
     var crossed: vec3<bool>;
     var a_1: i32;
-    var local: i32;
-    var phi_217_: bool;
-    var phi_297_: bool;
-    var phi_304_: bool;
-    var phi_350_: bool;
+    var local_1: i32;
+    var phi_261_: bool;
+    var phi_346_: bool;
+    var phi_353_: bool;
+    var phi_408_: bool;
 
-    let _e59 = gl_FragCoord_1;
-    let _e62 = draw.viewport;
-    pixel = (_e59.xy - _e62.xy);
-    let _e65 = pixel;
-    let _e68 = draw.viewport;
-    xy = (((_e65 * 2f) / _e68.zw) - vec2(1f));
+    let _e71 = gl_FragCoord_1;
+    let _e74 = draw.viewport;
+    pixel = (_e71.xy - _e74.xy);
+    let _e77 = pixel;
+    let _e80 = draw.viewport;
+    xy = (((_e77 * 2f) / _e80.zw) - vec2(1f));
     param = 0i;
-    let _e73 = wordi1_((&param));
+    let _e85 = wordi1_((&param));
     param_1 = 1i;
-    let _e74 = wordi1_((&param_1));
+    let _e86 = wordi1_((&param_1));
     param_2 = 2i;
-    let _e75 = wordi1_((&param_2));
-    dims = vec3<i32>(_e73, _e74, _e75);
-    let _e77 = dims;
-    bricks = ((_e77 + vec3(7i)) / vec3(8i));
-    let _e83 = draw.boxFromClip;
-    let _e84 = xy;
-    let _e92 = dims;
-    origin = (((_e83 * vec4<f32>(_e84.x, _e84.y, 0f, 1f)).xyz + vec3(0.5f)) * vec3<f32>(_e92));
-    let _e97 = draw.boxFromClip[2];
-    let _e99 = dims;
-    ray = (_e97.xyz * vec3<f32>(_e99));
-    let _e104 = draw.flags[0u];
-    if (_e104 == 2i) {
-        let _e108 = draw.boxFromClip[3];
-        let _e112 = dims;
-        origin = ((_e108.xyz + vec3(0.5f)) * vec3<f32>(_e112));
-        let _e116 = draw.boxFromClip;
-        let _e117 = xy;
-        let _e123 = dims;
-        ray = ((_e116 * vec4<f32>(_e117.x, _e117.y, 1f, 0f)).xyz * vec3<f32>(_e123));
+    let _e87 = wordi1_((&param_2));
+    dims = vec3<i32>(_e85, _e86, _e87);
+    let _e89 = dims;
+    bricks = ((_e89 + vec3(7i)) / vec3(8i));
+    let _e95 = draw.boxFromClip;
+    let _e96 = xy;
+    let _e104 = dims;
+    origin = (((_e95 * vec4<f32>(_e96.x, _e96.y, 0f, 1f)).xyz + vec3(0.5f)) * vec3<f32>(_e104));
+    let _e109 = draw.boxFromClip[2];
+    let _e111 = dims;
+    ray = (_e109.xyz * vec3<f32>(_e111));
+    let _e116 = draw.flags[0u];
+    if (_e116 == 2i) {
+        let _e120 = draw.boxFromClip[3];
+        let _e124 = dims;
+        origin = ((_e120.xyz + vec3(0.5f)) * vec3<f32>(_e124));
+        let _e128 = draw.boxFromClip;
+        let _e129 = xy;
+        let _e135 = dims;
+        ray = ((_e128 * vec4<f32>(_e129.x, _e129.y, 1f, 0f)).xyz * vec3<f32>(_e135));
     }
-    let _e126 = ray;
-    stepDir = vec3<i32>(sign(_e126));
-    let _e129 = stepDir;
-    parallel = (_e129 == vec3<i32>(0i, 0i, 0i));
-    let _e131 = ray;
-    let _e132 = parallel;
-    inv = (vec3(1f) / select(_e131, vec3<f32>(1f, 1f, 1f), _e132));
-    let _e136 = stepDir;
-    positive = max(_e136, vec3<i32>(0i, 0i, 0i));
+    let _e138 = ray;
+    stepDir = vec3<i32>(sign(_e138));
+    let _e141 = stepDir;
+    parallel = (_e141 == vec3<i32>(0i, 0i, 0i));
+    let _e143 = ray;
+    let _e144 = parallel;
+    inv = (vec3(1f) / select(_e143, vec3<f32>(1f, 1f, 1f), _e144));
+    let _e148 = stepDir;
+    positive = max(_e148, vec3<i32>(0i, 0i, 0i));
+    occupiedFirst = vec3<i32>(0i, 0i, 0i);
+    let _e150 = dims;
+    occupiedEnd = _e150;
+    let _e153 = draw.flags[2u];
+    if (_e153 != 0i) {
+        let _e157 = draw.flags[1u];
+        param_3 = _e157;
+        let _e158 = unpackBricksi1_((&param_3));
+        occupiedFirst = (_e158 * vec3(8i));
+        let _e163 = draw.flags[2u];
+        param_4 = _e163;
+        let _e164 = unpackBricksi1_((&param_4));
+        let _e167 = dims;
+        occupiedEnd = min((_e164 * vec3(8i)), _e167);
+    }
     t = 0f;
     end = 1f;
     face = 1i;
     a = 0i;
     loop {
-        let _e138 = a;
-        if (_e138 < 3i) {
-            let _e140 = a;
-            let _e142 = parallel[_e140];
-            if _e142 {
-                let _e143 = a;
-                let _e145 = origin[_e143];
-                let _e146 = (_e145 < 0f);
-                phi_217_ = _e146;
-                if !(_e146) {
-                    let _e148 = a;
-                    let _e150 = origin[_e148];
-                    let _e151 = a;
-                    let _e153 = dims[_e151];
-                    phi_217_ = (_e150 >= f32(_e153));
+        let _e169 = a;
+        if (_e169 < 3i) {
+            let _e171 = a;
+            let _e173 = parallel[_e171];
+            if _e173 {
+                let _e174 = a;
+                let _e176 = origin[_e174];
+                let _e177 = a;
+                let _e179 = occupiedFirst[_e177];
+                let _e181 = (_e176 < f32(_e179));
+                phi_261_ = _e181;
+                if !(_e181) {
+                    let _e183 = a;
+                    let _e185 = origin[_e183];
+                    let _e186 = a;
+                    let _e188 = occupiedEnd[_e186];
+                    phi_261_ = (_e185 >= f32(_e188));
                 }
-                let _e157 = phi_217_;
-                if _e157 {
+                let _e192 = phi_261_;
+                if _e192 {
                     discard;
                 }
             } else {
-                let _e158 = a;
-                let _e160 = origin[_e158];
-                let _e162 = a;
-                let _e164 = inv[_e162];
-                lo = (-(_e160) * _e164);
-                let _e166 = a;
-                let _e168 = dims[_e166];
-                let _e170 = a;
-                let _e172 = origin[_e170];
-                let _e174 = a;
-                let _e176 = inv[_e174];
-                hi = ((f32(_e168) - _e172) * _e176);
-                let _e178 = lo;
-                let _e179 = hi;
-                let _e181 = t;
-                if (min(_e178, _e179) > _e181) {
-                    let _e183 = lo;
-                    let _e184 = hi;
-                    t = min(_e183, _e184);
-                    let _e186 = a;
-                    face = _e186;
+                let _e193 = a;
+                let _e195 = occupiedFirst[_e193];
+                let _e197 = a;
+                let _e199 = origin[_e197];
+                let _e201 = a;
+                let _e203 = inv[_e201];
+                lo = ((f32(_e195) - _e199) * _e203);
+                let _e205 = a;
+                let _e207 = occupiedEnd[_e205];
+                let _e209 = a;
+                let _e211 = origin[_e209];
+                let _e213 = a;
+                let _e215 = inv[_e213];
+                hi = ((f32(_e207) - _e211) * _e215);
+                let _e217 = lo;
+                let _e218 = hi;
+                let _e220 = t;
+                if (min(_e217, _e218) > _e220) {
+                    let _e222 = lo;
+                    let _e223 = hi;
+                    t = min(_e222, _e223);
+                    let _e225 = a;
+                    face = _e225;
                 }
-                let _e187 = end;
-                let _e188 = lo;
-                let _e189 = hi;
-                end = min(_e187, max(_e188, _e189));
+                let _e226 = end;
+                let _e227 = lo;
+                let _e228 = hi;
+                end = min(_e226, max(_e227, _e228));
             }
             continue;
         } else {
             break;
         }
         continuing {
-            let _e192 = a;
-            a = (_e192 + 1i);
+            let _e231 = a;
+            a = (_e231 + 1i);
         }
     }
-    let _e194 = origin;
-    let _e195 = t;
-    let _e196 = ray;
-    pos = (_e194 + (_e196 * _e195));
-    let _e199 = pos;
-    let _e201 = pos;
-    let _e205 = ray;
-    let _e209 = dims;
-    cell = clamp(vec3<i32>(select(floor(_e199), (ceil(_e201) - vec3(1f)), (_e205 < vec3<f32>(0f, 0f, 0f)))), vec3<i32>(0i, 0i, 0i), (_e209 - vec3(1i)));
+    let _e233 = origin;
+    let _e234 = t;
+    let _e235 = ray;
+    pos = (_e233 + (_e235 * _e234));
+    let _e238 = pos;
+    let _e240 = pos;
+    let _e244 = ray;
+    let _e248 = occupiedFirst;
+    let _e249 = occupiedEnd;
+    cell = clamp(vec3<i32>(select(floor(_e238), (ceil(_e240) - vec3(1f)), (_e244 < vec3<f32>(0f, 0f, 0f)))), _e248, (_e249 - vec3(1i)));
     loop {
-        let _e213 = t;
-        let _e214 = end;
-        let _e215 = (_e213 < _e214);
-        phi_297_ = _e215;
-        if _e215 {
-            let _e216 = cell;
-            phi_297_ = all((_e216 >= vec3<i32>(0i, 0i, 0i)));
+        let _e253 = t;
+        let _e254 = end;
+        let _e255 = (_e253 < _e254);
+        phi_346_ = _e255;
+        if _e255 {
+            let _e256 = cell;
+            phi_346_ = all((_e256 >= vec3<i32>(0i, 0i, 0i)));
         }
-        let _e220 = phi_297_;
-        phi_304_ = _e220;
-        if _e220 {
-            let _e221 = cell;
-            let _e222 = dims;
-            phi_304_ = all((_e221 < _e222));
+        let _e260 = phi_346_;
+        phi_353_ = _e260;
+        if _e260 {
+            let _e261 = cell;
+            let _e262 = dims;
+            phi_353_ = all((_e261 < _e262));
         }
-        let _e226 = phi_304_;
-        if _e226 {
-            let _e227 = cell;
-            brick = (_e227 / vec3(8i));
-            let _e231 = brick[0u];
-            let _e234 = bricks[0u];
-            let _e236 = brick[1u];
-            let _e238 = bricks[1u];
-            let _e240 = brick[2u];
-            param_3 = ((3i + _e231) + (_e234 * (_e236 + (_e238 * _e240))));
-            let _e245 = wordi1_((&param_3));
-            base = _e245;
-            let _e246 = cell;
-            param_4 = (_e246 & vec3(7i));
-            let _e249 = mortonvi3_((&param_4));
-            index = _e249;
-            let _e250 = base;
-            let _e251 = (_e250 != 0i);
-            phi_350_ = _e251;
-            if _e251 {
-                let _e252 = base;
-                let _e253 = index;
-                param_5 = (_e252 + (_e253 >> bitcast<u32>(5i)));
-                let _e257 = wordi1_((&param_5));
-                let _e258 = index;
-                phi_350_ = (((_e257 >> bitcast<u32>((_e258 & 31i))) & 1i) != 0i);
+        let _e266 = phi_353_;
+        if _e266 {
+            let _e267 = cell;
+            brick = (_e267 / vec3(8i));
+            let _e271 = brick[0u];
+            let _e274 = bricks[0u];
+            let _e276 = brick[1u];
+            let _e278 = bricks[1u];
+            let _e280 = brick[2u];
+            param_5 = ((3i + _e271) + (_e274 * (_e276 + (_e278 * _e280))));
+            let _e285 = wordi1_((&param_5));
+            base = _e285;
+            let _e286 = cell;
+            param_6 = (_e286 & vec3(7i));
+            let _e289 = mortonvi3_((&param_6));
+            index = _e289;
+            let _e290 = base;
+            if (_e290 != 0i) {
+                let _e292 = base;
+                let _e293 = index;
+                param_7 = (_e292 + (_e293 >> bitcast<u32>(5i)));
+                let _e297 = wordi1_((&param_7));
+                local = _e297;
+            } else {
+                local = 0i;
             }
-            let _e265 = phi_350_;
-            if _e265 {
-                let _e266 = t;
-                gl_FragDepth = _e266;
+            let _e298 = local;
+            mask = _e298;
+            let _e299 = base;
+            let _e300 = (_e299 != 0i);
+            phi_408_ = _e300;
+            if _e300 {
+                let _e301 = mask;
+                let _e302 = index;
+                phi_408_ = (((_e301 >> bitcast<u32>((_e302 & 31i))) & 1i) != 0i);
+            }
+            let _e309 = phi_408_;
+            if _e309 {
+                let _e310 = t;
+                gl_FragDepth = _e310;
                 return;
             }
-            let _e267 = base;
-            size = select(1i, 8i, (_e267 == 0i));
-            let _e270 = cell;
-            let _e271 = size;
-            let _e274 = size;
-            low = ((_e270 / vec3(_e271)) * vec3(_e274));
-            let _e277 = low;
-            let _e278 = size;
-            let _e279 = positive;
-            edge = (_e277 + (vec3(_e278) * _e279));
-            let _e283 = edge;
-            let _e285 = origin;
-            let _e287 = inv;
-            let _e289 = parallel;
-            exits = select(((vec3<f32>(_e283) - _e285) * _e287), vec3<f32>(2f, 2f, 2f), _e289);
-            let _e292 = exits[0u];
-            let _e294 = exits[1u];
-            let _e296 = exits[2u];
-            t = min(_e292, min(_e294, _e296));
-            let _e299 = origin;
-            let _e300 = t;
-            let _e301 = ray;
-            pos = (_e299 + (_e301 * _e300));
-            let _e304 = pos;
-            let _e306 = pos;
-            let _e310 = ray;
-            let _e314 = low;
-            let _e315 = low;
-            let _e316 = size;
-            cell = clamp(vec3<i32>(select(floor(_e304), (ceil(_e306) - vec3(1f)), (_e310 < vec3<f32>(0f, 0f, 0f)))), _e314, ((_e315 + vec3(_e316)) - vec3(1i)));
-            let _e322 = exits;
-            let _e323 = t;
-            crossed = (_e322 == vec3(_e323));
+            size = 8i;
+            let _e311 = base;
+            if (_e311 != 0i) {
+                size = 1i;
+                let _e313 = mask;
+                let _e314 = index;
+                if (((_e313 >> bitcast<u32>((_e314 & 24i))) & 255i) == 0i) {
+                    let _e320 = mask;
+                    let _e321 = base;
+                    let _e322 = index;
+                    param_8 = (_e321 + ((_e322 >> bitcast<u32>(5i)) ^ 1i));
+                    let _e327 = wordi1_((&param_8));
+                    size = select(2i, 4i, ((_e320 | _e327) == 0i));
+                }
+            }
+            let _e331 = cell;
+            let _e332 = size;
+            let _e335 = size;
+            low = ((_e331 / vec3(_e332)) * vec3(_e335));
+            let _e338 = low;
+            let _e339 = size;
+            let _e340 = positive;
+            edge = (_e338 + (vec3(_e339) * _e340));
+            let _e344 = edge;
+            let _e346 = origin;
+            let _e348 = inv;
+            let _e350 = parallel;
+            exits = select(((vec3<f32>(_e344) - _e346) * _e348), vec3<f32>(2f, 2f, 2f), _e350);
+            let _e353 = exits[0u];
+            let _e355 = exits[1u];
+            let _e357 = exits[2u];
+            t = min(_e353, min(_e355, _e357));
+            let _e360 = origin;
+            let _e361 = t;
+            let _e362 = ray;
+            pos = (_e360 + (_e362 * _e361));
+            let _e365 = pos;
+            let _e367 = pos;
+            let _e371 = ray;
+            let _e375 = low;
+            let _e376 = low;
+            let _e377 = size;
+            cell = clamp(vec3<i32>(select(floor(_e365), (ceil(_e367) - vec3(1f)), (_e371 < vec3<f32>(0f, 0f, 0f)))), _e375, ((_e376 + vec3(_e377)) - vec3(1i)));
+            let _e383 = exits;
+            let _e384 = t;
+            crossed = (_e383 == vec3(_e384));
             a_1 = 0i;
             loop {
-                let _e326 = a_1;
-                if (_e326 < 3i) {
-                    let _e328 = a_1;
-                    let _e330 = crossed[_e328];
-                    if _e330 {
-                        let _e331 = a_1;
-                        let _e332 = a_1;
-                        let _e334 = edge[_e332];
-                        let _e335 = a_1;
-                        let _e337 = stepDir[_e335];
-                        cell[_e331] = (_e334 + min(_e337, 0i));
+                let _e387 = a_1;
+                if (_e387 < 3i) {
+                    let _e389 = a_1;
+                    let _e391 = crossed[_e389];
+                    if _e391 {
+                        let _e392 = a_1;
+                        let _e393 = a_1;
+                        let _e395 = edge[_e393];
+                        let _e396 = a_1;
+                        let _e398 = stepDir[_e396];
+                        cell[_e392] = (_e395 + min(_e398, 0i));
                     }
                     continue;
                 } else {
                     break;
                 }
                 continuing {
-                    let _e341 = a_1;
-                    a_1 = (_e341 + 1i);
+                    let _e402 = a_1;
+                    a_1 = (_e402 + 1i);
                 }
             }
-            let _e344 = crossed[0u];
-            if _e344 {
-                local = 0i;
+            let _e405 = crossed[0u];
+            if _e405 {
+                local_1 = 0i;
             } else {
-                let _e346 = crossed[1u];
-                local = select(2i, 1i, _e346);
+                let _e407 = crossed[1u];
+                local_1 = select(2i, 1i, _e407);
             }
-            let _e348 = local;
-            face = _e348;
+            let _e409 = local_1;
+            face = _e409;
             continue;
         } else {
             break;

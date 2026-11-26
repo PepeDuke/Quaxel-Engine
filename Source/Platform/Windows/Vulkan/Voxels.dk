@@ -567,6 +567,8 @@ QuaxelVulkan
         memcpy(&Scene.Words[at], boxFromWorld, 64)
         for i : 16; i < 20; i++ { Scene.Words[at + i] = 0 }
         Scene.Words[at+17] = actor ? 1 | 0
+        Scene.Words[at+18] = VolumeLow[handle] // occupied bricks; shadow rays skip the rest
+        Scene.Words[at+19] = VolumeHigh[handle]
         CasterRevisions[CasterCount] = VolumeRevision[handle]
         CasterBuffers[CasterCount] = Volumes.Items[handle].Buffer
         CasterCount++

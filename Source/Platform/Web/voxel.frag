@@ -7,11 +7,16 @@ layout(set=0,binding=1,std140) uniform Draw {
     mat4 boxFromClip;
     vec4 axes[3];
     vec4 viewport; // top-left and extent, in target pixels
-    ivec4 flags;   // 0 scene, 1 directional shadow, 2 point shadow
+    // x: 0 scene, 1 directional shadow, 2 point shadow. y, z: the occupied
+    // bricks, packed x | y << 10 | z << 20, first and one past the last;
+    // z == 0 means the whole grid.
+    ivec4 flags;
 } draw;
 #define boxFromClip draw.boxFromClip
 #define extent draw.viewport.zw
 #define shadowPass draw.flags.x
+#define occupiedLow draw.flags.y
+#define occupiedHigh draw.flags.z
 #define tileOrigin draw.viewport.xy
 #define normals mat3(draw.axes[0].xyz,draw.axes[1].xyz,draw.axes[2].xyz)
 int word(int at) { return gridWords[at]; }
@@ -39,6 +44,8 @@ layout(set=1,binding=1) uniform texture2D shadowMap;
 layout(set=1,binding=2) uniform texture2D pointMap;
 layout(location=0) out vec4 color;
 #endif
+ivec3 unpackBricks(int packed) { return ivec3(packed & 1023, (packed >> 10) & 1023, (packed >> 20) & 1023); }
+
 int morton(ivec3 p) {
     ivec3 bits = (p & 1) | ((p & 2) << 2) | ((p & 4) << 4);
     return bits.x | (bits.y << 1) | (bits.z << 2);
@@ -59,24 +66,32 @@ void main() {
     bvec3 parallel = equal(stepDir,ivec3(0));
     vec3 inv = 1.0/mix(ray,vec3(1),parallel);
     ivec3 positive = max(stepDir,ivec3(0));
+    // Clip to the occupied bricks. Outside them the grid is empty, so the
+    // hit, its depth and its face are the same as for the whole grid.
+    ivec3 occupiedFirst=ivec3(0), occupiedEnd=dims;
+    if (occupiedHigh!=0) {
+        occupiedFirst=unpackBricks(occupiedLow)*8;
+        occupiedEnd=min(unpackBricks(occupiedHigh)*8,dims);
+    }
     float t=0.0, end=1.0;
     int face=1;
     for (int a=0; a<3; a++) {
         if (parallel[a]) {
-            if (origin[a]<0.0 || origin[a]>=float(dims[a])) discard;
+            if (origin[a]<float(occupiedFirst[a]) || origin[a]>=float(occupiedEnd[a])) discard;
         } else {
-            float lo=-origin[a]*inv[a], hi=(float(dims[a])-origin[a])*inv[a];
+            float lo=(float(occupiedFirst[a])-origin[a])*inv[a], hi=(float(occupiedEnd[a])-origin[a])*inv[a];
             if (min(lo,hi)>t) { t=min(lo,hi); face=a; }
             end=min(end,max(lo,hi));
         }
     }
     vec3 pos=origin+t*ray;
-    ivec3 cell=clamp(ivec3(mix(floor(pos),ceil(pos)-1.0,lessThan(ray,vec3(0)))),ivec3(0),dims-1);
+    ivec3 cell=clamp(ivec3(mix(floor(pos),ceil(pos)-1.0,lessThan(ray,vec3(0)))),occupiedFirst,occupiedEnd-1);
     while (t<end && all(greaterThanEqual(cell,ivec3(0))) && all(lessThan(cell,dims))) {
         ivec3 brick=cell/8;
         int base=word(3+brick.x+bricks.x*(brick.y+bricks.y*brick.z));
         int index=morton(cell & 7);
-        if (base!=0 && ((word(base+(index>>5))>>(index&31))&1)!=0) {
+        int mask=base!=0 ? word(base+(index>>5)) : 0;
+        if (base!=0 && ((mask>>(index&31))&1)!=0) {
 #ifdef QUAXEL_DEPTH_ONLY
             gl_FragDepth=t;
             return;
@@ -128,8 +143,14 @@ void main() {
             return;
 #endif
         }
-        // Walk a cell inside a populated brick, jump to the far edge of an empty brick.
-        int size=base==0 ? 8 : 1;
+        // Jump to the far edge of an empty brick. Inside a populated one, an
+        // empty 2^3 block is one zero byte of the mask and an empty 4^3 block a
+        // zero pair of words, so jump those too; otherwise walk one cell.
+        int size=8;
+        if (base!=0) {
+            size=1;
+            if (((mask>>(index&24))&255)==0) size=(mask|word(base+((index>>5)^1)))==0 ? 4 : 2;
+        }
         ivec3 low=cell/size*size, edge=low+size*positive;
         vec3 exits=mix((vec3(edge)-origin)*inv,vec3(2),parallel);
         t=min(exits.x,min(exits.y,exits.z));

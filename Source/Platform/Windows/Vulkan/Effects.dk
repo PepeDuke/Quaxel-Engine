@@ -279,7 +279,7 @@ QuaxelVulkan
         PendingSimCount = 0
         if PendingDrawCount == 0 { return }
         long [3] pipelines = {ClearPipeline, StampPipeline, BricksPipeline}
-        int [3] groups = {512, 16, 512}
+        int [3] groups = {512, 1024, 512} // Stamp: one workgroup per particle slot
         for stage : 0; stage < 3; stage++ {
             Vk.CmdBindPipeline(Command, 1, pipelines[stage])
             for i : 0; i < PendingDrawCount; i++ {

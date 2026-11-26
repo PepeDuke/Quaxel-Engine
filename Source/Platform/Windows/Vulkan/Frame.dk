@@ -107,10 +107,16 @@ QuaxelVulkan
         present.pSwapchains = &Chain
         present.pImageIndices = &FrameImage
         int result = Vk.QueuePresentKHR(GraphicsQueue, &present)
-        // Pacing: return once the previous frame is done, so the GPU starts
-        // this one as the game simulates and records the next. The CPU stays
-        // at most one frame ahead, and input is read no earlier than before.
-        if !WaitFrameSlot((FrameSlot + 1) % FramesInFlight) { return false }
+        // Pacing. Uncapped (immediate or mailbox): return once the previous
+        // frame is done, so the GPU runs this one while the game simulates and
+        // records the next, and the CPU stays at most one frame ahead.
+        // FIFO: a fence signals only once its swapchain image is free, which
+        // lands on a refresh. Waiting on the previous frame there blocks a whole
+        // refresh one frame and not at all the next, so the game samples time
+        // unevenly and motion judders. Waiting on this frame gives one
+        // refresh-aligned wait per frame; the GPU has headroom when capped.
+        int pacedSlot = PresentMode == 2 ? FrameSlot | (FrameSlot + 1) % FramesInFlight
+        if !WaitFrameSlot(pacedSlot) { return false }
         #int outOfDate = -1000001004
         #int suboptimal = 1000001003
         if result == outOfDate || result == suboptimal || (result == 0 && FrameAcquireResult == suboptimal) {

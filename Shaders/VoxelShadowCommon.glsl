@@ -1,6 +1,8 @@
 struct Caster {
     mat4 boxFromWorld;  // World to the volume's unit box, centred on 0.
     ivec4 info;         // x: first word of the volume in its buffer. y: actor for probe tracing.
+                        // z, w: occupied bricks packed x | y << 10 | z << 20, first and one
+                        // past the last; w == 0 means the whole grid.
 };
 struct PointLight { vec4 positionRadius; vec4 color; uvec4 casterMask[2]; };
 layout(set=1,binding=0,std430) readonly buffer Scene {
@@ -28,6 +30,8 @@ int mortonCell(ivec3 p) {
     ivec3 bits = (p & 1) | ((p & 2) << 2) | ((p & 4) << 4);
     return bits.x | (bits.y << 1) | (bits.z << 2);
 }
+
+ivec3 unpackBricks(int packed) { return ivec3(packed & 1023, (packed >> 10) & 1023, (packed >> 20) & 1023); }
 
 ivec3 enteringCell(vec3 position, vec3 direction) {
     return ivec3(mix(floor(position), ceil(position) - 1.0, lessThan(direction, vec3(0))));
@@ -65,7 +69,24 @@ float firstHit(int g, vec3 start, vec3 toward, float rayEnd) {
     vec3 invDir = 1.0 / mix(dir, vec3(1.0), parallel);
     ivec3 stepDir = ivec3(sign(dir));
     ivec3 positive = max(stepDir, ivec3(0));
-    ivec3 cell = clamp(enteringCell(origin + t * dir, dir), ivec3(0), dims - 1);
+    // Clip again to the occupied bricks. Outside them the grid is empty, so
+    // the first hit is unchanged; the walk just skips the empty bricks.
+    ivec3 low = ivec3(0), high = dims;
+    if (casters[g].info.w != 0) {
+        low = unpackBricks(casters[g].info.z) * 8;
+        high = min(unpackBricks(casters[g].info.w) * 8, dims);
+        vec3 enter = (vec3(low) - origin) * invDir;
+        vec3 leave = (vec3(high) - origin) * invDir;
+        vec3 tightNear = mix(min(enter, leave), vec3(0.0), parallel);
+        vec3 tightFar = mix(max(enter, leave), vec3(rayEnd), parallel);
+        t = max(t, max(tightNear.x, max(tightNear.y, tightNear.z)));
+        end = min(end, min(tightFar.x, min(tightFar.y, tightFar.z)));
+        // A ray parallel to an axis must already lie inside the bricks on it.
+        vec3 parallelCell = mix(vec3(low), origin, parallel);
+        if (t >= end || any(lessThan(parallelCell, vec3(low))) ||
+                        any(greaterThanEqual(parallelCell, vec3(high)))) return rayEnd;
+    }
+    ivec3 cell = clamp(enteringCell(origin + t * dir, dir), low, high - 1);
     int steps = 0;
     while (all(greaterThanEqual(cell, ivec3(0))) && all(lessThan(cell, dims)) && steps < MAX_STEPS) {
         ivec3 brick = cell >> 3;

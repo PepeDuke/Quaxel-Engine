@@ -89,6 +89,9 @@ EM_JS(void, qx_upload_words, (int handle, const int *data, int words), {
 void qx_upload(int handle) {
     qx_upload_words(handle, staging, mapped_words);
 }
+EM_JS(void, qx_bounds, (int handle, int low, int high), {
+    Quaxel.graphics.setBounds(handle, low, high);
+});
 EM_JS(int, qx_begin, (const float *matrix), {
     return Quaxel.graphics.begin(matrix ? HEAPF32.subarray(Number(matrix)/4,Number(matrix)/4+16) : null);
 });

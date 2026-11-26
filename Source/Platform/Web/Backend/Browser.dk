@@ -11,6 +11,7 @@ QuaxelBrowser
     extern "C" int Start() = "qx_start"
     extern "C" int Map(int previous, int words, void*& mapped) = "qx_map"
     extern "C" void Upload(int handle) = "qx_upload"
+    extern "C" void Bounds(int handle, int low, int high) = "qx_bounds"
     extern "C" int Begin(void* matrix) = "qx_begin"
     extern "C" int Trace(int handle, void* matrix, float left, float top, float right, float bottom, void* axes) = "qx_trace"
     extern "C" int Caster(int handle, void* matrix, void* bounds) = "qx_caster"

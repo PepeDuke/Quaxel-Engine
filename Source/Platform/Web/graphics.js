@@ -126,6 +126,8 @@ class BrowserGraphics {
         this.overlay=overlay;
         this.uiWords=new Int32Array(4096);
         this.volumes=new Map();
+        // Occupied bricks per volume handle, packed as voxel.frag reads them.
+        this.bounds=new Map();
         this.meshes=[];
         this.points=[];
         this.casters=[];
@@ -223,10 +225,12 @@ class BrowserGraphics {
     }
     upload(handle,words) {
         if (!words.length) return;
+        this.bounds.delete(handle); // Until the engine reports the new contents.
         let volume=this.volumes.get(handle);
         if (!volume || volume.buffer.size<words.byteLength) volume=this.createVolume(handle,words.byteLength);
         this.device.queue.writeBuffer(volume.buffer,0,words);
     }
+    setBounds(handle,low,high) { this.bounds.set(handle,[low,high]); }
     begin(matrix) {
         if (this.failed) return 0;
         this.points.length=this.traces.length=this.casters.length=this.draws.length=0;
@@ -267,6 +271,9 @@ class BrowserGraphics {
             if (axes) for(let i=0;i<3;i++) for(let j=0;j<3;j++) floats[at+16+i*4+j]=axes[i*3+j];
             floats[at+28]=viewport[0]; floats[at+29]=viewport[1]; floats[at+30]=viewport[2]; floats[at+31]=viewport[3];
             record.ints[at+32]=mode;
+            const bounds=this.bounds.get(handle);
+            record.ints[at+33]=bounds?bounds[0]:0;
+            record.ints[at+34]=bounds?bounds[1]:0;
             const volume=this.volumes.get(handle);
             let group=volume.groups.get(record.buffer);
             if (!group) {
@@ -406,7 +413,7 @@ class BrowserGraphics {
     stamp(slot,tick) {
         const record=this.uniforms.allocate();
         record.ints[record.at+16]=0; record.ints[record.at+19]=tick;
-        return this.dispatch('Clear',slot,record,[512]) && this.dispatch('Stamp',slot,record,[16]) && this.dispatch('Bricks',slot,record,[512]);
+        return this.dispatch('Clear',slot,record,[512]) && this.dispatch('Stamp',slot,record,[1024]) && this.dispatch('Bricks',slot,record,[512]);
     }
     async readSlot(slot,count) {
         const volume=this.slot(slot);

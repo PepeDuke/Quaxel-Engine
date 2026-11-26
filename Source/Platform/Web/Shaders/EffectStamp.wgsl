@@ -17,44 +17,45 @@ struct Params {
 var<storage, read_write> unnamed: Page;
 @group(0) @binding(1)
 var<uniform> pc: Params;
-var<private> gl_GlobalInvocationID_1: vec3<u32>;
+var<private> gl_WorkGroupID_1: vec3<u32>;
+var<private> gl_LocalInvocationID_1: vec3<u32>;
 
 fn mortonCellvi3_(p: ptr<function, vec3<i32>>) -> i32 {
     var bits: vec3<i32>;
 
-    let _e87 = (*p);
     let _e90 = (*p);
-    let _e97 = (*p);
-    bits = (((_e87 & vec3(1i)) | ((_e90 & vec3(2i)) << bitcast<vec3<u32>>(vec3(2i)))) | ((_e97 & vec3(4i)) << bitcast<vec3<u32>>(vec3(4i))));
-    let _e105 = bits[0u];
-    let _e107 = bits[1u];
-    let _e112 = bits[2u];
-    return ((_e105 | (_e107 << bitcast<u32>(1i))) | (_e112 << bitcast<u32>(2i)));
+    let _e93 = (*p);
+    let _e100 = (*p);
+    bits = (((_e90 & vec3(1i)) | ((_e93 & vec3(2i)) << bitcast<vec3<u32>>(vec3(2i)))) | ((_e100 & vec3(4i)) << bitcast<vec3<u32>>(vec3(4i))));
+    let _e108 = bits[0u];
+    let _e110 = bits[1u];
+    let _e115 = bits[2u];
+    return ((_e108 | (_e110 << bitcast<u32>(1i))) | (_e115 << bitcast<u32>(2i)));
 }
 
 fn brickOfvi3_(c: ptr<function, vec3<i32>>) -> i32 {
     var b: vec3<i32>;
 
-    let _e87 = (*c);
-    b = (_e87 >> bitcast<vec3<u32>>(vec3(3i)));
-    let _e92 = b[0u];
-    let _e94 = b[1u];
-    let _e96 = b[2u];
-    return (_e92 + (8i * (_e94 + (8i * _e96))));
+    let _e90 = (*c);
+    b = (_e90 >> bitcast<vec3<u32>>(vec3(3i)));
+    let _e95 = b[0u];
+    let _e97 = b[1u];
+    let _e99 = b[2u];
+    return (_e95 + (8i * (_e97 + (8i * _e99))));
 }
 
 fn inGridvi3_(c_1: ptr<function, vec3<i32>>) -> bool {
-    var phi_238_: bool;
+    var phi_240_: bool;
 
-    let _e86 = (*c_1);
-    let _e88 = all((_e86 >= vec3<i32>(0i, 0i, 0i)));
-    phi_238_ = _e88;
-    if _e88 {
-        let _e89 = (*c_1);
-        phi_238_ = all((_e89 < vec3<i32>(64i, 64i, 64i)));
+    let _e89 = (*c_1);
+    let _e91 = all((_e89 >= vec3<i32>(0i, 0i, 0i)));
+    phi_240_ = _e91;
+    if _e91 {
+        let _e92 = (*c_1);
+        phi_240_ = all((_e92 < vec3<i32>(64i, 64i, 64i)));
     }
-    let _e93 = phi_238_;
-    return _e93;
+    let _e96 = phi_240_;
+    return _e96;
 }
 
 fn putVoxelvi3i1_(c_2: ptr<function, vec3<i32>>, rgb: ptr<function, i32>) {
@@ -62,85 +63,85 @@ fn putVoxelvi3i1_(c_2: ptr<function, vec3<i32>>, rgb: ptr<function, i32>) {
     var param_1: vec3<i32>;
     var param_2: vec3<i32>;
 
-    let _e90 = (*c_2);
-    param = _e90;
-    let _e91 = inGridvi3_((&param));
-    if !(_e91) {
+    let _e93 = (*c_2);
+    param = _e93;
+    let _e94 = inGridvi3_((&param));
+    if !(_e94) {
         return;
     }
-    let _e94 = pc.base;
-    let _e96 = (*c_2);
-    param_1 = _e96;
-    let _e97 = brickOfvi3_((&param_1));
-    let _e101 = (*c_2);
-    param_2 = (_e101 & vec3(7i));
-    let _e104 = mortonCellvi3_((&param_2));
-    let _e106 = (*rgb);
-    unnamed.words[((((_e94 + 515i) + (_e97 * 528i)) + 16i) + _e104)] = ((_e106 & 16777215i) + 1i);
+    let _e97 = pc.base;
+    let _e99 = (*c_2);
+    param_1 = _e99;
+    let _e100 = brickOfvi3_((&param_1));
+    let _e104 = (*c_2);
+    param_2 = (_e104 & vec3(7i));
+    let _e107 = mortonCellvi3_((&param_2));
+    let _e109 = (*rgb);
+    unnamed.words[((((_e97 + 515i) + (_e100 * 528i)) + 16i) + _e107)] = ((_e109 & 16777215i) + 1i);
     return;
 }
 
 fn packRgbvf3_(v: ptr<function, vec3<f32>>) -> i32 {
     var c_3: vec3<i32>;
 
-    let _e87 = (*v);
-    c_3 = vec3<i32>(clamp(_e87, vec3(0f), vec3(255f)));
-    let _e93 = c_3[0u];
-    let _e97 = c_3[1u];
-    let _e102 = c_3[2u];
-    return (((_e93 << bitcast<u32>(16i)) | (_e97 << bitcast<u32>(8i))) | _e102);
+    let _e90 = (*v);
+    c_3 = vec3<i32>(clamp(_e90, vec3(0f), vec3(255f)));
+    let _e96 = c_3[0u];
+    let _e100 = c_3[1u];
+    let _e105 = c_3[2u];
+    return (((_e96 << bitcast<u32>(16i)) | (_e100 << bitcast<u32>(8i))) | _e105);
 }
 
 fn rgbOfi1_(c_4: ptr<function, i32>) -> vec3<f32> {
-    let _e86 = (*c_4);
-    let _e91 = (*c_4);
-    let _e96 = (*c_4);
-    return vec3<f32>(f32(((_e86 >> bitcast<u32>(16i)) & 255i)), f32(((_e91 >> bitcast<u32>(8i)) & 255i)), f32((_e96 & 255i)));
+    let _e89 = (*c_4);
+    let _e94 = (*c_4);
+    let _e99 = (*c_4);
+    return vec3<f32>(f32(((_e89 >> bitcast<u32>(16i)) & 255i)), f32(((_e94 >> bitcast<u32>(8i)) & 255i)), f32((_e99 & 255i)));
 }
 
 fn scaleRgbi1f1_(c_5: ptr<function, i32>, f: ptr<function, f32>) -> i32 {
     var param_3: i32;
     var param_4: vec3<f32>;
 
-    let _e89 = (*c_5);
-    param_3 = _e89;
-    let _e90 = rgbOfi1_((&param_3));
-    let _e91 = (*f);
-    param_4 = (_e90 * _e91);
-    let _e93 = packRgbvf3_((&param_4));
-    return _e93;
+    let _e92 = (*c_5);
+    param_3 = _e92;
+    let _e93 = rgbOfi1_((&param_3));
+    let _e94 = (*f);
+    param_4 = (_e93 * _e94);
+    let _e96 = packRgbvf3_((&param_4));
+    return _e96;
 }
 
 fn pfi1_(i: ptr<function, i32>) -> f32 {
-    let _e87 = pc.base;
-    let _e89 = (*i);
-    let _e93 = unnamed.words[((_e87 + 295680i) + _e89)];
-    return bitcast<f32>(_e93);
+    let _e90 = pc.base;
+    let _e92 = (*i);
+    let _e96 = unnamed.words[((_e90 + 295680i) + _e92)];
+    return bitcast<f32>(_e96);
 }
 
 fn originCell() -> vec3<f32> {
     var param_5: i32;
 
     param_5 = 7i;
-    let _e86 = pfi1_((&param_5));
-    return vec3<f32>(32f, (64f * _e86), 32f);
+    let _e89 = pfi1_((&param_5));
+    return vec3<f32>(32f, (64f * _e89), 32f);
 }
 
 fn toCellvf3_(local: ptr<function, vec3<f32>>) -> vec3<i32> {
     var param_6: i32;
 
-    let _e87 = (*local);
+    let _e90 = (*local);
     param_6 = 6i;
-    let _e88 = pfi1_((&param_6));
-    let _e91 = originCell();
-    return vec3<i32>(floor(((_e87 / vec3(_e88)) + _e91)));
+    let _e91 = pfi1_((&param_6));
+    let _e94 = originCell();
+    return vec3<i32>(floor(((_e90 / vec3(_e91)) + _e94)));
 }
 
 fn cellIndexvi3_(c_6: ptr<function, vec3<i32>>) -> i32 {
-    let _e87 = (*c_6)[0u];
-    let _e89 = (*c_6)[1u];
-    let _e91 = (*c_6)[2u];
-    return (_e87 + (64i * (_e89 + (64i * _e91))));
+    let _e90 = (*c_6)[0u];
+    let _e92 = (*c_6)[1u];
+    let _e94 = (*c_6)[2u];
+    return (_e90 + (64i * (_e92 + (64i * _e94))));
 }
 
 fn solidCellvi3_(c_7: ptr<function, vec3<i32>>) -> bool {
@@ -148,79 +149,79 @@ fn solidCellvi3_(c_7: ptr<function, vec3<i32>>) -> bool {
     var i_1: i32;
     var param_8: vec3<i32>;
 
-    let _e89 = (*c_7);
-    param_7 = _e89;
-    let _e90 = inGridvi3_((&param_7));
-    if !(_e90) {
+    let _e92 = (*c_7);
+    param_7 = _e92;
+    let _e93 = inGridvi3_((&param_7));
+    if !(_e93) {
         return false;
     }
-    let _e92 = (*c_7);
-    param_8 = _e92;
-    let _e93 = cellIndexvi3_((&param_8));
-    i_1 = _e93;
-    let _e95 = pc.base;
-    let _e97 = i_1;
-    let _e103 = unnamed.words[((_e95 + 271104i) + (_e97 >> bitcast<u32>(5i)))];
-    let _e104 = i_1;
-    return (((_e103 >> bitcast<u32>((_e104 & 31i))) & 1i) != 0i);
+    let _e95 = (*c_7);
+    param_8 = _e95;
+    let _e96 = cellIndexvi3_((&param_8));
+    i_1 = _e96;
+    let _e98 = pc.base;
+    let _e100 = i_1;
+    let _e106 = unnamed.words[((_e98 + 271104i) + (_e100 >> bitcast<u32>(5i)))];
+    let _e107 = i_1;
+    return (((_e106 >> bitcast<u32>((_e107 & 31i))) & 1i) != 0i);
 }
 
 fn solidAtvf3_(local_1: ptr<function, vec3<f32>>) -> bool {
     var param_9: vec3<f32>;
     var param_10: vec3<i32>;
 
-    let _e88 = (*local_1);
-    param_9 = _e88;
-    let _e89 = toCellvf3_((&param_9));
-    param_10 = _e89;
-    let _e90 = solidCellvi3_((&param_10));
-    return _e90;
+    let _e91 = (*local_1);
+    param_9 = _e91;
+    let _e92 = toCellvf3_((&param_9));
+    param_10 = _e92;
+    let _e93 = solidCellvi3_((&param_10));
+    return _e93;
 }
 
 fn hashu1_(x: ptr<function, u32>) -> u32 {
-    let _e86 = (*x);
     let _e89 = (*x);
-    (*x) = (_e89 ^ (_e86 >> bitcast<u32>(16i)));
-    let _e91 = (*x);
-    (*x) = (_e91 * 2146121005u);
-    let _e93 = (*x);
+    let _e92 = (*x);
+    (*x) = (_e92 ^ (_e89 >> bitcast<u32>(16i)));
+    let _e94 = (*x);
+    (*x) = (_e94 * 2146121005u);
     let _e96 = (*x);
-    (*x) = (_e96 ^ (_e93 >> bitcast<u32>(15i)));
-    let _e98 = (*x);
-    (*x) = (_e98 * 2221713035u);
-    let _e100 = (*x);
+    let _e99 = (*x);
+    (*x) = (_e99 ^ (_e96 >> bitcast<u32>(15i)));
+    let _e101 = (*x);
+    (*x) = (_e101 * 2221713035u);
     let _e103 = (*x);
-    (*x) = (_e103 ^ (_e100 >> bitcast<u32>(16i)));
-    let _e105 = (*x);
-    return _e105;
+    let _e106 = (*x);
+    (*x) = (_e106 ^ (_e103 >> bitcast<u32>(16i)));
+    let _e108 = (*x);
+    return _e108;
 }
 
 fn unitu1_(x_1: ptr<function, u32>) -> f32 {
     var param_11: u32;
 
-    let _e87 = (*x_1);
-    param_11 = _e87;
-    let _e88 = hashu1_((&param_11));
-    return (f32((_e88 & 16777215u)) / 16777216f);
+    let _e90 = (*x_1);
+    param_11 = _e90;
+    let _e91 = hashu1_((&param_11));
+    return (f32((_e91 & 16777215u)) / 16777216f);
 }
 
 fn cellHashi1i1i1u1_(x_2: ptr<function, i32>, y: ptr<function, i32>, z: ptr<function, i32>, seed: ptr<function, u32>) -> u32 {
     var param_12: u32;
 
-    let _e90 = (*seed);
-    let _e91 = (*x_2);
-    let _e96 = (*y);
-    let _e101 = (*z);
-    param_12 = (((_e90 ^ (bitcast<u32>((_e91 + 1024i)) * 73856093u)) ^ (bitcast<u32>((_e96 + 1024i)) * 19349663u)) ^ (bitcast<u32>((_e101 + 1024i)) * 83492791u));
-    let _e106 = hashu1_((&param_12));
-    return _e106;
+    let _e93 = (*seed);
+    let _e94 = (*x_2);
+    let _e99 = (*y);
+    let _e104 = (*z);
+    param_12 = (((_e93 ^ (bitcast<u32>((_e94 + 1024i)) * 73856093u)) ^ (bitcast<u32>((_e99 + 1024i)) * 19349663u)) ^ (bitcast<u32>((_e104 + 1024i)) * 83492791u));
+    let _e109 = hashu1_((&param_12));
+    return _e109;
 }
 
 fn rfi1i1_(at: ptr<function, i32>, f_1: ptr<function, i32>) -> f32 {
-    let _e87 = (*at);
-    let _e88 = (*f_1);
-    let _e92 = unnamed.words[(_e87 + _e88)];
-    return bitcast<f32>(_e92);
+    let _e90 = (*at);
+    let _e91 = (*f_1);
+    let _e95 = unnamed.words[(_e90 + _e91)];
+    return bitcast<f32>(_e95);
 }
 
 fn rvi1i1_(at_1: ptr<function, i32>, f_2: ptr<function, i32>) -> vec3<f32> {
@@ -231,22 +232,22 @@ fn rvi1i1_(at_1: ptr<function, i32>, f_2: ptr<function, i32>) -> vec3<f32> {
     var param_17: i32;
     var param_18: i32;
 
-    let _e93 = (*at_1);
-    param_13 = _e93;
-    let _e94 = (*f_2);
-    param_14 = _e94;
-    let _e95 = rfi1i1_((&param_13), (&param_14));
-    let _e96 = (*f_2);
-    let _e98 = (*at_1);
-    param_15 = _e98;
-    param_16 = (_e96 + 1i);
-    let _e99 = rfi1i1_((&param_15), (&param_16));
-    let _e100 = (*f_2);
-    let _e102 = (*at_1);
-    param_17 = _e102;
-    param_18 = (_e100 + 2i);
-    let _e103 = rfi1i1_((&param_17), (&param_18));
-    return vec3<f32>(_e95, _e99, _e103);
+    let _e96 = (*at_1);
+    param_13 = _e96;
+    let _e97 = (*f_2);
+    param_14 = _e97;
+    let _e98 = rfi1i1_((&param_13), (&param_14));
+    let _e99 = (*f_2);
+    let _e101 = (*at_1);
+    param_15 = _e101;
+    param_16 = (_e99 + 1i);
+    let _e102 = rfi1i1_((&param_15), (&param_16));
+    let _e103 = (*f_2);
+    let _e105 = (*at_1);
+    param_17 = _e105;
+    param_18 = (_e103 + 2i);
+    let _e106 = rfi1i1_((&param_17), (&param_18));
+    return vec3<f32>(_e98, _e102, _e106);
 }
 
 fn mixRgbi1i1f1_(a: ptr<function, i32>, b_1: ptr<function, i32>, t: ptr<function, f32>) -> i32 {
@@ -254,23 +255,23 @@ fn mixRgbi1i1f1_(a: ptr<function, i32>, b_1: ptr<function, i32>, t: ptr<function
     var param_20: i32;
     var param_21: vec3<f32>;
 
-    let _e91 = (*a);
-    param_19 = _e91;
-    let _e92 = rgbOfi1_((&param_19));
-    let _e93 = (*b_1);
-    param_20 = _e93;
-    let _e94 = rgbOfi1_((&param_20));
-    let _e95 = (*t);
-    param_21 = mix(_e92, _e94, vec3(clamp(_e95, 0f, 1f)));
-    let _e99 = packRgbvf3_((&param_21));
-    return _e99;
+    let _e94 = (*a);
+    param_19 = _e94;
+    let _e95 = rgbOfi1_((&param_19));
+    let _e96 = (*b_1);
+    param_20 = _e96;
+    let _e97 = rgbOfi1_((&param_20));
+    let _e98 = (*t);
+    param_21 = mix(_e95, _e97, vec3(clamp(_e98, 0f, 1f)));
+    let _e102 = packRgbvf3_((&param_21));
+    return _e102;
 }
 
 fn pii1_(i_2: ptr<function, i32>) -> i32 {
-    let _e87 = pc.base;
-    let _e89 = (*i_2);
-    let _e93 = unnamed.words[((_e87 + 295680i) + _e89)];
-    return _e93;
+    let _e90 = pc.base;
+    let _e92 = (*i_2);
+    let _e96 = unnamed.words[((_e90 + 295680i) + _e92)];
+    return _e96;
 }
 
 fn staini1_(at_2: ptr<function, i32>) {
@@ -337,186 +338,186 @@ fn staini1_(at_2: ptr<function, i32>) {
     var param_61: i32;
 
     param_22 = 35i;
-    let _e147 = pfi1_((&param_22));
-    seconds = max(0.01f, _e147);
-    let _e149 = (*at_2);
-    param_23 = _e149;
+    let _e150 = pfi1_((&param_22));
+    seconds = max(0.01f, _e150);
+    let _e152 = (*at_2);
+    param_23 = _e152;
     param_24 = 6i;
-    let _e150 = rfi1i1_((&param_23), (&param_24));
-    age = _e150;
+    let _e153 = rfi1i1_((&param_23), (&param_24));
+    age = _e153;
     param_25 = 36i;
-    let _e151 = pii1_((&param_25));
+    let _e154 = pii1_((&param_25));
     param_26 = 37i;
-    let _e152 = pii1_((&param_26));
-    let _e153 = age;
-    let _e154 = seconds;
-    param_27 = _e151;
-    param_28 = _e152;
-    param_29 = (_e153 / (_e154 * 0.5f));
-    let _e157 = mixRgbi1i1f1_((&param_27), (&param_28), (&param_29));
-    rgb_1 = _e157;
-    let _e158 = seconds;
-    fadeFrom = (_e158 * 0.6f);
-    let _e160 = age;
-    let _e161 = fadeFrom;
-    if (_e160 > _e161) {
-        let _e163 = age;
-        let _e164 = fadeFrom;
-        let _e166 = seconds;
+    let _e155 = pii1_((&param_26));
+    let _e156 = age;
+    let _e157 = seconds;
+    param_27 = _e154;
+    param_28 = _e155;
+    param_29 = (_e156 / (_e157 * 0.5f));
+    let _e160 = mixRgbi1i1f1_((&param_27), (&param_28), (&param_29));
+    rgb_1 = _e160;
+    let _e161 = seconds;
+    fadeFrom = (_e161 * 0.6f);
+    let _e163 = age;
+    let _e164 = fadeFrom;
+    if (_e163 > _e164) {
+        let _e166 = age;
         let _e167 = fadeFrom;
-        local_2 = ((_e163 - _e164) / max(0.01f, (_e166 - _e167)));
+        let _e169 = seconds;
+        let _e170 = fadeFrom;
+        local_2 = ((_e166 - _e167) / max(0.01f, (_e169 - _e170)));
     } else {
         local_2 = 0f;
     }
-    let _e171 = local_2;
-    gone = _e171;
-    let _e172 = (*at_2);
-    let _e176 = unnamed.words[(_e172 + 8i)];
-    seed_1 = bitcast<u32>(_e176);
+    let _e174 = local_2;
+    gone = _e174;
+    let _e175 = (*at_2);
+    let _e179 = unnamed.words[(_e175 + 8i)];
+    seed_1 = bitcast<u32>(_e179);
     param_30 = 6i;
-    let _e178 = pfi1_((&param_30));
-    vs = _e178;
-    let _e179 = (*at_2);
-    param_31 = _e179;
+    let _e181 = pfi1_((&param_30));
+    vs = _e181;
+    let _e182 = (*at_2);
+    param_31 = _e182;
     param_32 = 0i;
-    let _e180 = rvi1i1_((&param_31), (&param_32));
-    surface = _e180;
-    let _e181 = (*at_2);
-    param_33 = _e181;
+    let _e183 = rvi1i1_((&param_31), (&param_32));
+    surface = _e183;
+    let _e184 = (*at_2);
+    param_33 = _e184;
     param_34 = 10i;
-    let _e182 = rvi1i1_((&param_33), (&param_34));
-    normal = _e182;
-    let _e183 = (*at_2);
-    let _e187 = unnamed.words[(_e183 + 15i)];
-    along = normalize(unpack4x8snorm(bitcast<u32>(_e187)).xyz);
-    let _e192 = normal;
-    let _e193 = along;
-    across = cross(_e192, _e193);
-    let _e195 = (*at_2);
-    param_35 = _e195;
+    let _e185 = rvi1i1_((&param_33), (&param_34));
+    normal = _e185;
+    let _e186 = (*at_2);
+    let _e190 = unnamed.words[(_e186 + 15i)];
+    along = normalize(unpack4x8snorm(bitcast<u32>(_e190)).xyz);
+    let _e195 = normal;
+    let _e196 = along;
+    across = cross(_e195, _e196);
+    let _e198 = (*at_2);
+    param_35 = _e198;
     param_36 = 13i;
-    let _e196 = rfi1i1_((&param_35), (&param_36));
-    radius = _e196;
-    let _e197 = (*at_2);
-    param_37 = _e197;
+    let _e199 = rfi1i1_((&param_35), (&param_36));
+    radius = _e199;
+    let _e200 = (*at_2);
+    param_37 = _e200;
     param_38 = 14i;
-    let _e198 = rfi1i1_((&param_37), (&param_38));
-    stretch = _e198;
-    let _e199 = radius;
-    let _e200 = stretch;
-    reachAlong = min((i32((_e199 * _e200)) + 1i), 12i);
-    let _e205 = radius;
-    reachAcross = min((i32(_e205) + 1i), 8i);
-    let _e209 = reachAlong;
-    a_1 = -(_e209);
+    let _e201 = rfi1i1_((&param_37), (&param_38));
+    stretch = _e201;
+    let _e202 = radius;
+    let _e203 = stretch;
+    reachAlong = min((i32((_e202 * _e203)) + 1i), 12i);
+    let _e208 = radius;
+    reachAcross = min((i32(_e208) + 1i), 8i);
+    let _e212 = reachAlong;
+    a_1 = -(_e212);
     loop {
-        let _e211 = a_1;
-        let _e212 = reachAlong;
-        if (_e211 <= _e212) {
-            let _e214 = reachAcross;
-            b_2 = -(_e214);
+        let _e214 = a_1;
+        let _e215 = reachAlong;
+        if (_e214 <= _e215) {
+            let _e217 = reachAcross;
+            b_2 = -(_e217);
             loop {
-                let _e216 = b_2;
-                let _e217 = reachAcross;
-                if (_e216 <= _e217) {
-                    let _e219 = a_1;
-                    let _e221 = stretch;
-                    fa = (f32(_e219) / _e221);
-                    let _e223 = radius;
-                    let _e224 = a_1;
-                    param_39 = _e224;
-                    let _e225 = b_2;
-                    param_40 = _e225;
+                let _e219 = b_2;
+                let _e220 = reachAcross;
+                if (_e219 <= _e220) {
+                    let _e222 = a_1;
+                    let _e224 = stretch;
+                    fa = (f32(_e222) / _e224);
+                    let _e226 = radius;
+                    let _e227 = a_1;
+                    param_39 = _e227;
+                    let _e228 = b_2;
+                    param_40 = _e228;
                     param_41 = 0i;
-                    let _e226 = seed_1;
-                    param_42 = _e226;
-                    let _e227 = cellHashi1i1i1u1_((&param_39), (&param_40), (&param_41), (&param_42));
-                    param_43 = _e227;
-                    let _e228 = unitu1_((&param_43));
-                    edge = (_e223 * (0.65f + (0.5f * _e228)));
-                    let _e232 = fa;
-                    let _e233 = fa;
-                    let _e235 = b_2;
-                    let _e236 = b_2;
-                    let _e240 = edge;
-                    let _e241 = edge;
-                    if (((_e232 * _e233) + f32((_e235 * _e236))) > (_e240 * _e241)) {
+                    let _e229 = seed_1;
+                    param_42 = _e229;
+                    let _e230 = cellHashi1i1i1u1_((&param_39), (&param_40), (&param_41), (&param_42));
+                    param_43 = _e230;
+                    let _e231 = unitu1_((&param_43));
+                    edge = (_e226 * (0.65f + (0.5f * _e231)));
+                    let _e235 = fa;
+                    let _e236 = fa;
+                    let _e238 = b_2;
+                    let _e239 = b_2;
+                    let _e243 = edge;
+                    let _e244 = edge;
+                    if (((_e235 * _e236) + f32((_e238 * _e239))) > (_e243 * _e244)) {
                         continue;
                     }
-                    let _e244 = a_1;
-                    param_44 = _e244;
-                    let _e245 = b_2;
-                    param_45 = _e245;
+                    let _e247 = a_1;
+                    param_44 = _e247;
+                    let _e248 = b_2;
+                    param_45 = _e248;
                     param_46 = 2i;
-                    let _e246 = seed_1;
-                    param_47 = _e246;
-                    let _e247 = cellHashi1i1i1u1_((&param_44), (&param_45), (&param_46), (&param_47));
-                    param_48 = _e247;
-                    let _e248 = unitu1_((&param_48));
-                    let _e249 = gone;
-                    if (_e248 < _e249) {
+                    let _e249 = seed_1;
+                    param_47 = _e249;
+                    let _e250 = cellHashi1i1i1u1_((&param_44), (&param_45), (&param_46), (&param_47));
+                    param_48 = _e250;
+                    let _e251 = unitu1_((&param_48));
+                    let _e252 = gone;
+                    if (_e251 < _e252) {
                         continue;
                     }
-                    let _e251 = surface;
-                    let _e252 = normal;
-                    let _e253 = vs;
-                    let _e257 = along;
-                    let _e258 = a_1;
-                    let _e260 = vs;
-                    let _e264 = across;
-                    let _e265 = b_2;
-                    let _e267 = vs;
-                    local_3 = (((_e251 + (_e252 * (_e253 * 0.5f))) + (_e257 * (f32(_e258) * _e260))) + (_e264 * (f32(_e265) * _e267)));
-                    let _e271 = local_3;
-                    param_49 = _e271;
-                    let _e272 = solidAtvf3_((&param_49));
-                    if _e272 {
-                        let _e273 = normal;
-                        let _e274 = vs;
-                        let _e276 = local_3;
-                        local_3 = (_e276 + (_e273 * _e274));
+                    let _e254 = surface;
+                    let _e255 = normal;
+                    let _e256 = vs;
+                    let _e260 = along;
+                    let _e261 = a_1;
+                    let _e263 = vs;
+                    let _e267 = across;
+                    let _e268 = b_2;
+                    let _e270 = vs;
+                    local_3 = (((_e254 + (_e255 * (_e256 * 0.5f))) + (_e260 * (f32(_e261) * _e263))) + (_e267 * (f32(_e268) * _e270)));
+                    let _e274 = local_3;
+                    param_49 = _e274;
+                    let _e275 = solidAtvf3_((&param_49));
+                    if _e275 {
+                        let _e276 = normal;
+                        let _e277 = vs;
+                        let _e279 = local_3;
+                        local_3 = (_e279 + (_e276 * _e277));
                     }
-                    let _e278 = local_3;
-                    param_50 = _e278;
-                    let _e279 = solidAtvf3_((&param_50));
-                    if _e279 {
+                    let _e281 = local_3;
+                    param_50 = _e281;
+                    let _e282 = solidAtvf3_((&param_50));
+                    if _e282 {
                         continue;
                     }
-                    let _e280 = local_3;
-                    let _e281 = normal;
-                    let _e282 = vs;
-                    param_51 = (_e280 - (_e281 * (_e282 * 1.5f)));
-                    let _e286 = solidAtvf3_((&param_51));
-                    if !(_e286) {
+                    let _e283 = local_3;
+                    let _e284 = normal;
+                    let _e285 = vs;
+                    param_51 = (_e283 - (_e284 * (_e285 * 1.5f)));
+                    let _e289 = solidAtvf3_((&param_51));
+                    if !(_e289) {
                         continue;
                     }
-                    let _e288 = local_3;
-                    param_52 = _e288;
-                    let _e289 = toCellvf3_((&param_52));
-                    let _e290 = a_1;
-                    param_53 = _e290;
-                    let _e291 = b_2;
-                    param_54 = _e291;
+                    let _e291 = local_3;
+                    param_52 = _e291;
+                    let _e292 = toCellvf3_((&param_52));
+                    let _e293 = a_1;
+                    param_53 = _e293;
+                    let _e294 = b_2;
+                    param_54 = _e294;
                     param_55 = 1i;
-                    let _e292 = seed_1;
-                    param_56 = _e292;
-                    let _e293 = cellHashi1i1i1u1_((&param_53), (&param_54), (&param_55), (&param_56));
-                    param_57 = _e293;
-                    let _e294 = unitu1_((&param_57));
-                    let _e297 = rgb_1;
-                    param_58 = _e297;
-                    param_59 = (0.8f + (0.35f * _e294));
-                    let _e298 = scaleRgbi1f1_((&param_58), (&param_59));
-                    param_60 = _e289;
-                    param_61 = _e298;
+                    let _e295 = seed_1;
+                    param_56 = _e295;
+                    let _e296 = cellHashi1i1i1u1_((&param_53), (&param_54), (&param_55), (&param_56));
+                    param_57 = _e296;
+                    let _e297 = unitu1_((&param_57));
+                    let _e300 = rgb_1;
+                    param_58 = _e300;
+                    param_59 = (0.8f + (0.35f * _e297));
+                    let _e301 = scaleRgbi1f1_((&param_58), (&param_59));
+                    param_60 = _e292;
+                    param_61 = _e301;
                     putVoxelvi3i1_((&param_60), (&param_61));
                     continue;
                 } else {
                     break;
                 }
                 continuing {
-                    let _e299 = b_2;
-                    b_2 = (_e299 + 1i);
+                    let _e302 = b_2;
+                    b_2 = (_e302 + 1i);
                 }
             }
             continue;
@@ -524,8 +525,8 @@ fn staini1_(at_2: ptr<function, i32>) {
             break;
         }
         continuing {
-            let _e301 = a_1;
-            a_1 = (_e301 + 1i);
+            let _e304 = a_1;
+            a_1 = (_e304 + 1i);
         }
     }
     return;
@@ -546,38 +547,38 @@ fn rampf1_(t_1: ptr<function, f32>) -> i32 {
     var param_72: f32;
 
     param_62 = 28i;
-    let _e98 = pfi1_((&param_62));
-    middle = clamp(_e98, 0.01f, 0.99f);
-    let _e100 = (*t_1);
-    let _e101 = middle;
-    if (_e100 < _e101) {
+    let _e101 = pfi1_((&param_62));
+    middle = clamp(_e101, 0.01f, 0.99f);
+    let _e103 = (*t_1);
+    let _e104 = middle;
+    if (_e103 < _e104) {
         param_63 = 25i;
-        let _e103 = pii1_((&param_63));
+        let _e106 = pii1_((&param_63));
         param_64 = 26i;
-        let _e104 = pii1_((&param_64));
-        let _e105 = (*t_1);
-        let _e106 = middle;
-        param_65 = _e103;
-        param_66 = _e104;
-        param_67 = (_e105 / _e106);
-        let _e108 = mixRgbi1i1f1_((&param_65), (&param_66), (&param_67));
-        return _e108;
+        let _e107 = pii1_((&param_64));
+        let _e108 = (*t_1);
+        let _e109 = middle;
+        param_65 = _e106;
+        param_66 = _e107;
+        param_67 = (_e108 / _e109);
+        let _e111 = mixRgbi1i1f1_((&param_65), (&param_66), (&param_67));
+        return _e111;
     }
     param_68 = 26i;
-    let _e109 = pii1_((&param_68));
+    let _e112 = pii1_((&param_68));
     param_69 = 27i;
-    let _e110 = pii1_((&param_69));
-    let _e111 = (*t_1);
-    let _e112 = middle;
-    let _e114 = middle;
-    param_70 = _e109;
-    param_71 = _e110;
-    param_72 = ((_e111 - _e112) / (1f - _e114));
-    let _e117 = mixRgbi1i1f1_((&param_70), (&param_71), (&param_72));
-    return _e117;
+    let _e113 = pii1_((&param_69));
+    let _e114 = (*t_1);
+    let _e115 = middle;
+    let _e117 = middle;
+    param_70 = _e112;
+    param_71 = _e113;
+    param_72 = ((_e114 - _e115) / (1f - _e117));
+    let _e120 = mixRgbi1i1f1_((&param_70), (&param_71), (&param_72));
+    return _e120;
 }
 
-fn flyingi1_(at_3: ptr<function, i32>) {
+fn flyingi1i1_(at_3: ptr<function, i32>, lane: ptr<function, i32>) {
     var pos: vec3<f32>;
     var param_73: i32;
     var param_74: i32;
@@ -606,227 +607,335 @@ fn flyingi1_(at_3: ptr<function, i32>) {
     var param_87: i32;
     var base: f32;
     var param_88: u32;
+    var trail: i32;
+    var streak: f32;
     var param_89: i32;
+    var vel: vec3<f32>;
     var param_90: i32;
     var param_91: i32;
-    var param_92: u32;
-    var param_93: u32;
+    var speed: f32;
+    var back: vec3<f32>;
+    var local_5: vec3<f32>;
+    var param_92: i32;
+    var s: i32;
+    var trailCells: array<vec3<i32>, 4>;
+    var param_93: vec3<f32>;
     var param_94: i32;
-    var param_95: f32;
-    var param_96: vec3<i32>;
-    var param_97: i32;
+    var param_95: i32;
+    var param_96: i32;
+    var param_97: u32;
+    var param_98: u32;
+    var param_99: i32;
+    var param_100: f32;
+    var param_101: vec3<i32>;
+    var param_102: i32;
     var reach: i32;
     var limit: f32;
+    var width: i32;
+    var column: i32;
     var dx: i32;
     var dy: i32;
+    var rest: f32;
+    var span: i32;
     var dz: i32;
     var distance: f32;
     var h: u32;
-    var param_98: i32;
-    var param_99: i32;
-    var param_100: i32;
-    var param_101: u32;
-    var param_102: u32;
+    var param_103: i32;
+    var param_104: i32;
+    var param_105: i32;
+    var param_106: u32;
+    var param_107: u32;
     var rim: f32;
     var jitter: f32;
-    var param_103: u32;
-    var param_104: i32;
-    var param_105: f32;
-    var param_106: vec3<i32>;
-    var param_107: i32;
-    var streak: f32;
-    var param_108: i32;
-    var vel: vec3<f32>;
+    var param_108: u32;
+    var cell: vec3<i32>;
+    var onTrail: bool;
+    var s_1: i32;
     var param_109: i32;
-    var param_110: i32;
-    var speed: f32;
-    var trail: i32;
-    var back: vec3<f32>;
-    var param_111: i32;
-    var s: i32;
-    var param_112: vec3<f32>;
+    var param_110: f32;
+    var param_111: vec3<i32>;
+    var param_112: i32;
+    var s_2: i32;
     var param_113: i32;
     var param_114: f32;
     var param_115: vec3<i32>;
     var param_116: i32;
+    var phi_679_: bool;
+    var phi_850_: bool;
 
-    let _e157 = (*at_3);
-    param_73 = _e157;
+    let _e171 = (*at_3);
+    param_73 = _e171;
     param_74 = 0i;
-    let _e158 = rvi1i1_((&param_73), (&param_74));
-    pos = _e158;
-    let _e159 = pos;
-    param_75 = _e159;
-    let _e160 = toCellvf3_((&param_75));
-    c_8 = _e160;
-    let _e161 = c_8;
-    param_76 = _e161;
-    let _e162 = inGridvi3_((&param_76));
-    if !(_e162) {
+    let _e172 = rvi1i1_((&param_73), (&param_74));
+    pos = _e172;
+    let _e173 = pos;
+    param_75 = _e173;
+    let _e174 = toCellvf3_((&param_75));
+    c_8 = _e174;
+    let _e175 = c_8;
+    param_76 = _e175;
+    let _e176 = inGridvi3_((&param_76));
+    if !(_e176) {
         return;
     }
-    let _e164 = (*at_3);
-    param_77 = _e164;
+    let _e178 = (*at_3);
+    param_77 = _e178;
     param_78 = 6i;
-    let _e165 = rfi1i1_((&param_77), (&param_78));
-    let _e166 = (*at_3);
-    param_79 = _e166;
-    param_80 = 7i;
-    let _e167 = rfi1i1_((&param_79), (&param_80));
-    t_2 = clamp((_e165 / _e167), 0f, 1f);
-    let _e170 = t_2;
-    param_81 = _e170;
-    let _e171 = rampf1_((&param_81));
-    rgb_2 = _e171;
-    param_82 = 21i;
-    let _e172 = pfi1_((&param_82));
-    param_83 = 22i;
-    let _e173 = pfi1_((&param_83));
-    let _e174 = t_2;
-    radius_1 = mix(_e172, _e173, _e174);
-    param_84 = 23i;
-    let _e176 = pfi1_((&param_84));
-    param_85 = 24i;
-    let _e177 = pfi1_((&param_85));
-    let _e178 = t_2;
-    density = mix(_e176, _e177, _e178);
+    let _e179 = rfi1i1_((&param_77), (&param_78));
     let _e180 = (*at_3);
-    let _e184 = unnamed.words[(_e180 + 8i)];
-    particleSeed = bitcast<u32>(_e184);
+    param_79 = _e180;
+    param_80 = 7i;
+    let _e181 = rfi1i1_((&param_79), (&param_80));
+    t_2 = clamp((_e179 / _e181), 0f, 1f);
+    let _e184 = t_2;
+    param_81 = _e184;
+    let _e185 = rampf1_((&param_81));
+    rgb_2 = _e185;
+    param_82 = 21i;
+    let _e186 = pfi1_((&param_82));
+    param_83 = 22i;
+    let _e187 = pfi1_((&param_83));
+    let _e188 = t_2;
+    radius_1 = mix(_e186, _e187, _e188);
+    param_84 = 23i;
+    let _e190 = pfi1_((&param_84));
+    param_85 = 24i;
+    let _e191 = pfi1_((&param_85));
+    let _e192 = t_2;
+    density = mix(_e190, _e191, _e192);
+    let _e194 = (*at_3);
+    let _e198 = unnamed.words[(_e194 + 8i)];
+    particleSeed = bitcast<u32>(_e198);
     param_86 = 30i;
-    let _e186 = pii1_((&param_86));
-    if (_e186 != 0i) {
-        let _e189 = pc.tick;
-        local_4 = bitcast<u32>(_e189);
+    let _e200 = pii1_((&param_86));
+    if (_e200 != 0i) {
+        let _e203 = pc.tick;
+        local_4 = bitcast<u32>(_e203);
     } else {
         local_4 = 0u;
     }
-    let _e191 = local_4;
-    flicker = _e191;
-    let _e192 = particleSeed;
-    let _e193 = flicker;
-    seed_2 = (_e192 ^ (_e193 * 2246822519u));
+    let _e205 = local_4;
+    flicker = _e205;
+    let _e206 = particleSeed;
+    let _e207 = flicker;
+    seed_2 = (_e206 ^ (_e207 * 2246822519u));
     param_87 = 29i;
-    let _e196 = pfi1_((&param_87));
-    shade = _e196;
-    let _e197 = particleSeed;
-    param_88 = _e197;
-    let _e198 = unitu1_((&param_88));
-    let _e200 = shade;
-    base = (1f + ((_e198 - 0.5f) * _e200));
-    let _e203 = radius_1;
-    if (_e203 < 0.5f) {
-        param_89 = 0i;
-        param_90 = 0i;
-        param_91 = 0i;
-        let _e205 = seed_2;
-        param_92 = _e205;
-        let _e206 = cellHashi1i1i1u1_((&param_89), (&param_90), (&param_91), (&param_92));
-        param_93 = _e206;
-        let _e207 = unitu1_((&param_93));
-        let _e208 = density;
-        if (_e207 < _e208) {
-            let _e210 = rgb_2;
-            param_94 = _e210;
-            let _e211 = base;
-            param_95 = _e211;
-            let _e212 = scaleRgbi1f1_((&param_94), (&param_95));
-            let _e213 = c_8;
-            param_96 = _e213;
-            param_97 = _e212;
-            putVoxelvi3i1_((&param_96), (&param_97));
+    let _e210 = pfi1_((&param_87));
+    shade = _e210;
+    let _e211 = particleSeed;
+    param_88 = _e211;
+    let _e212 = unitu1_((&param_88));
+    let _e214 = shade;
+    base = (1f + ((_e212 - 0.5f) * _e214));
+    trail = 0i;
+    param_89 = 31i;
+    let _e217 = pfi1_((&param_89));
+    streak = _e217;
+    let _e218 = streak;
+    if (_e218 > 0f) {
+        let _e220 = (*at_3);
+        param_90 = _e220;
+        param_91 = 3i;
+        let _e221 = rvi1i1_((&param_90), (&param_91));
+        vel = _e221;
+        let _e222 = vel;
+        speed = length(_e222);
+        let _e224 = speed;
+        let _e225 = streak;
+        trail = min(4i, i32((_e224 * _e225)));
+        let _e229 = trail;
+        if (_e229 > 0i) {
+            let _e231 = vel;
+            param_92 = 6i;
+            let _e232 = pfi1_((&param_92));
+            let _e234 = speed;
+            local_5 = (_e231 * (-(_e232) / _e234));
+        } else {
+            local_5 = vec3<f32>(0f, 0f, 0f);
+        }
+        let _e237 = local_5;
+        back = _e237;
+        s = 1i;
+        loop {
+            let _e238 = s;
+            let _e239 = trail;
+            if (_e238 <= _e239) {
+                let _e241 = s;
+                let _e243 = pos;
+                let _e244 = back;
+                let _e245 = s;
+                param_93 = (_e243 + (_e244 * f32(_e245)));
+                let _e249 = toCellvf3_((&param_93));
+                trailCells[(_e241 - 1i)] = _e249;
+                continue;
+            } else {
+                break;
+            }
+            continuing {
+                let _e251 = s;
+                s = (_e251 + 1i);
+            }
+        }
+    }
+    let _e253 = radius_1;
+    if (_e253 < 0.5f) {
+        let _e255 = (*lane);
+        let _e256 = (_e255 == 0i);
+        phi_679_ = _e256;
+        if _e256 {
+            param_94 = 0i;
+            param_95 = 0i;
+            param_96 = 0i;
+            let _e257 = seed_2;
+            param_97 = _e257;
+            let _e258 = cellHashi1i1i1u1_((&param_94), (&param_95), (&param_96), (&param_97));
+            param_98 = _e258;
+            let _e259 = unitu1_((&param_98));
+            let _e260 = density;
+            phi_679_ = (_e259 < _e260);
+        }
+        let _e263 = phi_679_;
+        if _e263 {
+            let _e264 = rgb_2;
+            param_99 = _e264;
+            let _e265 = base;
+            param_100 = _e265;
+            let _e266 = scaleRgbi1f1_((&param_99), (&param_100));
+            let _e267 = c_8;
+            param_101 = _e267;
+            param_102 = _e266;
+            putVoxelvi3i1_((&param_101), (&param_102));
         }
     } else {
-        let _e214 = radius_1;
-        reach = min((i32(_e214) + 1i), 8i);
-        let _e218 = radius_1;
-        let _e220 = radius_1;
-        limit = ((_e218 + 0.25f) * (_e220 + 0.25f));
-        let _e223 = reach;
-        dx = -(_e223);
+        let _e268 = radius_1;
+        reach = min((i32(_e268) + 1i), 8i);
+        let _e272 = radius_1;
+        let _e274 = radius_1;
+        limit = ((_e272 + 0.25f) * (_e274 + 0.25f));
+        let _e277 = reach;
+        width = ((2i * _e277) + 1i);
+        let _e280 = (*lane);
+        column = _e280;
         loop {
-            let _e225 = dx;
-            let _e226 = reach;
-            if (_e225 <= _e226) {
-                let _e228 = reach;
-                dy = -(_e228);
+            let _e281 = column;
+            let _e282 = width;
+            let _e283 = width;
+            if (_e281 < (_e282 * _e283)) {
+                let _e286 = column;
+                let _e287 = width;
+                let _e289 = reach;
+                dx = ((_e286 / _e287) - _e289);
+                let _e291 = column;
+                let _e292 = width;
+                let _e300 = reach;
+                dy = ((_e291 - (i32(floor((f32(_e291) / f32(_e292)))) * _e292)) - _e300);
+                let _e302 = limit;
+                let _e303 = dx;
+                let _e304 = dx;
+                let _e306 = dy;
+                let _e307 = dy;
+                rest = (_e302 - f32(((_e303 * _e304) + (_e306 * _e307))));
+                let _e312 = rest;
+                if (_e312 < 0f) {
+                    continue;
+                }
+                let _e314 = reach;
+                let _e315 = rest;
+                span = min(_e314, (i32(sqrt(_e315)) + 1i));
+                let _e320 = span;
+                dz = -(_e320);
                 loop {
-                    let _e230 = dy;
-                    let _e231 = reach;
-                    if (_e230 <= _e231) {
-                        let _e233 = reach;
-                        dz = -(_e233);
+                    let _e322 = dz;
+                    let _e323 = span;
+                    if (_e322 <= _e323) {
+                        let _e325 = dx;
+                        let _e326 = dx;
+                        let _e328 = dy;
+                        let _e329 = dy;
+                        let _e332 = dz;
+                        let _e333 = dz;
+                        distance = f32((((_e325 * _e326) + (_e328 * _e329)) + (_e332 * _e333)));
+                        let _e337 = distance;
+                        let _e338 = limit;
+                        if (_e337 > _e338) {
+                            continue;
+                        }
+                        let _e340 = dx;
+                        param_103 = _e340;
+                        let _e341 = dy;
+                        param_104 = _e341;
+                        let _e342 = dz;
+                        param_105 = _e342;
+                        let _e343 = seed_2;
+                        param_106 = _e343;
+                        let _e344 = cellHashi1i1i1u1_((&param_103), (&param_104), (&param_105), (&param_106));
+                        h = _e344;
+                        let _e345 = h;
+                        param_107 = _e345;
+                        let _e346 = unitu1_((&param_107));
+                        let _e347 = density;
+                        if (_e346 >= _e347) {
+                            continue;
+                        }
+                        let _e349 = distance;
+                        let _e350 = limit;
+                        rim = (1f - (0.25f * sqrt((_e349 / _e350))));
+                        let _e355 = h;
+                        param_108 = (_e355 ^ 1540483477u);
+                        let _e357 = unitu1_((&param_108));
+                        let _e360 = shade;
+                        jitter = (1f + (((_e357 - 0.5f) * 2f) * _e360));
+                        let _e363 = c_8;
+                        let _e364 = dx;
+                        let _e365 = dy;
+                        let _e366 = dz;
+                        cell = (_e363 + vec3<i32>(_e364, _e365, _e366));
+                        onTrail = false;
+                        s_1 = 0i;
                         loop {
-                            let _e235 = dz;
-                            let _e236 = reach;
-                            if (_e235 <= _e236) {
-                                let _e238 = dx;
-                                let _e239 = dx;
-                                let _e241 = dy;
-                                let _e242 = dy;
-                                let _e245 = dz;
-                                let _e246 = dz;
-                                distance = f32((((_e238 * _e239) + (_e241 * _e242)) + (_e245 * _e246)));
-                                let _e250 = distance;
-                                let _e251 = limit;
-                                if (_e250 > _e251) {
-                                    continue;
+                            let _e369 = s_1;
+                            let _e370 = trail;
+                            if (_e369 < _e370) {
+                                let _e372 = onTrail;
+                                phi_850_ = _e372;
+                                if !(_e372) {
+                                    let _e374 = s_1;
+                                    let _e376 = trailCells[_e374];
+                                    let _e377 = cell;
+                                    phi_850_ = all((_e376 == _e377));
                                 }
-                                let _e253 = dx;
-                                param_98 = _e253;
-                                let _e254 = dy;
-                                param_99 = _e254;
-                                let _e255 = dz;
-                                param_100 = _e255;
-                                let _e256 = seed_2;
-                                param_101 = _e256;
-                                let _e257 = cellHashi1i1i1u1_((&param_98), (&param_99), (&param_100), (&param_101));
-                                h = _e257;
-                                let _e258 = h;
-                                param_102 = _e258;
-                                let _e259 = unitu1_((&param_102));
-                                let _e260 = density;
-                                if (_e259 >= _e260) {
-                                    continue;
-                                }
-                                let _e262 = distance;
-                                let _e263 = limit;
-                                rim = (1f - (0.25f * sqrt((_e262 / _e263))));
-                                let _e268 = h;
-                                param_103 = (_e268 ^ 1540483477u);
-                                let _e270 = unitu1_((&param_103));
-                                let _e273 = shade;
-                                jitter = (1f + (((_e270 - 0.5f) * 2f) * _e273));
-                                let _e276 = c_8;
-                                let _e277 = dx;
-                                let _e278 = dy;
-                                let _e279 = dz;
-                                let _e282 = base;
-                                let _e283 = rim;
-                                let _e285 = jitter;
-                                let _e287 = rgb_2;
-                                param_104 = _e287;
-                                param_105 = ((_e282 * _e283) * _e285);
-                                let _e288 = scaleRgbi1f1_((&param_104), (&param_105));
-                                param_106 = (_e276 + vec3<i32>(_e277, _e278, _e279));
-                                param_107 = _e288;
-                                putVoxelvi3i1_((&param_106), (&param_107));
+                                let _e381 = phi_850_;
+                                onTrail = _e381;
                                 continue;
                             } else {
                                 break;
                             }
                             continuing {
-                                let _e289 = dz;
-                                dz = (_e289 + 1i);
+                                let _e382 = s_1;
+                                s_1 = (_e382 + 1i);
                             }
+                        }
+                        let _e384 = onTrail;
+                        if !(_e384) {
+                            let _e386 = base;
+                            let _e387 = rim;
+                            let _e389 = jitter;
+                            let _e391 = rgb_2;
+                            param_109 = _e391;
+                            param_110 = ((_e386 * _e387) * _e389);
+                            let _e392 = scaleRgbi1f1_((&param_109), (&param_110));
+                            let _e393 = cell;
+                            param_111 = _e393;
+                            param_112 = _e392;
+                            putVoxelvi3i1_((&param_111), (&param_112));
                         }
                         continue;
                     } else {
                         break;
                     }
                     continuing {
-                        let _e291 = dy;
-                        dy = (_e291 + 1i);
+                        let _e394 = dz;
+                        dz = (_e394 + 1i);
                     }
                 }
                 continue;
@@ -834,60 +943,36 @@ fn flyingi1_(at_3: ptr<function, i32>) {
                 break;
             }
             continuing {
-                let _e293 = dx;
-                dx = (_e293 + 1i);
+                let _e396 = column;
+                column = (_e396 + 64i);
             }
         }
     }
-    param_108 = 31i;
-    let _e295 = pfi1_((&param_108));
-    streak = _e295;
-    let _e296 = streak;
-    if (_e296 > 0f) {
-        let _e298 = (*at_3);
-        param_109 = _e298;
-        param_110 = 3i;
-        let _e299 = rvi1i1_((&param_109), (&param_110));
-        vel = _e299;
-        let _e300 = vel;
-        speed = length(_e300);
-        let _e302 = speed;
-        let _e303 = streak;
-        trail = min(4i, i32((_e302 * _e303)));
-        let _e307 = trail;
-        if (_e307 > 0i) {
-            let _e309 = vel;
-            param_111 = 6i;
-            let _e310 = pfi1_((&param_111));
-            let _e312 = speed;
-            back = (_e309 * (-(_e310) / _e312));
-            s = 1i;
-            loop {
-                let _e315 = s;
-                let _e316 = trail;
-                if (_e315 <= _e316) {
-                    let _e318 = pos;
-                    let _e319 = back;
-                    let _e320 = s;
-                    param_112 = (_e318 + (_e319 * f32(_e320)));
-                    let _e324 = toCellvf3_((&param_112));
-                    let _e325 = base;
-                    let _e326 = s;
-                    let _e331 = rgb_2;
-                    param_113 = _e331;
-                    param_114 = (_e325 * (1f - (0.12f * f32(_e326))));
-                    let _e332 = scaleRgbi1f1_((&param_113), (&param_114));
-                    param_115 = _e324;
-                    param_116 = _e332;
-                    putVoxelvi3i1_((&param_115), (&param_116));
-                    continue;
-                } else {
-                    break;
-                }
-                continuing {
-                    let _e333 = s;
-                    s = (_e333 + 1i);
-                }
+    let _e398 = (*lane);
+    if (_e398 == 0i) {
+        s_2 = 1i;
+        loop {
+            let _e400 = s_2;
+            let _e401 = trail;
+            if (_e400 <= _e401) {
+                let _e403 = s_2;
+                let _e405 = base;
+                let _e406 = s_2;
+                let _e411 = rgb_2;
+                param_113 = _e411;
+                param_114 = (_e405 * (1f - (0.12f * f32(_e406))));
+                let _e412 = scaleRgbi1f1_((&param_113), (&param_114));
+                let _e414 = trailCells[(_e403 - 1i)];
+                param_115 = _e414;
+                param_116 = _e412;
+                putVoxelvi3i1_((&param_115), (&param_116));
+                continue;
+            } else {
+                break;
+            }
+            continuing {
+                let _e415 = s_2;
+                s_2 = (_e415 + 1i);
             }
         }
     }
@@ -895,53 +980,61 @@ fn flyingi1_(at_3: ptr<function, i32>) {
 }
 
 fn particleAti1_(i_3: ptr<function, i32>) -> i32 {
-    let _e87 = pc.base;
-    let _e89 = (*i_3);
-    return ((_e87 + 279296i) + (_e89 * 16i));
+    let _e90 = pc.base;
+    let _e92 = (*i_3);
+    return ((_e90 + 279296i) + (_e92 * 16i));
 }
 
 fn main_1() {
     var i_4: i32;
+    var lane_1: i32;
     var param_117: i32;
     var at_4: i32;
     var param_118: i32;
     var state: i32;
     var param_119: i32;
     var param_120: i32;
+    var param_121: i32;
 
-    let _e93 = gl_GlobalInvocationID_1[0u];
-    i_4 = bitcast<i32>(_e93);
-    let _e95 = i_4;
+    let _e98 = gl_WorkGroupID_1[0u];
+    i_4 = bitcast<i32>(_e98);
+    let _e101 = gl_LocalInvocationID_1[0u];
+    lane_1 = bitcast<i32>(_e101);
+    let _e103 = i_4;
     param_117 = 39i;
-    let _e96 = pii1_((&param_117));
-    if (_e95 >= min(_e96, 1024i)) {
+    let _e104 = pii1_((&param_117));
+    if (_e103 >= min(_e104, 1024i)) {
         return;
     }
-    let _e99 = i_4;
-    param_118 = _e99;
-    let _e100 = particleAti1_((&param_118));
-    at_4 = _e100;
-    let _e101 = at_4;
-    let _e105 = unnamed.words[(_e101 + 9i)];
-    state = _e105;
-    let _e106 = state;
-    if (_e106 == 1i) {
-        let _e108 = at_4;
-        param_119 = _e108;
-        flyingi1_((&param_119));
+    let _e107 = i_4;
+    param_118 = _e107;
+    let _e108 = particleAti1_((&param_118));
+    at_4 = _e108;
+    let _e109 = at_4;
+    let _e113 = unnamed.words[(_e109 + 9i)];
+    state = _e113;
+    let _e114 = state;
+    if (_e114 == 1i) {
+        let _e116 = at_4;
+        param_119 = _e116;
+        let _e117 = lane_1;
+        param_120 = _e117;
+        flyingi1i1_((&param_119), (&param_120));
     } else {
-        let _e109 = state;
-        if (_e109 == 2i) {
-            let _e111 = at_4;
-            param_120 = _e111;
-            staini1_((&param_120));
+        let _e118 = state;
+        let _e120 = lane_1;
+        if ((_e118 == 2i) && (_e120 == 0i)) {
+            let _e123 = at_4;
+            param_121 = _e123;
+            staini1_((&param_121));
         }
     }
     return;
 }
 
 @compute @workgroup_size(64, 1, 1)
-fn main(@builtin(global_invocation_id) gl_GlobalInvocationID: vec3<u32>) {
-    gl_GlobalInvocationID_1 = gl_GlobalInvocationID;
+fn main(@builtin(workgroup_id) gl_WorkGroupID: vec3<u32>, @builtin(local_invocation_id) gl_LocalInvocationID: vec3<u32>) {
+    gl_WorkGroupID_1 = gl_WorkGroupID;
+    gl_LocalInvocationID_1 = gl_LocalInvocationID;
     main_1();
 }
