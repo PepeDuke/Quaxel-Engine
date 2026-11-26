@@ -165,6 +165,7 @@ QuaxelWorld
     -int [] UploadRevisions
     -int [] VolumeHandles
     -bool [] VolumeDirty
+    -bool [] VolumeHeld
     -int [] MeshVolumes
     -QuaxelVoxelAnimation [] Animations
     -QuaxelAnimationCall [] AnimationCalls
@@ -384,7 +385,17 @@ QuaxelWorld
         UploadRevisions += 0
         VolumeHandles += -1
         VolumeDirty += true
+        VolumeHeld += false
         return index
+    }
+
+    // While held, a volume's edits wait to reach the GPU, which keeps drawing
+    // its previous contents. A volume rebuilt over several steps is held so a
+    // half-written one is never drawn; releasing it uploads the result once.
+    HoldVolume(int index, bool held)
+    {
+        if index < 0 || index >= Volumes.Len { return }
+        VolumeHeld[index] = held
     }
 
     // Empties a volume so its slot can be reused. Volumes are never released.
@@ -427,7 +438,7 @@ QuaxelWorld
         return Volumes[index].GetVoxel(x, y, z)
     }
 
-    bool NeedsVolumeUpload(int index) { return VolumeDirty[index] }
+    bool NeedsVolumeUpload(int index) { return VolumeDirty[index] && !VolumeHeld[index] }
 
     bool AttachVoxels(int id, int volume)
     {
@@ -743,6 +754,7 @@ QuaxelWorld
         UploadRevisions.Clear()
         VolumeHandles.Clear()
         VolumeDirty.Clear()
+        VolumeHeld.Clear()
         Animations.Clear()
         Effects.Clear()
         EffectPages = 0
@@ -1063,6 +1075,9 @@ QuaxelGameInstance
     // A .ico file for the window's title bar and taskbar button, relative to
     // the working directory. Empty keeps the system's default icon.
     string WindowIcon() { return "" }
+    // True for a game that must keep drawing while its window is minimized,
+    // such as a benchmark: the engine restores the window instead of waiting.
+    bool KeepsWindowRestored() { return false }
 
     // Steps to simulate when no window is available, as there is nothing to close.
     int HeadlessSteps() { return 3 }

@@ -45,10 +45,20 @@ VkLightScene
     int [6228] Words // Followed after the fixed caster array by the sun window, masks and heights.
 }
 
+// Push constants for one batch of UI elements.
 VkUiParams
 {
     int Width
     int Height
+    int First
+    int Count
+    int Tiles
+    int Bgra
+}
+
+// One queued UI element, laid out as Ui.comp's Element (48 bytes).
+VkUiElement
+{
     int X
     int Y
     int RectWidth
@@ -57,7 +67,10 @@ VkUiParams
     uint GlyphFirst
     uint GlyphLast
     int Cell
-    int Bgra
+    int FirstTile
+    int TilesX
+    int Pad0
+    int Pad1
 }
 
 QuaxelVulkan
@@ -72,6 +85,12 @@ QuaxelVulkan
     -long UiPipeline
     -bool UiBound
     -VkStorage UiAtlas
+    // UI elements queue here during a frame and reach the GPU in batches at its end.
+    -VkStorage UiElements
+    -void* UiMapped
+    -int UiCount
+    -VkUiElement [16384] UiQueue
+    #int MaxUiElements = 16384
     -long CasterLayout
     -long CasterPool
     -long CasterSet
@@ -190,14 +209,21 @@ QuaxelVulkan
     {
         VkPushConstantRange params
         params.stageFlags = 32
-        params.vkSize = 44
+        params.vkSize = 24
         // One empty texel keeps the atlas set valid until a game uploads its own.
         VkStorage placeholder
         if !CreateStorage(4, 0, 6, placeholder) { return false }
         UiAtlas = placeholder
-        long [2] sets = {StorageLayout, StorageLayout}
+        // Host visible and mapped for the renderer's lifetime. One frame is in
+        // flight, so the previous frame is done with it before it is rewritten.
+        VkStorage elements
+        long elementBytes = (long)MaxUiElements * 48
+        if !CreateStorage(elementBytes, 0, 6, elements) { return false }
+        UiElements = elements
+        if Vk.MapMemory(Device, UiElements.Memory, 0, elementBytes, 0, &UiMapped) != 0 { return false }
+        long [3] sets = {StorageLayout, StorageLayout, StorageLayout}
         VkPipelineLayoutCreateInfo layout
-        layout.setLayoutCount = 2
+        layout.setLayoutCount = 3
         layout.pSetLayouts = &sets[0]
         layout.pushConstantRangeCount = 1
         layout.pPushConstantRanges = &params
@@ -259,6 +285,11 @@ QuaxelVulkan
         VkStorage atlas = UiAtlas
         ReleaseStorage(atlas)
         UiAtlas = atlas
+        VkStorage elements = UiElements
+        ReleaseStorage(elements) // Freeing the memory also unmaps it.
+        UiElements = elements
+        UiMapped = null
+        UiCount = 0
         Vk.DestroyPipeline(Device, UiPipeline, null)
         Vk.DestroyPipelineLayout(Device, UiLayout, null)
         UiPipeline = 0
@@ -368,6 +399,7 @@ QuaxelVulkan
         Vk.CmdFillBuffer(Command, Output.Buffer, bytes, bytes, 0x3f800000) // far depth = 1
         MemoryBarrier(0x1000, 0x1000, 0x800, 0x60) // transfer write -> compute read/write
         UiBound = false
+        UiCount = 0
         EffectBound = false
         LightBound = false
         LightCount = 0
@@ -622,28 +654,104 @@ QuaxelVulkan
         if !ComputeFrame { return false }
         if width <= 0 || height <= 0 || x >= Extent.width || y >= Extent.height { return true }
         if (long)x + width <= 0 || (long)y + height <= 0 { return true }
-        if !UiBound {
-            UiBound = true
-            Vk.CmdBindPipeline(Command, 1, UiPipeline)
-            Vk.CmdBindDescriptorSets(Command, 1, UiLayout, 0, 1, &Output.Descriptor, 0, null)
-            Vk.CmdBindDescriptorSets(Command, 1, UiLayout, 1, 1, &UiAtlas.Descriptor, 0, null)
-        }
+        // A full queue drops further elements rather than failing the frame.
+        if UiCount == MaxUiElements { return true }
+        VkUiElement element
+        element.X = x
+        element.Y = y
+        element.RectWidth = width
+        element.RectHeight = height
+        element.Color = color
+        element.GlyphFirst = glyphFirst
+        element.GlyphLast = glyphLast
+        element.Cell = cell
+        element.TilesX = (width + 7) / 8
+        UiQueue[UiCount] = element
+        UiCount++
+        return true
+    }
+
+    // Whether elements a and b share a pixel on screen.
+    -bool UiOverlap(int a, int b)
+    {
+        int left = Math.Max(Math.Max(UiQueue[a].X, UiQueue[b].X), 0)
+        int top = Math.Max(Math.Max(UiQueue[a].Y, UiQueue[b].Y), 0)
+        int right = Math.Min(Math.Min(UiQueue[a].X + UiQueue[a].RectWidth, UiQueue[b].X + UiQueue[b].RectWidth), Extent.width)
+        int bottom = Math.Min(Math.Min(UiQueue[a].Y + UiQueue[a].RectHeight, UiQueue[b].Y + UiQueue[b].RectHeight), Extent.height)
+        return left < right && top < bottom
+    }
+
+    -DispatchUi(VkUiParams& params)
+    {
+        if params.Count == 0 { return }
+        int x = Math.Min(params.Tiles, 32768)
+        Vk.CmdPushConstants(Command, UiLayout, 32, 0, 24, &params)
+        Vk.CmdDispatch(Command, x, (params.Tiles + x - 1) / x, 1)
+        MemoryBarrier(0x800, 0x40, 0x800, 0x60) // the next batch blends over this one
+    }
+
+    // Draws the queued elements in order. Consecutive elements share a dispatch
+    // until one overlaps an element already in the batch, since only overlapping
+    // pixels depend on blending order. A batch holds at most 256 elements so the
+    // overlap search stays cheap for long runs of text.
+    -FlushUi()
+    {
+        if UiCount == 0 { return }
+        UiBound = true
+        EffectBound = false
+        LightBound = false
+        Vk.CmdBindPipeline(Command, 1, UiPipeline)
+        long [3] sets = {Output.Descriptor, UiAtlas.Descriptor, UiElements.Descriptor}
+        Vk.CmdBindDescriptorSets(Command, 1, UiLayout, 0, 3, &sets[0], 0, null)
+        MemoryBarrier(0x800, 0x40, 0x800, 0x60) // UI blends over whatever was traced or lit
         VkUiParams params
         params.Width = Extent.width
         params.Height = Extent.height
-        params.X = x
-        params.Y = y
-        params.RectWidth = width
-        params.RectHeight = height
-        params.Color = color
-        params.GlyphFirst = glyphFirst
-        params.GlyphLast = glyphLast
-        params.Cell = cell
         params.Bgra = Format == 50 || Format == 44 ? 1 | 0
-        Vk.CmdPushConstants(Command, UiLayout, 32, 0, 44, &params)
-        Vk.CmdDispatch(Command, (width + 7) / 8, (height + 7) / 8, 1)
-        MemoryBarrier(0x800, 0x40, 0x800, 0x60) // the next element blends over this one
-        return true
+        // Bounding box of the current batch, to skip the per-element search.
+        int boxLeft = 0
+        int boxTop = 0
+        int boxRight = 0
+        int boxBottom = 0
+        for i : 0; i < UiCount; i++ {
+            bool split = params.Count == 256
+            int left = UiQueue[i].X
+            int top = UiQueue[i].Y
+            int right = left + UiQueue[i].RectWidth
+            int bottom = top + UiQueue[i].RectHeight
+            if !split && params.Count > 0 && left < boxRight && boxLeft < right && top < boxBottom && boxTop < bottom {
+                for j : params.First; j < i; j++ {
+                    if UiOverlap(i, j) {
+                        split = true
+                        break
+                    }
+                }
+            }
+            if split {
+                DispatchUi(params)
+                params.First = i
+                params.Count = 0
+                params.Tiles = 0
+            }
+            if params.Count == 0 {
+                boxLeft = left
+                boxTop = top
+                boxRight = right
+                boxBottom = bottom
+            } else {
+                boxLeft = Math.Min(boxLeft, left)
+                boxTop = Math.Min(boxTop, top)
+                boxRight = Math.Max(boxRight, right)
+                boxBottom = Math.Max(boxBottom, bottom)
+            }
+            UiQueue[i].FirstTile = params.Tiles
+            params.Tiles += UiQueue[i].TilesX * ((UiQueue[i].RectHeight + 7) / 8)
+            params.Count++
+        }
+        DispatchUi(params)
+        // The GPU reads the elements when the frame is submitted, after this copy.
+        memcpy(UiMapped, &UiQueue[0], (long)UiCount * 48)
+        UiCount = 0
     }
 
     -CopyVoxelFrame()

@@ -41,6 +41,7 @@ QuaxelPlatformBackend
     }
     bool ResizeWindow(int width, int height) { return QuaxelBrowser.Resize(width, height) != 0 }
     bool SetWindowIcon(string path) { return QuaxelBrowser.Icon(path) != 0 }
+    bool RestoreWindow() { return false }
     bool IsWindowOpen() { return Opened }
     CloseWindow() { Opened = false }
     bool RequestWindowClose() { Opened = false

@@ -1,46 +1,68 @@
 #version 450
 layout(local_size_x=8,local_size_y=8) in;
+// One dispatch draws a batch of UI elements whose rectangles do not overlap,
+// so their pixels need no ordering. Each workgroup is one 8x8 tile of one element.
 layout(push_constant) uniform Params {
     ivec2 extent;
+    int first; // First element of the batch in the command buffer.
+    int count;
+    int tiles; // Tiles in the batch. Workgroups past it do nothing.
+    int bgra;
+} pc;
+struct Element {
     ivec2 start;
     ivec2 size;
     uint color; // 0xAARRGGBB, display-encoded. For a sprite, its outline color.
     uint glyphFirst;
     uint glyphLast;
     int cell; // Pixels per glyph cell, 0 for a solid rectangle, or -scale for a sprite.
-    int bgra;
-} pc;
+    int firstTile; // Within the batch, ascending.
+    int tilesX;
+    int pad0;
+    int pad1;
+};
 layout(set=0,binding=0,std430) buffer Output { uint frame[]; };
 // 0xAARRGGBB texels. A sprite's glyphFirst is its first texel and glyphLast the atlas width.
 layout(set=1,binding=0,std430) readonly buffer Atlas { uint atlas[]; };
+layout(set=2,binding=0,std430) readonly buffer Elements { Element elements[]; };
 
-bool Opaque(ivec2 texel, ivec2 texels) {
+bool Opaque(Element e, ivec2 texel, ivec2 texels) {
     if (any(lessThan(texel, ivec2(0))) || any(greaterThanEqual(texel, texels))) return false;
-    return (atlas[pc.glyphFirst + uint(texel.y) * pc.glyphLast + uint(texel.x)] >> 24) != 0u;
+    return (atlas[e.glyphFirst + uint(texel.y) * e.glyphLast + uint(texel.x)] >> 24) != 0u;
 }
 
 void main() {
-    ivec2 local = ivec2(gl_GlobalInvocationID.xy);
-    if (any(greaterThanEqual(local, pc.size))) return;
-    ivec2 pixel = pc.start + local;
+    int group = int(gl_WorkGroupID.x + gl_WorkGroupID.y * gl_NumWorkGroups.x);
+    if (group >= pc.tiles) return;
+    // The last element whose first tile is at or before this group.
+    int lo = pc.first, hi = pc.first + pc.count - 1;
+    while (lo < hi) {
+        int mid = (lo + hi + 1) >> 1;
+        if (elements[mid].firstTile <= group) lo = mid; else hi = mid - 1;
+    }
+    Element e = elements[lo];
+    int tile = group - e.firstTile;
+    ivec2 local = ivec2(tile % e.tilesX, tile / e.tilesX) * 8 + ivec2(gl_LocalInvocationID.xy);
+    if (any(greaterThanEqual(local, e.size))) return;
+    ivec2 pixel = e.start + local;
     if (any(lessThan(pixel, ivec2(0))) || any(greaterThanEqual(pixel, pc.extent))) return;
-    if (pc.cell > 0) {
-        ivec2 glyph = local / pc.cell;
-        uint column = glyph.x < 4 ? (pc.glyphFirst >> (8 * glyph.x)) : pc.glyphLast;
+    if (e.cell > 0) {
+        ivec2 glyph = local / e.cell;
+        uint column = glyph.x < 4 ? (e.glyphFirst >> (8 * glyph.x)) : e.glyphLast;
         if (((column >> glyph.y) & 1u) == 0u) return;
     }
     int index = pixel.x + pc.extent.x * pixel.y;
-    uint value = pc.color;
-    if (pc.cell < 0) {
-        ivec2 texel = local / -pc.cell;
-        value = atlas[pc.glyphFirst + uint(texel.y) * pc.glyphLast + uint(texel.x)];
+    uint value = e.color;
+    if (e.cell < 0) {
+        ivec2 texel = local / -e.cell;
+        value = atlas[e.glyphFirst + uint(texel.y) * e.glyphLast + uint(texel.x)];
         if ((value >> 24) == 0u) {
             // A clear texel beside an opaque one in the sprite becomes its outline.
-            if ((pc.color >> 24) == 0u) return;
-            ivec2 texels = pc.size / -pc.cell;
-            if (!Opaque(texel + ivec2(1, 0), texels) && !Opaque(texel - ivec2(1, 0), texels) &&
-                !Opaque(texel + ivec2(0, 1), texels) && !Opaque(texel - ivec2(0, 1), texels)) return;
-            value = pc.color;
+            if ((e.color >> 24) == 0u) return;
+            ivec2 texels = e.size / -e.cell;
+            if (!Opaque(e, texel + ivec2(1, 0), texels) && !Opaque(e, texel - ivec2(1, 0), texels) &&
+                !Opaque(e, texel + ivec2(0, 1), texels) && !Opaque(e, texel - ivec2(0, 1), texels)) return;
+            value = e.color;
         }
     }
     vec4 source = vec4((value >> 16) & 255u, (value >> 8) & 255u, value & 255u, value >> 24) / 255.0;

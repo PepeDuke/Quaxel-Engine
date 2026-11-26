@@ -7,10 +7,16 @@ const Quaxel = {
     requestedHeight: 540,
     renderScale: '1',
 
-    input(index) {
-        const value = this.state[index];
-        if (index === 260 || index === 263) this.state[index] = 0;
-        return value;
+    // Copies held state into the game's memory. Wheel notches and the stall
+    // flag accumulate there until the game reads them.
+    copyInput(heap, at) {
+        const state = this.state;
+        heap.set(state.subarray(0, 260), at);
+        heap[at + 260] += state[260];
+        heap[at + 261] = state[261];
+        heap[at + 262] = state[262];
+        heap[at + 263] |= state[263];
+        state[260] = state[263] = 0;
     },
     resize(w,h) {
         if (w < 1 || h < 1) return 0;
@@ -51,6 +57,17 @@ const Quaxel = {
                 .addEventListener('change', watchPixelRatio, {once:true});
         };
         watchPixelRatio();
+        // The Performance stats checkbox is commented out in shell.html. Without
+        // it only ?profile shows the overlay, and a setting saved by it is ignored.
+        const profile = new URLSearchParams(location.search).has('profile');
+        const stats = document.querySelector('#performance-stats');
+        const statsKey = 'quaxel-settings/' + game + '/performance-stats';
+        if (stats) {
+            stats.checked = profile || localStorage.getItem(statsKey) === '1';
+            stats.addEventListener('change', () => { showStats(); localStorage.setItem(statsKey, stats.checked ? '1' : '0'); });
+        }
+        const showStats = () => this.graphics.profiler?.show(stats ? stats.checked : profile);
+        this.showStats = showStats;
         document.querySelector('#display').addEventListener('focusin', () => this.state.fill(0,0,258));
     },
     bindInput() {
@@ -148,6 +165,7 @@ const Quaxel = {
                 }),
                 this.graphics.initialize(fetchOk,fail)
             ]);
+            this.showStats();
             status.textContent = 'Preparing ' + game + '…';
             window.Module = {
                 arguments: new URLSearchParams(location.search).getAll('arg'),
@@ -181,3 +199,26 @@ const Quaxel = {
         } catch (error) { fail(error); }
     }
 };
+
+// ?uncapped paces frames by the GPU instead of the display refresh, so the
+// stats overlay measures what the renderer can do. Each frame waits for the
+// GPU work submitted two frames before it, as an uncapped native renderer
+// keeps two frames in flight. Frames past the refresh rate are not all shown.
+// A message, unlike setTimeout(0), is not clamped to 4 ms, and still lets
+// input and audio events run between frames.
+if (new URLSearchParams(location.search).has('uncapped')) {
+    const submitted = [];
+    const waiting = [];
+    const channel = new MessageChannel();
+    channel.port1.onmessage = () => waiting.shift()?.(performance.now());
+    window.requestAnimationFrame = callback => {
+        const queue = Quaxel.graphics.device?.queue;
+        if (queue) submitted.push(queue.onSubmittedWorkDone());
+        const previous = submitted.length > 2 ? submitted.shift() : Promise.resolve();
+        previous.then(() => {
+            waiting.push(callback);
+            channel.port2.postMessage(0);
+        });
+        return 0;
+    };
+}

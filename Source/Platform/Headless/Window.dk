@@ -4,6 +4,7 @@ QuaxelPlatformBackend
     bool ResizeWindow(int width, int height) { return false }
     bool RequestWindowClose() { return false }
     bool SetWindowIcon(string path) { return false }
+    bool RestoreWindow() { return false }
     bool IsWindowOpen() { return false }
     bool PumpWindow(bool wait) { return false }
     CloseWindow() {}

@@ -39,5 +39,8 @@ QuaxelPlatform
     // Shows a .ico file on the open window's title bar and taskbar button.
     // False without a window or when the file will not load.
     bool SetWindowIcon(string path) { return QuaxelPlatformBackend.SetWindowIcon(path) }
+    // Brings the window back from minimized. False without a window, when
+    // it was not minimized, or where the platform has no such state.
+    bool RestoreWindow() { return QuaxelPlatformBackend.RestoreWindow() }
     CloseWindow() { QuaxelPlatformBackend.CloseWindow() }
 }

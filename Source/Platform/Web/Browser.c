@@ -5,6 +5,9 @@
 #include <sys/stat.h>
 #include <uchar.h>
 
+// Input lives in wasm memory so polling 256 keys costs no JS calls.
+static int input_state[264];
+
 // Duck strings cross the C ABI as zero-terminated UTF-16.
 EM_JS_DEPS(qx_strings, "$UTF16ToString,$FS");
 EM_JS(int, persist, (int descriptor), {
@@ -25,17 +28,35 @@ EM_JS(int, qx_remove, (const char16_t *path), {
     catch { return -1; }
 });
 
-EM_ASYNC_JS(int, qx_frame, (void), {
+// Events only arrive while the game waits for a frame, so one copy per frame is exact.
+EM_ASYNC_JS(int, qx_wait_frame, (int *state), {
     await new Promise(requestAnimationFrame);
+    Quaxel.copyInput(HEAP32, Number(state) / 4);
     return 1;
 });
-EM_JS(int, qx_window, (const char16_t *title, int w, int h), {
+int qx_frame(void) { return qx_wait_frame(input_state); }
+// Opening and resizing change the size the game reads before its next frame.
+EM_JS(int, qx_open_window, (const char16_t *title, int w, int h, int *state), {
     document.title = UTF16ToString(Number(title));
-    return Quaxel.resize(w,h);
+    const result = Quaxel.resize(w,h);
+    Quaxel.copyInput(HEAP32, Number(state) / 4);
+    return result;
 });
-EM_JS(int, qx_resize, (int w, int h), { return Quaxel.resize(w,h); });
+EM_JS(int, qx_resize_window, (int w, int h, int *state), {
+    const result = Quaxel.resize(w,h);
+    Quaxel.copyInput(HEAP32, Number(state) / 4);
+    return result;
+});
+int qx_window(const char16_t *title, int w, int h) { return qx_open_window(title, w, h, input_state); }
+int qx_resize(int w, int h) { return qx_resize_window(w, h, input_state); }
 EM_JS(int, qx_icon, (const char16_t *path), { return Quaxel.icon(UTF16ToString(Number(path)), FS); });
-EM_JS(int, qx_input, (int index), { return Quaxel.input(index); });
+int qx_input(int index) {
+    if (index < 0 || index >= 264) return 0;
+    int value = input_state[index];
+    // Wheel notches and the stall flag are consumed by reading them.
+    if (index == 260 || index == 263) input_state[index] = 0;
+    return value;
+}
 EM_JS(int, qx_audio, (int action, const short *samples), {
     return Quaxel.audio(action, HEAP16, Number(samples) / 2);
 });

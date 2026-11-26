@@ -74,7 +74,10 @@ QuaxelVulkan
     {
         if !FrameOpen { return Device != 0 }
         FrameOpen = false
-        if ComputeFrame { CopyVoxelFrame() } else { Vk.CmdEndRenderPass(Command) }
+        if ComputeFrame {
+            FlushUi()
+            CopyVoxelFrame()
+        } else { Vk.CmdEndRenderPass(Command) }
         if TimingPool != 0 { Vk.CmdWriteTimestamp(Command, 0x2000, TimingPool, 1) } // BOTTOM_OF_PIPE
         if Vk.EndCommandBuffer(Command) != 0 { return false }
         int colorOutput = ComputeFrame ? 0x1000 | 0x400

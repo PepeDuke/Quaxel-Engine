@@ -151,21 +151,30 @@ QuaxelEngine
         }
         int16 [1600] audio
         bool minimized = false
+        bool restored = false
         QuaxelInputState input
         while QuaxelPlatform.PumpWindow(minimized) {
             int width = 0
             int height = 0
             if !QuaxelPlatform.GetWindowSize(width, height) { break }
             if width == 0 || height == 0 {
+                // A minimized game waits for input. One that must keep drawing,
+                // as a benchmark does, brings its window back instead; the gap
+                // still resets the clock below.
                 minimized = true
+                if game.KeepsWindowRestored() && QuaxelPlatform.RestoreWindow() {
+                    minimized = false
+                    restored = true
+                }
                 continue
             }
             if !QuaxelPlatform.ReadClock(now) {
                 success = false
                 break
             }
-            if QuaxelPlatform.ConsumeWindowStall() || minimized { stepper.Reset(now) }
+            if QuaxelPlatform.ConsumeWindowStall() || minimized || restored { stepper.Reset(now) }
             minimized = false
+            restored = false
 
             SampleInput(input)
             int steps = stepper.Advance(now, MaxStepsPerFrame())

@@ -99,6 +99,8 @@ QuaxelTerrain
 
     // The chunk being generated. Grids are Span * Span, or Core * Core for columns.
     -int BuildPhase
+    // The chunk slot being finished, from ClaimSlot to CommitChunk, else -1.
+    -int BuildSlot = -1
     -int BuildChunkX
     -int BuildChunkZ
     -int BuildRow
@@ -586,6 +588,9 @@ QuaxelTerrain
     // before it returns. False if no layout fits or a world call fails.
     bool Reconfigure(QuaxelWorld& world, QuaxelTerrainConfig config, vec3 focus)
     {
+        // A chunk half finished keeps its slot's volume held; let it go.
+        if BuildSlot >= 0 { world.HoldVolume(Chunks[BuildSlot].Volume, false) }
+        BuildSlot = -1
         for chunk : Chunks {
             for n : 0; n < chunk.PlacementNodes.Len; n++ { world.DestroyNode(chunk.PlacementNodes[n]) }
             chunk.PlacementNodes.Clear()
@@ -670,11 +675,34 @@ QuaxelTerrain
             CoreRow(BuildRow)
             BuildRow++
             budget -= Core
-            if BuildRow == Core { BuildPhase = 3 }
+            if BuildRow == Core {
+                BuildRow = 0
+                BuildPhase = ClaimSlot(world) ? 3 | 0
+                if BuildPhase == 0 { return true }
+            }
         }
-        if BuildPhase == 3 {
+        // Finishing a chunk is spread over steps too, a row of columns at a
+        // time, so it never stalls one frame. The chunk stays invalid and its
+        // volume held until CommitChunk, so nothing sees it half written.
+        while budget > 0 && BuildPhase == 3 {
+            StageRow(BuildRow)
+            BuildRow++
+            budget -= ChunkColumns
+            if BuildRow == ChunkColumns {
+                SweepCeiling()
+                BuildRow = 0
+                BuildPhase = 4
+            }
+        }
+        while budget > 0 && BuildPhase == 4 {
+            if !VoxelRow(world, BuildRow) { return false }
+            BuildRow++
+            budget -= ChunkColumns * VoxelColumnCost
+            if BuildRow == ChunkColumns { BuildPhase = 5 }
+        }
+        if BuildPhase == 5 {
             BuildPhase = 0
-            return FinishChunk(world)
+            return CommitChunk(world)
         }
         return true
     }
@@ -1022,26 +1050,79 @@ QuaxelTerrain
         return -1
     }
 
-    -bool FinishChunk(QuaxelWorld& world)
+    // Picks the slot the built chunk will take, then empties its volume and
+    // holds it back from the GPU while it is rewritten. False if the chunk is
+    // no longer wanted: the player turned back while it was being built.
+    -bool ClaimSlot(QuaxelWorld& world)
     {
-        // The player may have turned back while this chunk was being built.
         int dx = Math.Abs(BuildChunkX - CenterX)
         int dz = Math.Abs(BuildChunkZ - CenterZ)
-        if dx > ResidentRadius || dz > ResidentRadius { return true }
-        int slot = FreeSlot()
-        if slot < 0 { return true }
-        // Full heights and seeds, kept for drawing from another view.
-        for x : 0; x < ChunkColumns; x++ {
-            for z : 0; z < ChunkColumns; z++ {
-                int source = (x + Pad) * Span + z + Pad
-                int target = x * ChunkColumns + z
-                Chunks[slot].Raw[target] = CoreHeight[x * Core + z]
-                Chunks[slot].Seeds[target] = Dist[source] < 0.0 ? FloorGrid[source] + Config.Lip | -1
-                Chunks[slot].Walls[target] = Math.Clamp(1.0 + Dist[source] / 2.0, 0.0, 1.0)
-                Chunks[slot].Glows[target] = GlowAt(BuildStartColumn + Pad + x, BuildStartRow + Pad + z)
+        if dx > ResidentRadius || dz > ResidentRadius { return false }
+        BuildSlot = FreeSlot()
+        if BuildSlot < 0 { return false }
+        // The slot held a chunk out of range. It stops answering queries, and
+        // ViewFrom leaves it alone, until the new one is committed.
+        Chunks[BuildSlot].Valid = false
+        int volume = Chunks[BuildSlot].Volume
+        world.HoldVolume(volume, true)
+        return world.ResetVolume(volume)
+    }
+
+    // Full heights and seeds of one row, kept for drawing from another view.
+    // Before SweepCeiling, which lowers CoreHeight.
+    -StageRow(int x)
+    {
+        for z : 0; z < ChunkColumns; z++ {
+            int source = (x + Pad) * Span + z + Pad
+            int target = x * ChunkColumns + z
+            Chunks[BuildSlot].Raw[target] = CoreHeight[x * Core + z]
+            Chunks[BuildSlot].Seeds[target] = Dist[source] < 0.0 ? FloorGrid[source] + Config.Lip | -1
+            Chunks[BuildSlot].Walls[target] = Math.Clamp(1.0 + Dist[source] / 2.0, 0.0, 1.0)
+            Chunks[BuildSlot].Glows[target] = GlowAt(BuildStartColumn + Pad + x, BuildStartRow + Pad + z)
+        }
+    }
+
+    // The play heights of one row, and the voxels a ray from the camera can
+    // reach: those with an empty top, +X or +Z neighbor.
+    -bool VoxelRow(QuaxelWorld& world, int x)
+    {
+        int volume = Chunks[BuildSlot].Volume
+        int worldX = BuildChunkX * ChunkColumns
+        int worldZ = BuildChunkZ * ChunkColumns
+        for z : 0; z < ChunkColumns; z++ {
+            int index = x * Core + z
+            int target = x * ChunkColumns + z
+            Chunks[BuildSlot].Heights[target] = CoreHeight[index]
+            Chunks[BuildSlot].PlayHeights[target] = CoreHeight[index]
+            Chunks[BuildSlot].Kinds[target] = CoreKind[index]
+            Chunks[BuildSlot].Surfaces[target] = CoreSurface[index]
+            int height = Math.Min(CoreHeight[index], ChunkCells)
+            int low = Math.Max(0, Math.Min(Math.Min(CoreHeight[index + Core], CoreHeight[index + 1]), height - 1))
+            Chunks[BuildSlot].PlayLows[target] = low
+            float glow = Chunks[BuildSlot].Glows[target]
+            QuaxelTerrainCell cell
+            cell.Surface = CoreSurface[index]
+            cell.Column = worldX + x
+            cell.Row = worldZ + z
+            cell.Height = height
+            cell.Wall = Chunks[BuildSlot].Walls[target]
+            for y : low; y < height; y++ {
+                int hash = (worldX + x) * 73856093 ^ y * 19349663 ^ (worldZ + z) * 83492791
+                cell.Hash = (hash ^ (hash >> 13)) & 2147483647
+                cell.Y = y
+                cell.Top = y == height - 1
+                if !world.SetVoxel(volume, x, y, z, Lit(SurfaceColor(cell), glow)) { return false }
             }
         }
-        SweepCeiling()
+        return true
+    }
+
+    // Makes the finished chunk live: it answers queries, moves into place and
+    // reaches the GPU in one step.
+    -bool CommitChunk(QuaxelWorld& world)
+    {
+        int slot = BuildSlot
+        BuildSlot = -1
         for n : 0; n < Chunks[slot].PlacementNodes.Len; n++ { world.DestroyNode(Chunks[slot].PlacementNodes[n]) }
         Chunks[slot].PlacementNodes.Clear()
         Chunks[slot].Valid = true
@@ -1049,17 +1130,7 @@ QuaxelTerrain
         Chunks[slot].X = BuildChunkX
         Chunks[slot].Z = BuildChunkZ
         LastChunk = slot
-        for x : 0; x < ChunkColumns; x++ {
-            for z : 0; z < ChunkColumns; z++ {
-                int source = x * Core + z
-                int target = x * ChunkColumns + z
-                Chunks[slot].Heights[target] = CoreHeight[source]
-                Chunks[slot].PlayHeights[target] = CoreHeight[source]
-                Chunks[slot].Kinds[target] = CoreKind[source]
-                Chunks[slot].Surfaces[target] = CoreSurface[source]
-            }
-        }
-        if !WriteVoxels(world, slot) { return false }
+        world.HoldVolume(Chunks[slot].Volume, false)
         // Built while the camera looks another way: drawn from there instead.
         if !PlayView && !ViewChunks(world, slot) { return false }
         QuaxelTransform transform = world.GetTransform(Chunks[slot].Node)
@@ -1069,39 +1140,6 @@ QuaxelTerrain
             ((float)BuildChunkZ + 0.5) * (float)ChunkColumns * Cell)
         world.SetTransform(Chunks[slot].Node, transform)
         return SpawnPlacements(world, slot)
-    }
-
-    // Writes only cells a ray from the camera can reach: those with an empty
-    // top, +X or +Z neighbor.
-    -bool WriteVoxels(QuaxelWorld& world, int slot)
-    {
-        int volume = Chunks[slot].Volume
-        if !world.ResetVolume(volume) { return false }
-        int worldX = BuildChunkX * ChunkColumns
-        int worldZ = BuildChunkZ * ChunkColumns
-        for x : 0; x < ChunkColumns; x++ {
-            for z : 0; z < ChunkColumns; z++ {
-                int index = x * Core + z
-                int height = Math.Min(CoreHeight[index], ChunkCells)
-                int low = Math.Max(0, Math.Min(Math.Min(CoreHeight[index + Core], CoreHeight[index + 1]), height - 1))
-                Chunks[slot].PlayLows[x * ChunkColumns + z] = low
-                float glow = GlowAt(BuildStartColumn + Pad + x, BuildStartRow + Pad + z)
-                QuaxelTerrainCell cell
-                cell.Surface = CoreSurface[index]
-                cell.Column = worldX + x
-                cell.Row = worldZ + z
-                cell.Height = height
-                cell.Wall = Math.Clamp(1.0 + Dist[(x + Pad) * Span + z + Pad] / 2.0, 0.0, 1.0)
-                for y : low; y < height; y++ {
-                    int hash = (worldX + x) * 73856093 ^ y * 19349663 ^ (worldZ + z) * 83492791
-                    cell.Hash = (hash ^ (hash >> 13)) & 2147483647
-                    cell.Y = y
-                    cell.Top = y == height - 1
-                    if !world.SetVoxel(volume, x, y, z, Lit(SurfaceColor(cell), glow)) { return false }
-                }
-            }
-        }
-        return true
     }
 
     // Draws the terrain from the point of view of a camera looking along
@@ -1531,6 +1569,8 @@ QuaxelTerrain
     #int Pad = 80
     #int Span = 209
     #int Core = 129
+    // Writing a column's voxels costs about this many field columns of budget.
+    #int VoxelColumnCost = 3
     #int ResidentRadius = 2
     #int ResidentChunks = 25
     // How far from what a camera looks at the terrain is drawn for its view,

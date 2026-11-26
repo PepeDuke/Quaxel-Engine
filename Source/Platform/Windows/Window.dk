@@ -42,6 +42,7 @@ QuaxelWindowsNative
     extern "C" void* CreateWindowExW(uint exStyle, string className, string title, uint style,
         int x, int y, int width, int height, void* parent, void* menu, void* instance, void* data)
     extern "C" int ShowWindow(void* window, int command)
+    extern "C" int IsIconic(void* window)
     extern "C" int DestroyWindow(void* window)
     extern "C" long DefWindowProcW(void* window, uint message, uint64 wParam, long lParam)
     extern "C" int AdjustWindowRect(QuaxelWinRect* bounds, uint style, int hasMenu)
@@ -290,7 +291,22 @@ QuaxelPlatformBackend
             CloseWindow()
             return false
         }
-        if visible { QuaxelWindowsNative.ShowWindow(Window, 5) }
+        if visible {
+            // The first ShowWindow of a process takes the launcher's show mode
+            // instead, so a shortcut or script set to minimized hides the game.
+            // A game opens restored, ready to draw.
+            QuaxelWindowsNative.ShowWindow(Window, 5) // SW_SHOW
+            RestoreWindow()
+        }
+        return true
+    }
+
+    // Brings a minimized window back to its size. False when there is no
+    // window or it was not minimized.
+    bool RestoreWindow()
+    {
+        if Window == null || QuaxelWindowsNative.IsIconic(Window) == 0 { return false }
+        QuaxelWindowsNative.ShowWindow(Window, 9) // SW_RESTORE
         return true
     }
 

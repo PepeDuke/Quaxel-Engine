@@ -1,3 +1,10 @@
+// Writes the column-major product a*b into out at offset at.
+function multiplyInto(out,at,a,b) {
+    for(let col=0;col<4;col++) for(let row=0;row<4;row++) {
+        out[at+4*col+row]=a[row]*b[4*col]+a[4+row]*b[4*col+1]+a[8+row]*b[4*col+2]+a[12+row]*b[4*col+3];
+    }
+}
+
 // Build draws in WebGPU's top-left framebuffer coordinates.
 function sunShadow(casters,world,sun,size) {
     const toward=[-sun[0],-sun[1],-sun[2]];
@@ -47,15 +54,10 @@ function sunShadow(casters,world,sun,size) {
         lightFromWorld[4*i+2]=z[i]/depth;
     }
     lightFromWorld.set([0.5-coords[0]/(2*radius),0.5-coords[1]/(2*radius),-near/depth,1],12);
-    const items=[];
+    const items=[],viewport=[0,0,size,size];
     for (const {caster,rect} of draws) {
-        const matrix=new Float32Array(16);
-        for(let col=0;col<4;col++) for(let row=0;row<4;row++) {
-            let value=0;
-            for(let k=0;k<4;k++) value+=caster.matrix[4*k+row]*worldFromLight[4*col+k];
-            matrix[4*col+row]=value;
-        }
-        items.push({handle:caster.handle,matrix,rect,viewport:[0,0,size,size],mode:1});
+        // boxFromLight = boxFromWorld * worldFromLight, formed in the uniform page.
+        items.push({handle:caster.handle,matrix:worldFromLight,lightFromBox:caster.matrix,rect,viewport,mode:1});
     }
     return {items,lightFromWorld,bias:Math.max(0.015,units*0.6)/depth};
 }
