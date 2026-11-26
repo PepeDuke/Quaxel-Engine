@@ -1,14 +1,92 @@
+// GPU timestamps for the benchmark. Each frame slot owns MaxGpuMarks
+// queries of the pool. Mark 0 is written at the top of the frame; every later mark closes the section named by its id, which covers
+// the GPU time since the previous mark. Sections that a frame skips get no
+// mark, so their time falls into the next section that is marked.
 QuaxelVulkan
 #{
+    #int GpuSectionCount = 10
+    #int GpuSectionLighting = 4 // first of the sections MeanLightingMs sums
+    #int MaxGpuMarks = 16
     -int TimestampBits
     -float TimestampPeriod
     -long TimingPool
-    -bool TimingPending
-    -bool LightingTimed
-    -double LightingTotal
-    -int LightingSamples
-    double MeanLightingMs() { return LightingSamples > 0 ? LightingTotal / (double)LightingSamples | 0.0 }
+    -bool [2] TimingPending
+    -bool TraceMarked
+    -int MarkCount // Marks written so far in the frame being recorded.
+    -int [2] SlotMarks // Marks the slot's last submitted frame wrote.
+    -int [32] MarkSections // MaxGpuMarks per frame slot.
+    -double [10] SectionTotals
+    -int TimedFrames
     -double [] GpuTimes
+
+    name GpuSectionName(int section)
+    {
+        Switch (section)
+        {
+            case 0:
+                return "Clear"
+            case 1:
+                return "Effects"
+            case 2:
+                return "Volume trace"
+            case 3:
+                return "Light setup"
+            case 4:
+                return "Sun chunks"
+            case 5:
+                return "Shadow wedges"
+            case 6:
+                return "GI probes"
+            case 7:
+                return "Light dispatch"
+            case 8:
+                return "UI"
+            default:
+                return "Copy and present"
+        }
+    }
+
+    double MeanGpuSectionMs(int section)
+    {
+        if TimedFrames == 0 || section < 0 || section >= GpuSectionCount { return 0.0 }
+        return SectionTotals[section] / (double)TimedFrames
+    }
+
+    // Sun chunks through the light dispatch, the old lighting-pass span.
+    double MeanLightingMs()
+    {
+        double total = 0.0
+        for s : GpuSectionLighting; s <= 7; s++ { total += MeanGpuSectionMs(s) }
+        return total
+    }
+
+    -BeginGpuMarks()
+    {
+        TraceMarked = false
+        MarkCount = 0
+        if TimingPool == 0 { return }
+        Vk.CmdResetQueryPool(Command, TimingPool, FrameSlot * MaxGpuMarks, MaxGpuMarks)
+        Vk.CmdWriteTimestamp(Command, 1, TimingPool, FrameSlot * MaxGpuMarks) // TOP_OF_PIPE
+        MarkCount = 1
+    }
+
+    // BOTTOM_OF_PIPE: written once every earlier command has finished.
+    -GpuMark(int section)
+    {
+        if TimingPool == 0 || MarkCount == 0 || MarkCount >= MaxGpuMarks { return }
+        int query = FrameSlot * MaxGpuMarks + MarkCount
+        Vk.CmdWriteTimestamp(Command, 0x2000, TimingPool, query)
+        MarkSections[query] = section
+        MarkCount++
+    }
+
+    // Effects run before the first trace; the first trace closes them.
+    -MarkTraceStart()
+    {
+        if TraceMarked { return }
+        TraceMarked = true
+        GpuMark(1)
+    }
 
     bool StartGpuTiming()
     {
@@ -17,25 +95,29 @@ QuaxelVulkan
         Vk.GetPhysicalDeviceProperties(Physical, &properties)
         TimestampPeriod = properties.timestampPeriod
         VkQueryPoolCreateInfo info
-        info.queryCount = 4
-        LightingTotal = 0.0
-        LightingSamples = 0
+        info.queryCount = MaxGpuMarks * FramesInFlight
+        for s : 0; s < GpuSectionCount; s++ { SectionTotals[s] = 0.0 }
+        TimedFrames = 0
+        MarkCount = 0
         GpuTimes.Clear()
         return Vk.CreateQueryPool(Device, &info, null, &TimingPool) == 0
     }
 
-    // Called after the ordinary frame fence. Only the last sample needs a drain.
-    -bool CollectGpuTime()
+    // Called once the slot's fence has signaled. Slots are collected in the
+    // order their frames were submitted.
+    -bool CollectGpuTime(int slot)
     {
-        long [4] ticks
-        int count = LightingTimed ? 4 | 2
-        if Vk.GetQueryPoolResults(Device, TimingPool, 0, count, 32, &ticks[0], 8, 1) != 0 { return false }
-        GpuTimes += TimestampMs(ticks[1] - ticks[0])
-        if LightingTimed {
-            LightingTotal += TimestampMs(ticks[3] - ticks[2])
-            LightingSamples++
+        TimingPending[slot] = false
+        int count = SlotMarks[slot]
+        if count < 2 { return true }
+        long [16] ticks
+        int first = slot * MaxGpuMarks
+        if Vk.GetQueryPoolResults(Device, TimingPool, first, count, 128, &ticks[0], 8, 1) != 0 { return false }
+        for i : 1; i < count; i++ {
+            SectionTotals[MarkSections[first + i]] += TimestampMs(ticks[i] - ticks[i - 1])
         }
-        TimingPending = false
+        GpuTimes += TimestampMs(ticks[count - 1] - ticks[0])
+        TimedFrames++
         return true
     }
 
@@ -48,12 +130,16 @@ QuaxelVulkan
     bool FinishGpuTiming(double []& samples)
     {
         if TimingPool == 0 || FrameOpen { return false }
-        if TimingPending {
-            if Vk.WaitForFences(Device, 1, &FrameFence, 1, -1) != 0 || !CollectGpuTime() { return false }
+        if !WaitAllFrames() { return false }
+        // The current slot holds the newest frame, so the other one goes first.
+        for k : 1; k <= FramesInFlight; k++ {
+            int slot = (FrameSlot + k) % FramesInFlight
+            if TimingPending[slot] && !CollectGpuTime(slot) { return false }
         }
         for ms : GpuTimes { samples += ms }
         Vk.DestroyQueryPool(Device, TimingPool, null)
         TimingPool = 0
+        MarkCount = 0
         return true
     }
 }

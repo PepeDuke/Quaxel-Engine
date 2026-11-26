@@ -57,6 +57,17 @@ VkUiParams
 }
 
 // One queued UI element, laid out as Ui.comp's Element (48 bytes).
+// One mapped UI element buffer per frame in flight. Duck arrays cannot
+// hold pointers yet, so each slot's mapping has its own field.
+VkUiBuffers
+{
+    VkStorage [2] Items
+    void* Mapped0
+    void* Mapped1
+
+    void* Mapped(int slot) { return slot == 0 ? Mapped0 | Mapped1 }
+}
+
 VkUiElement
 {
     int X
@@ -85,15 +96,18 @@ QuaxelVulkan
     -long UiPipeline
     -bool UiBound
     -VkStorage UiAtlas
-    // UI elements queue here during a frame and reach the GPU in batches at its end.
+    // UI elements queue here during a frame and reach the GPU in batches at
+    // its end. UiElements and UiMapped are the current frame slot's buffer.
     -VkStorage UiElements
     -void* UiMapped
+    -VkUiBuffers UiElementSlots
     -int UiCount
     -VkUiElement [16384] UiQueue
     #int MaxUiElements = 16384
     -long CasterLayout
     -long CasterPool
     -long CasterSet
+    -long [2] CasterSets // Rewritten each frame, so one per frame in flight.
     -long LightLayout
     -long LightPipeline
     -long SunPipeline
@@ -156,14 +170,18 @@ QuaxelVulkan
         descriptor.pBindings = &binding
         if Vk.CreateDescriptorSetLayout(Device, &descriptor, null, &CasterLayout) != 0 { return false }
         VkDescriptorPoolSize size
-        size.descriptorCount = MaxCasters
+        size.descriptorCount = MaxCasters * FramesInFlight
         VkDescriptorPoolCreateInfo pool
+        pool.maxSets = FramesInFlight
         pool.pPoolSizes = &size
         if Vk.CreateDescriptorPool(Device, &pool, null, &CasterPool) != 0 { return false }
-        VkDescriptorSetAllocateInfo setInfo
-        setInfo.descriptorPool = CasterPool
-        setInfo.pSetLayouts = &CasterLayout
-        if Vk.AllocateDescriptorSets(Device, &setInfo, &CasterSet) != 0 { return false }
+        for slot : 0; slot < FramesInFlight; slot++ {
+            VkDescriptorSetAllocateInfo setInfo
+            setInfo.descriptorPool = CasterPool
+            setInfo.pSetLayouts = &CasterLayout
+            if Vk.AllocateDescriptorSets(Device, &setInfo, &CasterSets[slot]) != 0 { return false }
+        }
+        CasterSet = CasterSets[FrameSlot]
         // TRANSFER_DST, device local: rewritten by CmdUpdateBuffer each frame.
         VkStorage scene
         if !CreateStorage((long)Scene.Words.Len * 4, 2, 1, scene) { return false }
@@ -214,13 +232,19 @@ QuaxelVulkan
         VkStorage placeholder
         if !CreateStorage(4, 0, 6, placeholder) { return false }
         UiAtlas = placeholder
-        // Host visible and mapped for the renderer's lifetime. One frame is in
-        // flight, so the previous frame is done with it before it is rewritten.
-        VkStorage elements
+        // Host visible and mapped for the renderer's lifetime, one per frame
+        // in flight, so a slot's buffer is idle again when the slot is reused.
         long elementBytes = (long)MaxUiElements * 48
-        if !CreateStorage(elementBytes, 0, 6, elements) { return false }
-        UiElements = elements
-        if Vk.MapMemory(Device, UiElements.Memory, 0, elementBytes, 0, &UiMapped) != 0 { return false }
+        for slot : 0; slot < FramesInFlight; slot++ {
+            VkStorage elements
+            if !CreateStorage(elementBytes, 0, 6, elements) { return false }
+            UiElementSlots.Items[slot] = elements
+            void* mapped = null
+            if Vk.MapMemory(Device, elements.Memory, 0, elementBytes, 0, &mapped) != 0 { return false }
+            if slot == 0 { UiElementSlots.Mapped0 = mapped } else { UiElementSlots.Mapped1 = mapped }
+        }
+        UiElements = UiElementSlots.Items[FrameSlot]
+        UiMapped = UiElementSlots.Mapped(FrameSlot)
         long [3] sets = {StorageLayout, StorageLayout, StorageLayout}
         VkPipelineLayoutCreateInfo layout
         layout.setLayoutCount = 3
@@ -274,6 +298,7 @@ QuaxelVulkan
         LightLayout = 0
         CasterPool = 0
         CasterSet = 0
+        for slot : 0; slot < FramesInFlight; slot++ { CasterSets[slot] = 0 }
         CasterLayout = 0
         LightCount = 0
         CasterCount = 0
@@ -285,9 +310,15 @@ QuaxelVulkan
         VkStorage atlas = UiAtlas
         ReleaseStorage(atlas)
         UiAtlas = atlas
-        VkStorage elements = UiElements
-        ReleaseStorage(elements) // Freeing the memory also unmaps it.
-        UiElements = elements
+        for slot : 0; slot < FramesInFlight; slot++ {
+            VkStorage elements = UiElementSlots.Items[slot]
+            ReleaseStorage(elements) // Freeing the memory also unmaps it.
+            UiElementSlots.Items[slot] = elements
+        }
+        UiElementSlots.Mapped0 = null
+        UiElementSlots.Mapped1 = null
+        VkStorage none
+        UiElements = none
         UiMapped = null
         UiCount = 0
         Vk.DestroyPipeline(Device, UiPipeline, null)
@@ -334,12 +365,11 @@ QuaxelVulkan
         return true
     }
 
-    // Called before recording a frame. Replace a published buffer only after
-    // the previous frame has finished using its descriptor and storage.
+    // Called before recording a frame. A replaced buffer is retired and freed
+    // once the frames in flight that may read it have finished.
     int MapVolume(int previous, int words, void*& mapped)
     {
         if Device == 0 || previous < -1 || previous >= Volumes.Count { return -1 }
-        if previous >= 0 && Vk.WaitForFences(Device, 1, &FrameFence, 1, -1) != 0 { return -1 }
         if previous < 0 && Volumes.Count >= 4096 { return -1 }
         VkStorage storage
         long bytes = (long)words * 4
@@ -353,7 +383,7 @@ QuaxelVulkan
             return (int)Volumes.Count - 1
         }
         VkStorage old = Volumes.Items[previous]
-        ReleaseStorage(old)
+        RetireStorage(old)
         Volumes.Items[previous] = storage
         return previous
     }
@@ -364,11 +394,11 @@ QuaxelVulkan
         VolumeRevision[handle]++
     }
 
-    // Called before recording a frame. Replaces the atlas once the previous
-    // frame has finished reading it.
+    // Called before recording a frame. The old atlas is retired until the
+    // frames in flight that read it have finished.
     bool MapUiAtlas(int words, void*& mapped)
     {
-        if Device == 0 || Vk.WaitForFences(Device, 1, &FrameFence, 1, -1) != 0 { return false }
+        if Device == 0 { return false }
         VkStorage storage
         long bytes = (long)words * 4
         if !CreateStorage(bytes, 0, 6, storage) || Vk.MapMemory(Device, storage.Memory, 0, bytes, 0, &mapped) != 0 {
@@ -376,7 +406,7 @@ QuaxelVulkan
             return false
         }
         VkStorage old = UiAtlas
-        ReleaseStorage(old)
+        RetireStorage(old)
         UiAtlas = storage
         return true
     }
@@ -400,6 +430,9 @@ QuaxelVulkan
         MemoryBarrier(0x1000, 0x1000, 0x800, 0x60) // transfer write -> compute read/write
         UiBound = false
         UiCount = 0
+        TraceBatchCount = 0
+        PendingSimCount = 0
+        PendingDrawCount = 0
         EffectBound = false
         LightBound = false
         LightCount = 0
@@ -420,6 +453,8 @@ QuaxelVulkan
     // Traces one volume that starts at word `base` of the buffer behind descriptor.
     -bool Trace(long descriptor, int base, void* matrix, float left, float top, float right, float bottom, void* axes)
     {
+        FlushEffects()
+        MarkTraceStart()
         VkVoxelParams params
         memcpy(&params.Matrix[0], matrix, 64)
         params.Width = Extent.width
@@ -437,11 +472,38 @@ QuaxelVulkan
             Vk.CmdBindPipeline(Command, 1, ComputePipeline)
             Vk.CmdBindDescriptorSets(Command, 1, ComputeLayout, 0, 1, &Output.Descriptor, 0, null)
         }
+        // A later volume compares against the depth an overlapping one wrote,
+        // so only an overlap needs the barrier. Volumes with disjoint pixel
+        // rectangles write disjoint pixels and can run together.
+        int groupsX = (endX - params.StartX + 7) / 8
+        int groupsY = (endY - params.StartY + 7) / 8
+        int [4] rect = {params.StartX, params.StartY, params.StartX + 8 * groupsX, params.StartY + 8 * groupsY}
+        bool overlap = TraceBatchCount == MaxTraceBatch
+        for i : 0; i < TraceBatchCount && !overlap; i++ {
+            int b = 4 * i
+            overlap = rect[0] < TraceBatch[b + 2] && TraceBatch[b] < rect[2] && rect[1] < TraceBatch[b + 3] && TraceBatch[b + 1] < rect[3]
+        }
+        if overlap { FlushTraceBatch() }
+        for k : 0; k < 4; k++ { TraceBatch[4 * TraceBatchCount + k] = rect[k] }
+        TraceBatchCount++
         Vk.CmdBindDescriptorSets(Command, 1, ComputeLayout, 1, 1, &descriptor, 0, null)
         Vk.CmdPushConstants(Command, ComputeLayout, 32, 0, 120, &params)
-        Vk.CmdDispatch(Command, (endX - params.StartX + 7) / 8, (endY - params.StartY + 7) / 8, 1)
-        MemoryBarrier(0x800, 0x40, 0x800, 0x60) // following volume compares against this depth
+        Vk.CmdDispatch(Command, groupsX, groupsY, 1)
         return true
+    }
+
+    #int MaxTraceBatch = 64
+    // Dispatch rectangles (left, top, right, bottom in pixels) of the traces
+    // recorded since the last barrier.
+    -int [256] TraceBatch
+    -int TraceBatchCount
+
+    // Makes every trace since the last barrier visible to later compute work.
+    -FlushTraceBatch()
+    {
+        if TraceBatchCount == 0 { return }
+        MemoryBarrier(0x800, 0x40, 0x800, 0x60)
+        TraceBatchCount = 0
     }
 
     // Submit up to 32 visible light spheres in scene order.
@@ -598,6 +660,10 @@ QuaxelVulkan
     {
         if !FrameOpen { return Device != 0 }
         if !ComputeFrame { return false }
+        FlushEffects()
+        MarkTraceStart()
+        FlushTraceBatch()
+        GpuMark(2)
         memcpy(&Scene.Words[0], lighting, 64)
         // Unused array entries must still name a valid buffer.
         VkDescriptorBufferInfo [256] infos
@@ -628,20 +694,20 @@ QuaxelVulkan
         LightBound = true
         long [4] sets = {Output.Descriptor, SceneStorage.Descriptor, CasterSet, ShadowAtlas.Descriptor}
         Vk.CmdBindDescriptorSets(Command, 1, LightLayout, 0, 4, &sets[0], 0, null)
-        if TimingPool != 0 { Vk.CmdWriteTimestamp(Command, 0x800, TimingPool, 2) }
+        GpuMark(3)
         RebuildSunChunks()
+        GpuMark(4)
         RebuildShadowWedges()
+        GpuMark(5)
         if GiEnabled {
             UpdateProbes(params)
             params.Gi = 1
+            GpuMark(6)
         }
         Vk.CmdBindPipeline(Command, 1, LightPipeline)
         Vk.CmdPushConstants(Command, LightLayout, 32, 0, 92, &params)
         Vk.CmdDispatch(Command, (Extent.width + 7) / 8, (Extent.height + 7) / 8, 1)
-        if TimingPool != 0 {
-            Vk.CmdWriteTimestamp(Command, 0x800, TimingPool, 3)
-            LightingTimed = true
-        }
+        GpuMark(7)
         MemoryBarrier(0x800, 0x40, 0x800, 0x60) // UI blends over the lit frame
         LightCount = 0
         CasterCount = 0
@@ -696,6 +762,7 @@ QuaxelVulkan
     // overlap search stays cheap for long runs of text.
     -FlushUi()
     {
+        FlushTraceBatch()
         if UiCount == 0 { return }
         UiBound = true
         EffectBound = false
@@ -756,6 +823,7 @@ QuaxelVulkan
 
     -CopyVoxelFrame()
     {
+        FlushTraceBatch()
         MemoryBarrier(0x1800, 0x1040, 0x1000, 0x800)
         VkImageMemoryBarrier image
         image.image = Images.Handles[FrameImage]

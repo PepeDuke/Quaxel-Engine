@@ -4,6 +4,9 @@ QuaxelPlatformBackend
     string PresentationMode() { return "WebGPU" }
     bool StartGpuTiming() { return false }
     double MeanLightingMs() { return 0.0 }
+    int GpuSectionCount() { return 0 }
+    name GpuSectionName(int section) { return "" }
+    double MeanGpuSectionMs(int section) { return 0.0 }
     bool FinishGpuTiming(double []& samples) { return false }
     bool ReadThreadTime(long& ticks) { return false }
 

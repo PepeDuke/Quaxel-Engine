@@ -4,6 +4,10 @@ QuaxelRenderer
     string PresentationMode() { return QuaxelPlatformBackend.PresentationMode() }
     bool StartGpuTiming() { return QuaxelPlatformBackend.StartGpuTiming() }
     double MeanLightingMs() { return QuaxelPlatformBackend.MeanLightingMs() }
+    // Per-section GPU means from the last timing run, in milliseconds.
+    int GpuSectionCount() { return QuaxelPlatformBackend.GpuSectionCount() }
+    name GpuSectionName(int section) { return QuaxelPlatformBackend.GpuSectionName(section) }
+    double MeanGpuSectionMs(int section) { return QuaxelPlatformBackend.MeanGpuSectionMs(section) }
     bool FinishGpuTiming(double []& samples) { return QuaxelPlatformBackend.FinishGpuTiming(samples) }
     bool ReadThreadTime(long& ticks) { return QuaxelPlatformBackend.ReadThreadTime(ticks) }
 

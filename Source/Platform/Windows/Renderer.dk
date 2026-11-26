@@ -4,6 +4,9 @@ QuaxelPlatformBackend
     string PresentationMode() { return QuaxelVulkan.PresentationMode() }
     bool StartGpuTiming() { return QuaxelVulkan.StartGpuTiming() }
     double MeanLightingMs() { return QuaxelVulkan.MeanLightingMs() }
+    int GpuSectionCount() { return QuaxelVulkan.GpuSectionCount }
+    name GpuSectionName(int section) { return QuaxelVulkan.GpuSectionName(section) }
+    double MeanGpuSectionMs(int section) { return QuaxelVulkan.MeanGpuSectionMs(section) }
     bool FinishGpuTiming(double []& samples) { return QuaxelVulkan.FinishGpuTiming(samples) }
     bool ReadThreadTime(long& ticks)
     {

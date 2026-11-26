@@ -132,6 +132,7 @@ QuaxelVulkan
 
     -BindEffect(long pipeline, int slot)
     {
+        FlushTraceBatch()
         UiBound = false
         EffectBound = true
         Vk.CmdBindPipeline(Command, 1, pipeline)
@@ -146,6 +147,7 @@ QuaxelVulkan
     {
         if !FrameOpen { return Device != 0 }
         if !SlotReady(slot) { return false }
+        if EffectPending(slot) { FlushEffects() }
         long base = (long)SlotBase(slot) * 4
         Vk.CmdFillBuffer(Command, PageBuffer(slot), base, (long)ParamsOffset * 4, 0)
         int [3] header = {64, 64, 64}
@@ -159,6 +161,7 @@ QuaxelVulkan
     {
         if !FrameOpen { return Device != 0 }
         if !SlotReady(slot) || bytes <= 0 || bytes > 512 { return false }
+        if EffectPending(slot) { FlushEffects() }
         Vk.CmdUpdateBuffer(Command, PageBuffer(slot), (long)(SlotBase(slot) + ParamsOffset) * 4, (long)bytes, data)
         AfterTransfer()
         return true
@@ -170,6 +173,7 @@ QuaxelVulkan
     {
         if !FrameOpen { return Device != 0 }
         if !SlotReady(slot) || volume < 0 || volume >= Volumes.Count { return false }
+        if EffectPending(slot) { FlushEffects() }
         BindEffect(BakePipeline, slot)
         VkStorage storage = Volumes.Items[volume]
         Vk.CmdBindDescriptorSets(Command, 1, EffectLayout, 1, 1, &storage.Descriptor, 0, null)
@@ -185,43 +189,108 @@ QuaxelVulkan
         return true
     }
 
-    // Advances the slot's particles by one fixed step.
+    // Advances the slot's particles by one fixed step. Recorded later by FlushEffects.
     bool SimulateEffect(int slot, int step, float seconds)
     {
         if !FrameOpen { return Device != 0 }
         if !SlotReady(slot) { return false }
-        BindEffect(SimPipeline, slot)
-        VkEffectParams params
-        params.Base = SlotBase(slot)
-        params.Step = step
-        params.Dt = seconds
-        PushEffect(params)
-        Vk.CmdDispatch(Command, 16, 1, 1)
-        AfterCompute()
+        if PendingSimCount == MaxPendingSims { FlushEffects() }
+        PendingSimSlot[PendingSimCount] = slot
+        PendingSimStep[PendingSimCount] = step
+        PendingSimSeconds[PendingSimCount] = seconds
+        PendingSimCount++
         return true
     }
 
     // Redraws the slot's volume from its particles and rebuilds its directory.
+    // Recorded later by FlushEffects.
     bool DrawEffect(int slot, int tick)
     {
         if !FrameOpen { return Device != 0 }
         if !SlotReady(slot) { return false }
-        VkEffectParams params
-        params.Base = SlotBase(slot)
-        params.Tick = tick
-        BindEffect(ClearPipeline, slot)
-        PushEffect(params)
-        Vk.CmdDispatch(Command, 512, 1, 1)
-        AfterCompute()
-        BindEffect(StampPipeline, slot)
-        PushEffect(params)
-        Vk.CmdDispatch(Command, 16, 1, 1)
-        AfterCompute()
-        BindEffect(BricksPipeline, slot)
-        PushEffect(params)
-        Vk.CmdDispatch(Command, 512, 1, 1)
-        AfterCompute()
+        if PendingDrawCount == MaxPendingDraws { FlushEffects() }
+        PendingDrawSlot[PendingDrawCount] = slot
+        PendingDrawTick[PendingDrawCount] = tick
+        PendingDrawCount++
         return true
+    }
+
+    // Queued simulation steps and redraws. Every pass reads and writes only
+    // its own slot, so slots need no barrier between them: FlushEffects runs
+    // each stage for every slot, then one barrier, instead of a barrier after
+    // each dispatch. A slot's own steps still run in order, one per round.
+    #int MaxPendingSims = 512
+    #int MaxPendingDraws = 128
+    -int [512] PendingSimSlot
+    -int [512] PendingSimStep
+    -float [512] PendingSimSeconds
+    -int [512] PendingSimRound
+    -int PendingSimCount
+    -int [128] PendingDrawSlot
+    -int [128] PendingDrawTick
+    -int PendingDrawCount
+
+    -bool EffectPending(int slot)
+    {
+        for i : 0; i < PendingSimCount; i++ {
+            if PendingSimSlot[i] == slot { return true }
+        }
+        for i : 0; i < PendingDrawCount; i++ {
+            if PendingDrawSlot[i] == slot { return true }
+        }
+        return false
+    }
+
+    -DispatchEffect(int slot, VkEffectParams& params, int groups)
+    {
+        VkStorage page = EffectPages.Items[slot / SlotsPerPage]
+        Vk.CmdBindDescriptorSets(Command, 1, EffectLayout, 0, 1, &page.Descriptor, 0, null)
+        PushEffect(params)
+        Vk.CmdDispatch(Command, groups, 1, 1)
+    }
+
+    -FlushEffects()
+    {
+        if PendingSimCount == 0 && PendingDrawCount == 0 { return }
+        FlushTraceBatch()
+        UiBound = false
+        EffectBound = true
+        int rounds = 0
+        for i : 0; i < PendingSimCount; i++ {
+            int round = 0
+            for j : 0; j < i; j++ {
+                if PendingSimSlot[j] == PendingSimSlot[i] { round++ }
+            }
+            PendingSimRound[i] = round
+            rounds = Math.Max(rounds, round + 1)
+        }
+        if rounds > 0 { Vk.CmdBindPipeline(Command, 1, SimPipeline) }
+        for round : 0; round < rounds; round++ {
+            for i : 0; i < PendingSimCount; i++ {
+                if PendingSimRound[i] != round { continue }
+                VkEffectParams params
+                params.Base = SlotBase(PendingSimSlot[i])
+                params.Step = PendingSimStep[i]
+                params.Dt = PendingSimSeconds[i]
+                DispatchEffect(PendingSimSlot[i], params, 16)
+            }
+            AfterCompute()
+        }
+        PendingSimCount = 0
+        if PendingDrawCount == 0 { return }
+        long [3] pipelines = {ClearPipeline, StampPipeline, BricksPipeline}
+        int [3] groups = {512, 16, 512}
+        for stage : 0; stage < 3; stage++ {
+            Vk.CmdBindPipeline(Command, 1, pipelines[stage])
+            for i : 0; i < PendingDrawCount; i++ {
+                VkEffectParams params
+                params.Base = SlotBase(PendingDrawSlot[i])
+                params.Tick = PendingDrawTick[i]
+                DispatchEffect(PendingDrawSlot[i], params, groups[stage])
+            }
+            AfterCompute()
+        }
+        PendingDrawCount = 0
     }
 
     bool TraceEffect(int slot, void* matrix, float left, float top, float right, float bottom, void* axes)
@@ -237,7 +306,7 @@ QuaxelVulkan
     bool ReadEffectSlot(int slot, int words, void* destination)
     {
         if Device == 0 || FrameOpen || slot < 0 || slot / SlotsPerPage >= EffectPages.Count || words <= 0 || words > SlotWords { return false }
-        if Vk.WaitForFences(Device, 1, &FrameFence, 1, -1) != 0 { return false }
+        if !WaitAllFrames() { return false }
         VkStorage readback
         long bytes = (long)words * 4
         if !CreateStorage(bytes, 2, 6, readback) {

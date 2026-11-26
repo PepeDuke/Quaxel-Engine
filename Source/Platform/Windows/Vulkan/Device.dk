@@ -1,4 +1,4 @@
-// Vulkan 1.0 with shaderStorageBufferArrayDynamicIndexing, one frame in flight, and one graphics queue with presentation support.
+// Vulkan 1.0 with shaderStorageBufferArrayDynamicIndexing, two frames in flight, and one graphics queue with presentation support.
 VkInstanceExtensions
 {
     cstring surface = "VK_KHR_surface"
@@ -22,9 +22,17 @@ QuaxelVulkan
     -long GraphicsQueue
     -int Family
     -long Pool
+    // The current frame context's command buffer, acquire semaphore and fence.
+    // SelectFrameSlot switches all three, with the context's UI elements and
+    // caster set. Frame N records while the GPU still runs frame N-1.
+    #int FramesInFlight = 2
     -long Command
     -long Acquired
     -long FrameFence
+    -int FrameSlot
+    -long [2] Commands
+    -long [2] AcquiredSlots
+    -long [2] Fences
     -long Chain
     -long Pass
     -long Layout
@@ -110,13 +118,90 @@ QuaxelVulkan
         if Vk.CreateCommandPool(Device, &poolInfo, null, &Pool) != 0 { return false }
         VkCommandBufferAllocateInfo allocation
         allocation.commandPool = Pool
-        allocation.commandBufferCount = 1
-        if Vk.AllocateCommandBuffers(Device, &allocation, &Command) != 0 { return false }
-        VkSemaphoreCreateInfo sem
-        if Vk.CreateSemaphore(Device, &sem, null, &Acquired) != 0 { return false }
-        VkFenceCreateInfo fenceInfo
-        fenceInfo.vkFlags = 1 // initially signaled
-        return Vk.CreateFence(Device, &fenceInfo, null, &FrameFence) == 0
+        allocation.commandBufferCount = FramesInFlight
+        if Vk.AllocateCommandBuffers(Device, &allocation, &Commands[0]) != 0 { return false }
+        for slot : 0; slot < FramesInFlight; slot++ {
+            VkSemaphoreCreateInfo sem
+            if Vk.CreateSemaphore(Device, &sem, null, &AcquiredSlots[slot]) != 0 { return false }
+            VkFenceCreateInfo fenceInfo
+            fenceInfo.vkFlags = 1 // initially signaled
+            if Vk.CreateFence(Device, &fenceInfo, null, &Fences[slot]) != 0 { return false }
+        }
+        SelectFrameSlot(0)
+        return true
+    }
+
+    // Makes slot the context that the next frame records into. Call only
+    // once its fence has signaled or before waiting on it.
+    -SelectFrameSlot(int slot)
+    {
+        FrameSlot = slot
+        Command = Commands[slot]
+        Acquired = AcquiredSlots[slot]
+        FrameFence = Fences[slot]
+        UiElements = UiElementSlots.Items[slot]
+        UiMapped = UiElementSlots.Mapped(slot)
+        CasterSet = CasterSets[slot]
+    }
+
+    // Waits for the slot's last submission and frees what it was the last to use.
+    -bool WaitFrameSlot(int slot)
+    {
+        if Vk.WaitForFences(Device, 1, &Fences[slot], 1, -1) != 0 { return false }
+        CompletedSerial = Math.Max(CompletedSerial, SlotSerial[slot])
+        ReleaseRetired(false)
+        return true
+    }
+
+    // Waits until the GPU has finished every submitted frame.
+    -bool WaitAllFrames()
+    {
+        for slot : 0; slot < FramesInFlight; slot++ {
+            if !WaitFrameSlot(slot) { return false }
+        }
+        return true
+    }
+
+    // Storage that a submitted frame may still read is released only once
+    // that frame completes, so replacing it never waits for the GPU.
+    -VkStorage [256] Retired
+    -long [256] RetiredSerial
+    -int RetiredCount
+    -long SubmitSerial
+    -long CompletedSerial
+    -long [2] SlotSerial
+
+    -RetireStorage(VkStorage& storage)
+    {
+        if RetiredCount == Retired.Len && !WaitAllFrames() { return }
+        // The frame being recorded will take the next serial.
+        long serial = SubmitSerial + (FrameOpen ? 1 | 0)
+        if serial <= CompletedSerial || RetiredCount == Retired.Len {
+            ReleaseStorage(storage)
+            return
+        }
+        Retired[RetiredCount] = storage
+        RetiredSerial[RetiredCount] = serial
+        RetiredCount++
+        VkStorage empty
+        storage = empty
+    }
+
+    // Releases retired storage whose frames are done, or all of it.
+    -ReleaseRetired(bool all)
+    {
+        int kept = 0
+        for i : 0; i < RetiredCount; i++ {
+            if all || RetiredSerial[i] <= CompletedSerial {
+                VkStorage storage = Retired[i]
+                ReleaseStorage(storage)
+            } else {
+                Retired[kept] = Retired[i]
+                RetiredSerial[kept] = RetiredSerial[i]
+                kept++
+            }
+        }
+        RetiredCount = kept
     }
 
     bool IsStarted() { return Device != 0 }
@@ -135,12 +220,18 @@ QuaxelVulkan
             Vk.DeviceWaitIdle(Device)
             if TimingPool != 0 { Vk.DestroyQueryPool(Device, TimingPool, null) }
             TimingPool = 0
-            TimingPending = false
+            for slot : 0; slot < FramesInFlight; slot++ { TimingPending[slot] = false }
+            ReleaseRetired(true)
             ReleaseMeshes()
             ReleaseTargets()
             ReleaseCompute()
-            Vk.DestroyFence(Device, FrameFence, null)
-            Vk.DestroySemaphore(Device, Acquired, null)
+            for slot : 0; slot < FramesInFlight; slot++ {
+                Vk.DestroyFence(Device, Fences[slot], null)
+                Vk.DestroySemaphore(Device, AcquiredSlots[slot], null)
+                Fences[slot] = 0
+                AcquiredSlots[slot] = 0
+                Commands[slot] = 0
+            }
             Vk.DestroyCommandPool(Device, Pool, null)
             Vk.DestroyDevice(Device, null)
         }
@@ -153,6 +244,11 @@ QuaxelVulkan
         DepthFormat = 0
         FrameFence = 0
         Acquired = 0
+        Command = 0
+        FrameSlot = 0
+        SubmitSerial = 0
+        CompletedSerial = 0
+        for slot : 0; slot < FramesInFlight; slot++ { SlotSerial[slot] = 0 }
         Pool = 0
         Device = 0
         Surface = 0
